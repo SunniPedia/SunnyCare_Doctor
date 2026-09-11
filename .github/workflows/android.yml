@@ -1,10 +1,6 @@
 name: Android Build Pipeline
 
 on:
-  push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch: # এই লাইনটি GitHub-এ 'Run workflow' বাটনটি যোগ করবে
 
 jobs:
