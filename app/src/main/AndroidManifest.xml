@@ -9,7 +9,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="SunnyCare"
+        android:label="SunnyCare ☀"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar"
         android:supportsRtl="true">
 
