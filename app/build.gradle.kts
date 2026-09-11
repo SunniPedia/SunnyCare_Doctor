@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.konasl.nagad"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.konasl.nagad"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
     }
@@ -38,6 +38,5 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("com.mrljdx:ffmpeg-kit-full:6.1.4")
     implementation("androidx.activity:activity-ktx:1.9.0")
 }
