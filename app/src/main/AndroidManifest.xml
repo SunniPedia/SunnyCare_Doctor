@@ -9,7 +9,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="Video 4K Export"
+        android:label="SunnyCare"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar"
         android:supportsRtl="true">
 
