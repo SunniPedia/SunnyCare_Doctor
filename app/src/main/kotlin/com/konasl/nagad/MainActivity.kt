@@ -1,384 +1,229 @@
 package com.konasl.nagad
 
-import android.content.ClipData
-import android.content.ClipboardManager
+import android.animation.ValueAnimator
 import android.content.Context
-import android.content.ContentValues
-import android.content.Intent
-import android.graphics.Color
-import android.net.Uri
+import android.graphics.*
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
-import android.os.Environment
-import android.provider.MediaStore
-import android.provider.OpenableColumns
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.FFmpegKitConfig
-import com.arthenica.ffmpegkit.Level
-import com.arthenica.ffmpegkit.ReturnCode
-import com.arthenica.ffmpegkit.Statistics
-import java.io.File
-import java.io.FileOutputStream
-import java.io.PrintWriter
-import java.io.StringWriter
+import androidx.core.view.setPadding
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var statusText: TextView
-    private lateinit var selectedFileText: TextView
-    private lateinit var progressBar: ProgressBar
-    private lateinit var exportButton: Button
-    private lateinit var selectButton: Button
-    private lateinit var viewLogButton: Button
-
-    private var selectedVideoUri: Uri? = null
-    private var inputFilePath: String? = null
-
-    // Holds full ffmpeg log output for the last run (success or fail)
-    private val ffmpegLogBuilder = StringBuilder()
-
-    companion object {
-        private const val PREFS_NAME = "crash_prefs"
-        private const val KEY_CRASH_LOG = "last_crash_log"
-    }
-
-    private val pickVideoLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            selectedVideoUri = uri
-            val name = getFileName(uri)
-            selectedFileText.text = "Selected: $name"
-            exportButton.isEnabled = true
-            statusText.text = "Ready to export"
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        installCrashHandler()
-        setContentView(buildUi())
-        showPendingCrashIfAny()
-    }
 
-    // ---------- Crash handling ----------
+        // 1. BACKGROUND - Programmatically Gradient Drawable
+        val gradientDrawable = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.parseColor("#0F6C61"), Color.parseColor("#0A4A42"))
+        )
 
-    private fun installCrashHandler() {
-        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            try {
-                val sw = StringWriter()
-                throwable.printStackTrace(PrintWriter(sw))
-                val fullLog = buildString {
-                    append("=== CRASH REPORT ===\n")
-                    append("Time: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(java.util.Date())}\n")
-                    append("Thread: ${thread.name}\n")
-                    append("App: com.konasl.nagad\n")
-                    append("Android: ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})\n")
-                    append("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n\n")
-                    append(sw.toString())
-                }
-
-                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .putString(KEY_CRASH_LOG, fullLog)
-                    .apply()
-
-                try {
-                    val crashFile = File(cacheDir, "last_crash.txt")
-                    crashFile.writeText(fullLog)
-                } catch (_: Exception) {
-                }
-
-                try {
-                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    val clip = ClipData.newPlainText("Crash Log", fullLog)
-                    clipboard?.setPrimaryClip(clip)
-                } catch (_: Exception) {
-                }
-            } catch (_: Exception) {
-            } finally {
-                defaultHandler?.uncaughtException(thread, throwable)
-            }
+        // 2. ROOT LAYOUT
+        val root = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            background = gradientDrawable
         }
-    }
 
-    private fun showPendingCrashIfAny() {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val crashLog = prefs.getString(KEY_CRASH_LOG, null)
-        if (!crashLog.isNullOrEmpty()) {
-            showTextDialog("App Crashed Last Time", crashLog)
-            prefs.edit().remove(KEY_CRASH_LOG).apply()
-        }
-    }
-
-    private fun showTextDialog(title: String, content: String) {
-        val scrollView = ScrollView(this)
-        val container = LinearLayout(this).apply {
+        // 3. CENTER CONTAINER
+        val centerLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 32, 32, 32)
-        }
-
-        val logText = TextView(this).apply {
-            text = content
-            textSize = 12f
-            setTextColor(Color.DKGRAY)
-            setPadding(0, 0, 0, 24)
-        }
-
-        container.addView(logText)
-        scrollView.addView(container)
-
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle(title)
-            .setView(scrollView)
-            .setPositiveButton("Copy Log") { dialog, _ ->
-                copyToClipboard(content)
-                Toast.makeText(this, "Log copied to clipboard", Toast.LENGTH_LONG).show()
-                dialog.dismiss()
-            }
-            .setNegativeButton("Dismiss") { dialog, _ ->
-                dialog.dismiss()
-            }
-            .setCancelable(true)
-            .show()
-    }
-
-    private fun copyToClipboard(text: String) {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        val clip = ClipData.newPlainText("FFmpeg Log", text)
-        clipboard?.setPrimaryClip(clip)
-    }
-
-    // ---------- Existing UI (unchanged) ----------
-
-    private fun buildUi(): ViewGroup {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(48, 48, 48, 48)
-        }
-
-        val title = TextView(this).apply {
-            text = "4K Video Exporter"
-            textSize = 22f
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 40)
-        }
-
-        selectButton = Button(this).apply {
-            text = "Select Video"
-            setOnClickListener { pickVideoLauncher.launch("video/*") }
-        }
-
-        selectedFileText = TextView(this).apply {
-            text = "No video selected"
-            setPadding(0, 24, 0, 24)
-            gravity = Gravity.CENTER
-        }
-
-        exportButton = Button(this).apply {
-            text = "Export to 4K"
-            isEnabled = false
-            setOnClickListener { startExport() }
-        }
-
-        progressBar = ProgressBar(
-            this, null, android.R.attr.progressBarStyleHorizontal
-        ).apply {
-            max = 100
-            progress = 0
-            layoutParams = LinearLayout.LayoutParams(
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 32 }
+            ).apply { gravity = Gravity.CENTER }
+            setPadding(40)
         }
 
-        statusText = TextView(this).apply {
-            text = "Select a video to begin"
-            setPadding(0, 24, 0, 0)
+        // 4. ICON - Programmatically Custom View (No drawable)
+        val iconView = SunnyCareIconView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(112), dp(112)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+        }
+
+        // 5. APP NAME
+        val appName = createText("SunnyCare", 34f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+            letterSpacing = 0.02f
+        }
+        val subName = createText("DOCTOR", 13f, Typeface.BOLD, Color.parseColor("#F59E0B"), Gravity.CENTER).apply {
+            letterSpacing = 0.3f
+        }
+
+        // 6. DOCTOR DETAILS - Keep All Details
+        val drName = createText("ডা. মাসুম বিল্লাহ সানি", 19f, Typeface.BOLD, Color.WHITE, Gravity.CENTER)
+
+        val degrees = createText(
+            "এম.বি.বি.এস (সি.ইউ), ডি.এম.ইউ (আল্ট্রা),\nপিজিটি, এম.সি.জি.পি (মেডিসিন ও শিশু),\nসি.সি.ডি (ডায়াবেটিস- বারডেম, ঢাকা)",
+            11.5f, Typeface.NORMAL, Color.argb(230, 255, 255, 255), Gravity.CENTER
+        )
+
+        val designation = createText(
+            "এক্স মেডিকেল অফিসার:\nপার্কভিউ মেডিকেল কলেজ হাসপাতাল, সিলেট।",
+            11f, Typeface.NORMAL, Color.argb(190, 255, 255, 255), Gravity.CENTER
+        )
+
+        // 7. BMDC BADGE - Programmatically background
+        val bmdcBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(50).toFloat()
+            setColor(Color.argb(45, 255, 255, 255))
+        }
+        val bmdcBadge = createText("বি.এম.ডি.সি এ-১৭৬৩০  •  Verified", 10.5f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+            background = bmdcBg
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+        }
+
+        // 8. LOADING DOTS - Programmatically
+        val dotsLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(36) }
         }
-
-        val viewCrashLogButton = Button(this).apply {
-            text = "View Last Crash Log"
-            setOnClickListener {
-                val crashFile = File(cacheDir, "last_crash.txt")
-                if (crashFile.exists()) {
-                    showTextDialog("Last Crash Log", crashFile.readText())
-                } else {
-                    Toast.makeText(this@MainActivity, "No crash log found", Toast.LENGTH_SHORT).show()
+        val dots = mutableListOf<View>()
+        repeat(3) {
+            val dot = View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(8), dp(8)).apply {
+                    leftMargin = dp(4); rightMargin = dp(4)
                 }
-            }
-        }
-
-        viewLogButton = Button(this).apply {
-            text = "View Last Export Log"
-            setOnClickListener {
-                if (ffmpegLogBuilder.isNotEmpty()) {
-                    showTextDialog("Last Export Log", ffmpegLogBuilder.toString())
-                } else {
-                    val logFile = File(cacheDir, "last_export_log.txt")
-                    if (logFile.exists()) {
-                        showTextDialog("Last Export Log", logFile.readText())
-                    } else {
-                        Toast.makeText(this@MainActivity, "No export log found yet", Toast.LENGTH_SHORT).show()
-                    }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.WHITE)
                 }
+                alpha = 0.3f
             }
+            dots.add(dot)
+            dotsLayout.addView(dot)
+        }
+        animateDots(dots)
+
+        // 9. FOOTER
+        val footer = createText(
+            "মেডিসিন-শিশু, ডায়াবেটিস, উচ্চ রক্তচাপ, বাত ব্যাথা,\nনাক-কান-গলা, এলার্জি, শ্বাসকষ্ট ও চর্মরোগে অভিজ্ঞ।",
+            9f, Typeface.NORMAL, Color.argb(115, 255, 255, 255), Gravity.CENTER
+        ).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(28)
+            }
+            setPadding(dp(16), 0, dp(16), 0)
         }
 
-        root.addView(title)
-        root.addView(selectButton)
-        root.addView(selectedFileText)
-        root.addView(exportButton)
-        root.addView(progressBar)
-        root.addView(statusText)
-        root.addView(viewCrashLogButton)
-        root.addView(viewLogButton)
+        // ADD ALL VIEWS
+        centerLayout.apply {
+            addView(iconView)
+            addView(space(dp(22)))
+            addView(appName)
+            addView(subName)
+            addView(space(dp(28)))
+            addView(drName)
+            addView(space(dp(8)))
+            addView(degrees)
+            addView(space(dp(10)))
+            addView(designation)
+            addView(space(dp(12)))
+            addView(bmdcBadge)
+            addView(dotsLayout)
+        }
 
-        return root
+        root.addView(centerLayout)
+        root.addView(footer)
+
+        setContentView(root)
+
+        // Auto navigate after 2.6s
+        Handler(Looper.getMainLooper()).postDelayed({
+            // startActivity(Intent(this, LoginActivity::class.java))
+            // finish()
+        }, 2600)
     }
 
-    private fun getFileName(uri: Uri): String {
-        var name = "video"
-        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (cursor.moveToFirst() && nameIndex >= 0) {
-                name = cursor.getString(nameIndex)
+    // Helper: Custom Icon View - Draw Sun + Medical Cross
+    class SunnyCareIconView(context: Context) : View(context) {
+        private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+        private val paintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F59E0B"); style = Paint.Style.FILL; strokeWidth = 6f; strokeCap = Paint.Cap.ROUND }
+        private val paintOrangeStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F59E0B"); style = Paint.Style.STROKE; strokeWidth = 7f; strokeCap = Paint.Cap.ROUND }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val cx = w / 2
+            val cy = h / 2
+
+            // White Circle BG
+            canvas.drawCircle(cx, cy, w / 2, paintWhite)
+
+            // Orange Sun
+            canvas.drawCircle(cx, cy, w * 0.22f, paintOrange)
+
+            // Sun Rays - 8 lines
+            for (i in 0 until 8) {
+                val angle = Math.toRadians((i * 45).toDouble())
+                val r1 = w * 0.30f
+                val r2 = w * 0.38f
+                val sx = cx + r1 * Math.cos(angle).toFloat()
+                val sy = cy + r1 * Math.sin(angle).toFloat()
+                val ex = cx + r2 * Math.cos(angle).toFloat()
+                val ey = cy + r2 * Math.sin(angle).toFloat()
+                canvas.drawLine(sx, sy, ex, ey, paintOrangeStroke)
             }
+
+            // White Medical Cross
+            val crossW = w * 0.24f
+            val crossH = w * 0.08f
+            canvas.drawRect(cx - crossW / 2, cy - crossH / 2, cx + crossW / 2, cy + crossH / 2, paintWhite)
+            canvas.drawRect(cx - crossH / 2, cy - crossW / 2, cx + crossH / 2, cy + crossW / 2, paintWhite)
         }
-        return name
     }
 
-    private fun copyUriToCache(uri: Uri): String {
-        val inputStream = contentResolver.openInputStream(uri)
-        val cacheFile = File(cacheDir, "input_${System.currentTimeMillis()}.mp4")
-        FileOutputStream(cacheFile).use { output ->
-            inputStream?.copyTo(output)
+    private fun createText(text: String, sizeSp: Float, style: Int, color: Int, gravity: Int): TextView {
+        return TextView(this).apply {
+            this.text = text
+            textSize = sizeSp
+            setTypeface(null, style)
+            setTextColor(color)
+            this.gravity = gravity
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { this.gravity = Gravity.CENTER_HORIZONTAL }
         }
-        inputStream?.close()
-        return cacheFile.absolutePath
     }
 
-    private fun startExport() {
-        val uri = selectedVideoUri ?: return
+    private fun space(h: Int): View = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, h) }
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-        exportButton.isEnabled = false
-        selectButton.isEnabled = false
-        statusText.text = "Preparing..."
-        progressBar.progress = 0
-        ffmpegLogBuilder.clear()
-
-        Thread {
-            try {
-                inputFilePath = copyUriToCache(uri)
-                val outputFile = File(cacheDir, "output_4k_${System.currentTimeMillis()}.mp4")
-                val outputPath = outputFile.absolutePath
-
-                // NOTE: libx264 is NOT available in this ffmpeg-kit fork (LGPL-only build,
-                // confirmed via export log: "Unknown encoder 'libx264'").
-                // Using libopenh264 instead (software H.264 encoder, LGPL-safe).
-                // libopenh264 has no CRF support, so bitrate-based rate control is used instead.
-                val command = "-y -i \"$inputFilePath\" " +
-                        "-vf \"scale=3840:2160:force_original_aspect_ratio=decrease," +
-                        "pad=3840:2160:(ow-iw)/2:(oh-ih)/2\" " +
-                        "-c:v libopenh264 -b:v 25M -maxrate 30M -bufsize 40M " +
-                        "-c:a aac -b:a 192k " +
-                        "\"$outputPath\""
-
-                runOnUiThread { statusText.text = "Exporting to 4K..." }
-
-                // Capture every line ffmpeg prints — this is where the REAL error shows up
-                FFmpegKitConfig.enableLogCallback { log ->
-                    val line = log.message ?: ""
-                    ffmpegLogBuilder.append(line).append("\n")
-                }
-
-                FFmpegKitConfig.enableStatisticsCallback { statistics: Statistics ->
-                    val timeMs = statistics.time
-                    runOnUiThread {
-                        if (timeMs > 0) {
-                            statusText.text = "Exporting... (${timeMs / 1000}s processed)"
-                        }
-                    }
-                }
-
-                val session = FFmpegKit.execute(command)
-
-                // Always persist the log so it survives even if something crashes after this point
-                val logString = ffmpegLogBuilder.toString().ifBlank {
-                    session.allLogsAsString ?: "(no log output captured)"
-                }
-                try {
-                    File(cacheDir, "last_export_log.txt").writeText(
-                        "Command: $command\n\nReturn code: ${session.returnCode}\n\n$logString"
-                    )
-                } catch (_: Exception) {
-                }
-
-                runOnUiThread {
-                    if (ReturnCode.isSuccess(session.returnCode)) {
-                        saveToGallery(outputFile)
-                        statusText.text = "Export complete! Saved to gallery."
-                        progressBar.progress = 100
-                        Toast.makeText(this, "4K export successful", Toast.LENGTH_LONG).show()
-                    } else {
-                        statusText.text = "Export failed (code ${session.returnCode}). Tap 'View Last Export Log' for details."
-                        copyToClipboard(logString)
-                        Toast.makeText(
-                            this,
-                            "Export failed — log copied to clipboard",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                    exportButton.isEnabled = true
-                    selectButton.isEnabled = true
-                }
-            } catch (e: Exception) {
-                val sw = StringWriter()
-                e.printStackTrace(PrintWriter(sw))
-                val errLog = sw.toString()
-                try {
-                    File(cacheDir, "last_export_log.txt").writeText(errLog)
-                } catch (_: Exception) {
-                }
-                runOnUiThread {
-                    statusText.text = "Error: ${e.message}"
-                    copyToClipboard(errLog)
-                    exportButton.isEnabled = true
-                    selectButton.isEnabled = true
-                }
-            }
-        }.start()
-    }
-
-    private fun saveToGallery(file: File) {
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, "4K_${file.name}")
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Video4KExport")
-        }
-
-        val resolver = contentResolver
-        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-
-        uri?.let {
-            resolver.openOutputStream(it)?.use { outStream ->
-                file.inputStream().use { inStream ->
-                    inStream.copyTo(outStream)
+    private fun animateDots(dots: List<View>) {
+        val animator = ValueAnimator.ofFloat(0.3f, 1f).apply {
+            duration = 700
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            addUpdateListener {
+                val v = it.animatedValue as Float
+                dots.forEachIndexed { index, dot ->
+                    dot.alpha = v * (1f - index * 0.15f)
                 }
             }
         }
+        animator.start()
     }
 }
