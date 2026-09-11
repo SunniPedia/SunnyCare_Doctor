@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 5. APP NAME
-        val appName = createText("SunnyCare", 34f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+        val appName = createText("SunnyCare ☀", 34f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
             letterSpacing = 0.02f
         }
         val subName = createText("DOCTOR", 13f, Typeface.BOLD, Color.parseColor("#F59E0B"), Gravity.CENTER).apply {
