@@ -302,4 +302,47 @@ suspend fun createAppointment(
 } catch (e: Exception) {
     Result.failure(e)
 }
+// ---------------------------------------------------------------------
+// ADMIN
+// ---------------------------------------------------------------------
+
+// TODO: আপনার (ডাক্তার/ক্লিনিক অ্যাডমিনের) ফোন নাম্বার এখানে বসান — এই নাম্বার দিয়ে লগইন করলে অ্যাডমিন প্যানেল দেখা যাবে
+private val adminPhones = listOf("+8801XXXXXXXXX")
+
+fun isAdmin(context: Context): Boolean {
+    val phone = getPhone(context) ?: return false
+    return adminPhones.contains(phone)
+}
+
+/** payment_status = pending_verification এমন সব অ্যাপয়েন্টমেন্ট আনে, যাচাইয়ের জন্য */
+suspend fun getPendingVerificationAppointments(): Result<JSONArray> = try {
+    val rows = get("appointments?payment_status=eq.pending_verification&order=created_at.desc")
+    Result.success(rows)
+} catch (e: Exception) {
+    Result.failure(e)
+}
+
+/** TrxID মিলিয়ে অ্যাডমিন পেমেন্ট ভেরিফাই করলে payment_status ও status আপডেট হয় */
+suspend fun verifyPayment(appointmentId: String): Result<Unit> = try {
+    val json = JSONObject().apply {
+        put("payment_status", "verified")
+        put("status", "confirmed")
+    }
+    patch("appointments?id=eq.$appointmentId", json)
+    Result.success(Unit)
+} catch (e: Exception) {
+    Result.failure(e)
+}
+
+/** ভুল/জাল TrxID হলে অ্যাডমিন রিজেক্ট করতে পারবে */
+suspend fun rejectPayment(appointmentId: String): Result<Unit> = try {
+    val json = JSONObject().apply {
+        put("payment_status", "rejected")
+        put("status", "cancelled")
+    }
+    patch("appointments?id=eq.$appointmentId", json)
+    Result.success(Unit)
+} catch (e: Exception) {
+    Result.failure(e)
+}
 }
