@@ -65,8 +65,8 @@ import java.util.concurrent.TimeUnit
 object SupabaseClient {
 
     // TODO: নিজের Supabase প্রজেক্ট থেকে বসান (Project Settings > API)
-    private const val SUPABASE_URL = "https://YOUR_PROJECT_ID.supabase.co"
-    private const val SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"
+    private const val SUPABASE_URL = "https://azbleibkgerzaqbrrydl.supabase.co/"
+    private const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6YmxlaWJrZ2VyemFxYnJyeWRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzExNjYsImV4cCI6MjEwNDc0NzE2Nn0.6Q6PMcRJHXFIRPUZZf9lOjoTmq77_wbCoKc8tGkVF2o"
 
     private const val PREFS = "sunnycare_prefs"
     private const val KEY_LOGGED_IN = "is_logged_in"
