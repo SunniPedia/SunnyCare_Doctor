@@ -1,328 +1,291 @@
 package com.konasl.nagad
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
-import android.graphics.*
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
-import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
-import io.github.jan.supabase.postgrest.from
-import io.github.jan.supabase.postgrest.query.Columns
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.*
 
 class LoginActivity : AppCompatActivity() {
 
+    private val colorPrimary = Color.parseColor("#0F6C61")
+    private val colorPrimaryDark = Color.parseColor("#0A4A42")
+    private val colorAccent = Color.parseColor("#F59E0B")
+    private val colorFieldBg = Color.parseColor("#F1F5F4")
+    private val colorTextMuted = Color.parseColor("#6B7280")
+
+    private lateinit var phoneInput: EditText
+    private lateinit var otpInput: EditText
+    private lateinit var otpSection: LinearLayout
+    private lateinit var sendOtpBtn: Button
+    private lateinit var verifyBtn: Button
+    private lateinit var resendText: TextView
+    private lateinit var statusText: TextView
+    private lateinit var progress: ProgressBar
+
+    private var currentPhone: String = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val root = LinearLayout(this).apply {
+        val root = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(colorPrimary, colorPrimaryDark)
+            )
+        }
+
+        val scroll = NestedScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#FDFCF8"))
-            layoutParams = LinearLayout.LayoutParams(-1, -1)
-            setPadding(dp(24), dp(40), dp(24), dp(24))
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(28), dp(56), dp(28), dp(40))
         }
 
-        // Icon - Same as MainActivity but smaller
-        val iconView = MainActivity.SunnyCareIconView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(88), dp(88)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(24) }
+        val icon = AuthIconView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(76), dp(76)).apply { gravity = Gravity.CENTER_HORIZONTAL }
         }
 
-        val title = TextView(this).apply {
-            text = "SunnyCare এ স্বাগতম"
-            textSize = 22f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#0F6C61"))
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        val title = text("SunnyCare ☀", 26f, Typeface.BOLD, Color.WHITE)
+        val subtitle = text("মোবাইল নাম্বার দিয়ে লগইন করুন", 13.5f, Typeface.NORMAL, Color.argb(220, 255, 255, 255))
+
+        // ---- Card ----
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(Color.WHITE, 24f)
+            setPadding(dp(24), dp(28), dp(24), dp(28))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(32) }
         }
 
-        val sub = TextView(this).apply {
-            text = "আপনার মোবাইল নাম্বার দিন, OTP Supabase থেকে আসবে (ফ্রি)"
-            textSize = 12f
-            setTextColor(Color.parseColor("#6B7280"))
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(8), dp(16), 0)
+        val phoneLabel = text("ফোন নাম্বার", 12.5f, Typeface.BOLD, colorTextMuted).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
-        val inputBg = GradientDrawable().apply {
-            cornerRadius = dp(14).toFloat()
-            setColor(Color.WHITE)
-            setStroke(dp(1), Color.parseColor("#D1D5DB"))
-        }
-
-        val phoneLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = inputBg
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(28) }
-        }
-
-        val countryCode = TextView(this).apply {
-            text = "🇧🇩 +88"
-            textSize = 15f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#0F6C61"))
-            background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(Color.parseColor("#E6F4F2")) }
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-        }
-
-        val phoneInput = EditText(this).apply {
+        phoneInput = EditText(this).apply {
             hint = "01XXXXXXXXX"
             inputType = InputType.TYPE_CLASS_PHONE
-            background = null
-            setPadding(dp(12), dp(14), dp(12), dp(14))
-            textSize = 17f
-            layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = roundedBg(colorFieldBg, 14f)
+            textSize = 15f
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) }
         }
 
-        phoneLayout.addView(countryCode)
-        phoneLayout.addView(phoneInput)
+        sendOtpBtn = primaryButton("OTP পাঠান") { onSendOtp() }
 
-        // OTP Info Banner - Programmatically
-        val otpInfoBg = GradientDrawable().apply {
-            cornerRadius = dp(12).toFloat()
-            setColor(Color.parseColor("#FFFBEB"))
-            setStroke(dp(1), Color.parseColor("#F59E0B"))
-        }
-        val otpInfo = TextView(this).apply {
-            text = "💡 Demo: Supabase otps table এ 10k OTP আগে থেকেই আছে। কোড অ্যাপেই দেখাবে, SMS লাগবে না।"
-            textSize = 10.5f
-            setTextColor(Color.parseColor("#92400E"))
-            background = otpInfoBg
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) }
-        }
-
-        val btnBg = GradientDrawable().apply {
-            cornerRadius = dp(14).toFloat()
-            colors = intArrayOf(Color.parseColor("#0F6C61"), Color.parseColor("#0A4A42"))
-            orientation = GradientDrawable.Orientation.LEFT_RIGHT
-        }
-
-        val btn = TextView(this).apply {
-            text = "OTP পাঠান  →"
-            textSize = 16f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            background = btnBg
-            setPadding(0, dp(18), 0, dp(18))
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) }
-            isClickable = true
-            isFocusable = true
-        }
-
-        val loadingDots = ProgressBar(this).apply {
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(16) }
-        }
-
-        // FIXED: Crash-proof OTP logic + Auto Copy
-        btn.setOnClickListener {
-            val phone = phoneInput.text.toString().trim()
-            if (phone.length != 11 || !phone.startsWith("01")) {
-                Toast.makeText(this, "সঠিক 11 ডিজিট নাম্বার দিন", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            // Prevent double click
-            btn.isEnabled = false
-            btn.alpha = 0.6f
-            btn.text = "পাঠানো হচ্ছে..."
-            loadingDots.visibility = View.VISIBLE
-
-            lifecycleScope.launch {
-                try {
-                    // SAFE: Use JsonObject instead of Map<String,String> to avoid crash
-                    var code: String? = null
-
-                    try {
-                        val result = SupabaseClient.client.from("otps")
-                            .select(columns = Columns.list("code")) {
-                                filter { eq("phone", phone) }
-                            }.decodeSingleOrNull<JsonObject>()
-
-                        code = result?.get("code")?.jsonPrimitive?.content
-                        Log.d("SunnyCare", "Found OTP: $code for $phone")
-                    } catch (e: Exception) {
-                        Log.e("SunnyCare", "OTP fetch error: ${e.message}")
-                    }
-
-                    // যদি না থাকে, নতুন generate
-                    if (code.isNullOrEmpty()) {
-                        code = (100000..999999).random().toString()
-                        try {
-                            SupabaseClient.client.from("otps").insert(
-                                buildJsonObject {
-                                    put("phone", phone)
-                                    put("code", code)
-                                }
-                            )
-                        } catch (e: Exception) {
-                            Log.e("SunnyCare", "Insert error: ${e.message}")
-                            // Insert fail হলেও code টা use করবো
-                        }
-                    }
-
-                    // FIX: Copy to clipboard (যাতে কপি হয়ে যায়)
-                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("SunnyCare OTP", code)
-                    clipboard.setPrimaryClip(clip)
-
-                    // Show OTP - In-app notification
-                    Toast.makeText(this@LoginActivity, "🔐 OTP: $code (কপি হয়েছে)", Toast.LENGTH_LONG).show()
-
-                    // Check if profile exists - SAFE way
-                    var profileExists = false
-                    try {
-                        val profileResult = SupabaseClient.client.from("profiles")
-                            .select(columns = Columns.list("phone")) {
-                                filter { eq("phone", phone) }
-                            }.decodeList<JsonObject>()
-                        profileExists = profileResult.isNotEmpty()
-                    } catch (e: Exception) {
-                        Log.e("SunnyCare", "Profile check error: ${e.message}")
-                        profileExists = false
-                    }
-
-                    val intent = Intent(this@LoginActivity, OtpVerifyActivity::class.java).apply {
-                        putExtra("phone", phone)
-                        putExtra("code", code)
-                        putExtra("isLogin", profileExists)
-                    }
-                    startActivity(intent)
-
-                } catch (e: Exception) {
-                    Log.e("SunnyCare", "Main crash: ${e.message}", e)
-                    Toast.makeText(this@LoginActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                } finally {
-                    // FIX: Always re-enable button, else app looks frozen
-                    btn.isEnabled = true
-                    btn.alpha = 1f
-                    btn.text = "OTP পাঠান  →"
-                    loadingDots.visibility = View.GONE
-                }
-            }
-        }
-
-        root.addView(iconView)
-        root.addView(title)
-        root.addView(sub)
-        root.addView(phoneLayout)
-        root.addView(otpInfo)
-        root.addView(btn)
-        root.addView(loadingDots)
-
-        setContentView(root)
-    }
-
-    fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-}
-
-// OtpVerifyActivity - Also fixed with copy-paste support
-class OtpVerifyActivity : AppCompatActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val phone = intent.getStringExtra("phone") ?: ""
-        val realCode = intent.getStringExtra("code") ?: ""
-        val isLogin = intent.getBooleanExtra("isLogin", false)
-
-        val root = LinearLayout(this).apply {
+        // ---- OTP section (hidden initially) ----
+        otpSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-            setPadding(dp(24), dp(60), dp(24), dp(24))
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(18) }
         }
-
-        val title = TextView(this).apply { text = "OTP যাচাই করুন"; textSize = 20f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F6C61")) }
-        val sub = TextView(this).apply { text = "$phone নাম্বারে কোড পাঠানো হয়েছে\n(Demo কোড: $realCode - কপি হয়েছে)"; textSize = 13f; setTextColor(Color.GRAY) }
-
-        // Banner showing OTP with copy button programmatically
-        val otpBannerBg = GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(Color.parseColor("#E6F4F2")); setStroke(dp(1), Color.parseColor("#0F6C61")) }
-        val otpBanner = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = otpBannerBg
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) }
-        }
-        val otpText = TextView(this).apply { text = "🔐 $realCode"; textSize = 18f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F6C61")); layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
-        val copyBtn = TextView(this).apply {
-            text = "Copy"
-            textSize = 12f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(Color.parseColor("#0F6C61")) }
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            isClickable = true
-            setOnClickListener {
-                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("OTP", realCode))
-                Toast.makeText(this@OtpVerifyActivity, "কপি হয়েছে!", Toast.LENGTH_SHORT).show()
-            }
-        }
-        otpBanner.addView(otpText)
-        otpBanner.addView(copyBtn)
-
-        val otpInput = EditText(this).apply {
-            hint = "6 ডিজিট কোড paste করুন"
+        val otpLabel = text("৬ ডিজিটের OTP কোড দিন", 12.5f, Typeface.BOLD, colorTextMuted)
+        otpInput = EditText(this).apply {
+            hint = "• • • • • •"
             inputType = InputType.TYPE_CLASS_NUMBER
-            textSize = 20f
             gravity = Gravity.CENTER
-            background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Color.parseColor("#F3F4F6")); setStroke(dp(1), Color.parseColor("#0F6C61")) }
-            setPadding(dp(16), dp(18), dp(16), dp(18))
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) }
-            // Auto-paste if clipboard has 6 digit code
-            setOnFocusChangeListener { _, hasFocus ->
-                if (hasFocus) {
-                    try {
-                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clipText = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
-                        if (clipText != null && clipText.length == 6 && clipText.all { it.isDigit() }) {
-                            setText(clipText)
-                        }
-                    } catch (_: Exception) {}
-                }
-            }
+            letterSpacing = 0.3f
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = roundedBg(colorFieldBg, 14f)
+            textSize = 20f
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) }
+        }
+        verifyBtn = primaryButton("ভেরিফাই করুন") { onVerifyOtp() }
+        resendText = text("OTP আবার পাঠান", 12.5f, Typeface.BOLD, colorPrimary).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, 0)
+            setOnClickListener { onSendOtp() }
+        }
+        otpSection.addView(otpLabel)
+        otpSection.addView(otpInput)
+        otpSection.addView(space(dp(14)))
+        otpSection.addView(verifyBtn)
+        otpSection.addView(resendText)
+
+        progress = ProgressBar(this).apply {
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(14); gravity = Gravity.CENTER_HORIZONTAL }
         }
 
-        val btn = TextView(this).apply {
-            text = "যাচাই করুন"
-            textSize = 16f; setTypeface(null, Typeface.BOLD); setTextColor(Color.WHITE); gravity = Gravity.CENTER
-            background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Color.parseColor("#0F6C61")) }
-            setPadding(0, dp(18), 0, dp(18))
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) }
-            isClickable = true
-            setOnClickListener {
-                if (otpInput.text.toString().trim() == realCode) {
-                    if (isLogin) {
-                        SupabaseClient.saveLogin(this@OtpVerifyActivity, phone)
-                        startActivity(Intent(this@OtpVerifyActivity, HomeActivity::class.java))
-                        finishAffinity()
-                    } else {
-                        startActivity(Intent(this@OtpVerifyActivity, SignupActivity::class.java).apply { putExtra("phone", phone) })
-                    }
-                } else {
-                    Toast.makeText(this@OtpVerifyActivity, "ভুল OTP, সঠিক কোড: $realCode", Toast.LENGTH_SHORT).show()
-                }
-            }
+        statusText = text("", 12.5f, Typeface.NORMAL, Color.parseColor("#D32F2F")).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(10), 0, 0)
         }
 
-        root.addView(title)
-        root.addView(sub)
-        root.addView(otpBanner)
-        root.addView(otpInput)
-        root.addView(btn)
+        card.addView(phoneLabel)
+        card.addView(phoneInput)
+        card.addView(space(dp(14)))
+        card.addView(sendOtpBtn)
+        card.addView(otpSection)
+        card.addView(progress)
+        card.addView(statusText)
+
+        val signupHint = text("নতুন ইউজার? OTP ভেরিফাই করার পর প্রোফাইল তৈরি করুন", 11.5f, Typeface.NORMAL, Color.argb(200, 255, 255, 255)).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(20), dp(16), 0)
+        }
+
+        container.addView(icon)
+        container.addView(space(dp(16)))
+        container.addView(title)
+        container.addView(subtitle)
+        container.addView(card)
+        container.addView(signupHint)
+
+        scroll.addView(container)
+        root.addView(scroll)
         setContentView(root)
     }
-    fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    // ------------------------------------------------------------------
+    private fun onSendOtp() {
+        val phone = phoneInput.text.toString().trim()
+        if (phone.length < 11) {
+            statusText.text = "সঠিক ফোন নাম্বার দিন"
+            return
+        }
+        currentPhone = phone
+        setLoading(true)
+        lifecycleScope.launch {
+            val result = SupabaseClient.requestOtp(phone)
+            setLoading(false)
+            result.onSuccess { code ->
+                otpSection.visibility = View.VISIBLE
+                statusText.text = ""
+                // যেহেতু রিয়েল SMS গেটওয়ে নেই, ডেমো হিসেবে কোডটা ডায়ালগে দেখানো হচ্ছে
+                AlertDialog.Builder(this@LoginActivity)
+                    .setTitle("আপনার OTP কোড (Demo)")
+                    .setMessage("কোড: $code\n\nবাস্তব SMS পাঠাতে Supabase-এ একটি SMS provider (Twilio/Vonage) যুক্ত করতে হবে।")
+                    .setPositiveButton("ঠিক আছে", null)
+                    .show()
+            }.onFailure {
+                statusText.text = it.message ?: "OTP পাঠাতে সমস্যা হয়েছে"
+            }
+        }
+    }
+
+    private fun onVerifyOtp() {
+        val code = otpInput.text.toString().trim()
+        if (code.length != 6) {
+            statusText.text = "৬ ডিজিটের কোড দিন"
+            return
+        }
+        setLoading(true)
+        lifecycleScope.launch {
+            val verifyResult = SupabaseClient.verifyOtp(currentPhone, code)
+            verifyResult.onSuccess { matched ->
+                if (!matched) {
+                    setLoading(false)
+                    statusText.text = "কোড সঠিক নয় বা মেয়াদ শেষ"
+                    return@onSuccess
+                }
+                val patientResult = SupabaseClient.findPatientByPhone(currentPhone)
+                setLoading(false)
+                patientResult.onSuccess { patient ->
+                    if (patient != null) {
+                        SupabaseClient.saveSession(
+                            this@LoginActivity,
+                            patient.getString("id"),
+                            currentPhone,
+                            patient.getString("full_name")
+                        )
+                        startActivity(Intent(this@LoginActivity, HomeActivity::class.java))
+                        finish()
+                    } else {
+                        val intent = Intent(this@LoginActivity, SignupActivity::class.java)
+                        intent.putExtra("phone", currentPhone)
+                        startActivity(intent)
+                        finish()
+                    }
+                }.onFailure {
+                    statusText.text = it.message ?: "সমস্যা হয়েছে"
+                }
+            }.onFailure {
+                setLoading(false)
+                statusText.text = it.message ?: "ভেরিফিকেশনে সমস্যা হয়েছে"
+            }
+        }
+    }
+
+    private fun setLoading(loading: Boolean) {
+        progress.visibility = if (loading) View.VISIBLE else View.GONE
+        sendOtpBtn.isEnabled = !loading
+        verifyBtn.isEnabled = !loading
+    }
+
+    // ------------------------------------------------------------------
+    // Small UI helpers
+    // ------------------------------------------------------------------
+    private fun text(t: String, sizeSp: Float, style: Int, color: Int): TextView = TextView(this).apply {
+        text = t; textSize = sizeSp; setTypeface(null, style); setTextColor(color); gravity = Gravity.CENTER
+    }
+
+    private fun space(h: Int): View = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, h) }
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun roundedBg(color: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = radiusDp * resources.displayMetrics.density
+        setColor(color)
+    }
+
+    private fun primaryButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
+        text = label
+        setTextColor(Color.WHITE)
+        textSize = 15f
+        isAllCaps = false
+        setTypeface(null, Typeface.BOLD)
+        background = roundedBg(colorPrimary, 14f)
+        setPadding(0, dp(14), 0, dp(14))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        setOnClickListener { onClick() }
+    }
+
+    /** ছোট আইকন - সূর্য ভিতরে মেডিকেল ক্রস (drawable ছাড়া প্রোগ্রামেটিক্যালি আঁকা) */
+    class AuthIconView(context: android.content.Context) : View(context) {
+        private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+        private val paintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F59E0B"); style = Paint.Style.FILL }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            val cx = w / 2; val cy = h / 2
+            canvas.drawCircle(cx, cy, w / 2, paintWhite)
+            canvas.drawCircle(cx, cy, w * 0.24f, paintOrange)
+            val crossW = w * 0.22f; val crossH = w * 0.075f
+            canvas.drawRect(cx - crossW / 2, cy - crossH / 2, cx + crossW / 2, cy + crossH / 2, paintWhite)
+            canvas.drawRect(cx - crossH / 2, cy - crossW / 2, cx + crossH / 2, cy + crossW / 2, paintWhite)
+        }
+    }
 }
