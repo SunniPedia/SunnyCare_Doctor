@@ -57,7 +57,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // TextView গুলো বানালাম, পরে ফন্ট Apply করবো
         val appName = createText("SunnyCare ☀", 34f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply { letterSpacing = 0.02f }
         val subName = createText("DOCTOR", 13f, Typeface.BOLD, Color.parseColor("#F59E0B"), Gravity.CENTER).apply { letterSpacing = 0.3f }
         val drName = createText("ডা. মাসুম বিল্লাহ সানি", 19f, Typeface.BOLD, Color.WHITE, Gravity.CENTER)
@@ -139,7 +138,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(footer)
         setContentView(root)
 
-        // === ফন্ট লোডিং লজিক ===
+        // === ফন্ট লোডিং লজিক (আপডেট) ===
         loadFontAndApply()
 
         // Auto navigate
@@ -161,7 +160,6 @@ class MainActivity : AppCompatActivity() {
                 val fontFile = File(fontDir, FONT_NAME)
 
                 if (!fontFile.exists()) {
-                    // প্রথমবার ডাউনলোড
                     URL(FONT_URL).openStream().use { input ->
                         FileOutputStream(fontFile).use { output ->
                             input.copyTo(output)
@@ -169,22 +167,25 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // ফাইল থেকে Typeface বানাও
                 customTypeface = Typeface.createFromFile(fontFile)
+                
+                // MyApp কে জানিয়ে দাও ফন্ট রেডি
+                (application as MyApp).loadFont()
 
-                // UI Thread এ সব TextView তে Apply করো
                 runOnUiThread {
                     customTypeface?.let { tf ->
                         allTextViews.forEach { tv ->
-                            // আগের Bold/Normal স্টাইল ধরে রাখবে
-                            val oldStyle = tv.typeface?.style ?: Typeface.NORMAL
-                            tv.typeface = Typeface.create(tf, oldStyle)
+                            // শুধু বাংলা লেখায় Apply করো
+                            if (tv.text.any { c -> c.code in 2432..2559 }) {
+                                val oldStyle = tv.typeface?.style ?: Typeface.NORMAL
+                                tv.typeface = Typeface.create(tf, oldStyle)
+                            }
                         }
                     }
                 }
 
             } catch (e: Exception) {
-                e.printStackTrace() // নেট না থাকলে ডিফল্ট ফন্টেই চলবে
+                e.printStackTrace()
             }
         }
     }
@@ -223,7 +224,6 @@ class MainActivity : AppCompatActivity() {
         return TextView(this).apply {
             this.text = text
             textSize = sizeSp
-            // শুরুতে ডিফল্ট, পরে custom font আসলে replace হবে
             setTypeface(null, style)
             setTextColor(color)
             this.gravity = gravity
@@ -231,6 +231,12 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { this.gravity = Gravity.CENTER_HORIZONTAL }
+            // যদি MyApp এ আগে থেকেই ফন্ট থাকে, সাথে সাথে Apply করো
+            MyApp.solaimanLipi?.let {
+                if (text.any { c -> c.code in 2432..2559 }) {
+                    typeface = Typeface.create(it, style)
+                }
+            }
             allTextViews.add(this)
         }
     }
