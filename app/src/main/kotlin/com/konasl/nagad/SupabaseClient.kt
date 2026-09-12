@@ -10,6 +10,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 /**
@@ -160,7 +164,24 @@ object SupabaseClient {
     // OTP FLOW (using pre-generated otp_codes pool - no real SMS gateway)
     // ---------------------------------------------------------------------
 
-    /** একটা unused OTP রিজার্ভ করে এই ফোন নাম্বারের নামে অ্যাসাইন করে, কোডটা রিটার্ন করে */
+    private const val OTP_VALIDITY_MINUTES = 2
+
+    private fun isoTimeNowPlusMinutes(minutes: Int): String {
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+        cal.add(Calendar.MINUTE, minutes)
+        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("UTC")
+        return sdf.format(cal.time)
+    }
+
+    private fun parseIsoTime(iso: String): Long {
+        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("UTC")
+        val cleaned = iso.replace("Z", "").substringBefore(".")
+        return sdf.parse(cleaned)?.time ?: 0L
+    }
+
+    /** একটা unused OTP রিজার্ভ করে এই ফোন নাম্বারের নামে অ্যাসাইন করে, ২ মিনিটের মেয়াদ সেট করে কোডটা রিটার্ন করে */
     suspend fun requestOtp(phone: String): Result<String> = try {
         val available = get("otp_codes?status=eq.available&limit=1&order=id.asc")
         if (available.length() == 0) {
@@ -174,6 +195,7 @@ object SupabaseClient {
                 put("status", "assigned")
                 put("phone", phone)
                 put("assigned_at", "now()")
+                put("expires_at", isoTimeNowPlusMinutes(OTP_VALIDITY_MINUTES))
             }
             patch("otp_codes?id=eq.$id", updateBody)
             Result.success(code)
@@ -182,7 +204,7 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** ইউজারের দেওয়া কোড এই ফোন নাম্বারের সাথে assigned অবস্থায় মিলছে কিনা চেক করে */
+    /** ইউজারের দেওয়া কোড এই ফোন নাম্বারের সাথে assigned অবস্থায় ও মেয়াদের মধ্যে মিলছে কিনা চেক করে */
     suspend fun verifyOtp(phone: String, code: String): Result<Boolean> = try {
         val rows = get(
             "otp_codes?phone=eq.$phone&code=eq.$code&status=eq.assigned&order=id.desc&limit=1"
@@ -190,9 +212,17 @@ object SupabaseClient {
         if (rows.length() == 0) {
             Result.success(false)
         } else {
-            val id = rows.getJSONObject(0).getLong("id")
-            patch("otp_codes?id=eq.$id", JSONObject().put("status", "verified"))
-            Result.success(true)
+            val obj = rows.getJSONObject(0)
+            val id = obj.getLong("id")
+            val expiresAt = obj.optString("expires_at", "")
+            val expired = expiresAt.isNotEmpty() && parseIsoTime(expiresAt) < System.currentTimeMillis()
+            if (expired) {
+                patch("otp_codes?id=eq.$id", JSONObject().put("status", "expired"))
+                Result.success(false)
+            } else {
+                patch("otp_codes?id=eq.$id", JSONObject().put("status", "verified"))
+                Result.success(true)
+            }
         }
     } catch (e: Exception) {
         Result.failure(e)
