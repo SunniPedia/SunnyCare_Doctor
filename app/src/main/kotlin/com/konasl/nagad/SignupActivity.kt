@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -41,6 +42,11 @@ class SignupActivity : AppCompatActivity() {
 
     private lateinit var rootView: FrameLayout
     private lateinit var scrollView: NestedScrollView
+    private lateinit var containerView: LinearLayout
+
+    // কীবোর্ড শো/হাইড ট্র্যাক করার জন্য এবং কনটেইনারের স্বাভাবিক (কীবোর্ড ছাড়া) বটম প্যাডিং মনে রাখার জন্য
+    private var isKeyboardShowing = false
+    private var normalContainerBottomPadding = 0
 
     private var phone: String = ""
 
@@ -86,6 +92,8 @@ class SignupActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(48), dp(24), dp(40))
         }
+        containerView = container
+        normalContainerBottomPadding = dp(40)
 
         val icon = SignupIconView(this).apply {
             layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply { gravity = Gravity.CENTER_HORIZONTAL }
@@ -156,18 +164,9 @@ class SignupActivity : AppCompatActivity() {
         // যাতে ইউজারকে নিজে থেকে স্ক্রল করে ফিল্ড খুঁজতে না হয়
         val scrollToViewOnFocus = View.OnFocusChangeListener { v, hasFocus ->
             if (hasFocus) {
-                v.post {
-                    // v-এর absolute Y-অবস্থান বের করে (parent chain ধরে যোগ করে) সেই পর্যন্ত স্ক্রল করা হচ্ছে,
-                    // যাতে ফোকাসড ফিল্ডটি কীবোর্ডের ওপরে দৃশ্যমান থাকে
-                    var offsetY = 0
-                    var current: View = v
-                    while (current !== scroll) {
-                        offsetY += current.top
-                        current = current.parent as View
-                    }
-                    val extraPadding = dp(16)
-                    scroll.smoothScrollTo(0, (offsetY - extraPadding).coerceAtLeast(0))
-                }
+                // কীবোর্ড আসার অ্যানিমেশন/রিসাইজ শেষ হওয়ার জন্য সামান্য অপেক্ষা করে তারপর স্ক্রল করা হচ্ছে,
+                // নাহলে রিসাইজ হওয়ার আগেই ভুল পজিশনে স্ক্রল হয়ে যেতে পারে
+                v.postDelayed({ scrollFieldIntoView(v) }, 120)
             }
         }
         nameInput.onFocusChangeListener = scrollToViewOnFocus
@@ -244,6 +243,57 @@ class SignupActivity : AppCompatActivity() {
         // Activity তৈরি হওয়ার সময় রুট ভিউ ফোকাস নিয়ে নেয়, ফলে কোনো EditText অটো-ফোকাসড না হয়ে
         // কীবোর্ড নিজে থেকে খুলে যায় না — ইউজার নিজে ট্যাপ করলে তবেই কীবোর্ড আসবে
         root.requestFocus()
+
+        // কীবোর্ড ওপেন/ক্লোজ হওয়া ডিটেক্ট করার জন্য গ্লোবাল লেআউট লিসেনার।
+        // কীবোর্ড ওপেন থাকলে কনটেইনারের নিচে কীবোর্ডের উচ্চতার সমান অতিরিক্ত জায়গা যোগ করা হয়,
+        // যাতে "জরুরি যোগাযোগ নাম্বার"-এর পরের ফিল্ড, সাবমিট বাটন — সবকিছু স্ক্রল করে কীবোর্ডের
+        // উপরে সম্পূর্ণ দৃশ্যমান জায়গায় আনা যায়, কোনো কিছু কীবোর্ডের নিচে লুকিয়ে না থাকে।
+        root.viewTreeObserver.addOnGlobalLayoutListener {
+            val visibleFrame = Rect()
+            root.getWindowVisibleDisplayFrame(visibleFrame)
+            val screenHeight = root.rootView.height
+            val keypadHeight = screenHeight - visibleFrame.bottom
+
+            val keyboardVisibleNow = keypadHeight > screenHeight * 0.15
+
+            if (keyboardVisibleNow) {
+                isKeyboardShowing = true
+                // কনটেইনারের বটম প্যাডিং = কীবোর্ডের উচ্চতা + কিছুটা বাড়তি জায়গা,
+                // যাতে সবচেয়ে নিচের ফিল্ড/বাটনও কীবোর্ডের উপরে স্ক্রল করে আনা যায়
+                containerView.setPadding(
+                    containerView.paddingLeft,
+                    containerView.paddingTop,
+                    containerView.paddingRight,
+                    keypadHeight + dp(24)
+                )
+                // যে ফিল্ডে বর্তমানে ফোকাস আছে সেটিকে আবার নতুন প্যাডিং অনুযায়ী দৃশ্যমান জায়গায় স্ক্রল করা হচ্ছে
+                currentFocus?.let { focused ->
+                    scroll.post { scrollFieldIntoView(focused) }
+                }
+            } else if (isKeyboardShowing) {
+                isKeyboardShowing = false
+                containerView.setPadding(
+                    containerView.paddingLeft,
+                    containerView.paddingTop,
+                    containerView.paddingRight,
+                    normalContainerBottomPadding
+                )
+            }
+        }
+    }
+
+    // ফোকাসড ভিউটির scroll-কনটেন্টের মধ্যে absolute Y পজিশন বের করে সেই পর্যন্ত স্ক্রল করা হয়,
+    // যাতে ভিউটি (এবং তার আশেপাশের কনটেন্ট, যেমন সাবমিট বাটন) কীবোর্ডের উপরে দৃশ্যমান জায়গায় থাকে
+    private fun scrollFieldIntoView(v: View) {
+        var offsetY = 0
+        var current: View = v
+        while (current !== scrollView) {
+            offsetY += current.top
+            val parent = current.parent as? View ?: return
+            current = parent
+        }
+        val extraPadding = dp(16)
+        scrollView.smoothScrollTo(0, (offsetY - extraPadding).coerceAtLeast(0))
     }
 
     private fun hideKeyboard() {
