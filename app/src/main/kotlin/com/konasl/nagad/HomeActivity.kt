@@ -1,14 +1,18 @@
 package com.konasl.nagad
 
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -18,60 +22,25 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
 
-/**
- * ---------------------------------------------------------------------
- * HomeActivity — আপলোড করা "SunnyCare" স্ক্রিনশট (হোম / ডাক্তারের প্রোফাইল /
- * স্বাস্থ্য টিপস) অনুযায়ী পুরো UI রিস্কিন করা হয়েছে:
- *   • Plain mint background, ভারী গ্র্যাডিয়েন্ট হেডারের বদলে হালকা টপ-বার
- *     (অ্যাভাটার + সময়ভিত্তিক শুভেচ্ছা + নোটিফিকেশন বেল)
- *   • ডাক্তারের কার্ড: স্কয়ার অ্যাভাটার, ভেরিফায়েড ব্যাজ, রেটিং পিল,
- *     হাসপাতালের নাম, আউটলাইন এক্সপার্টাইজ চিপস
- *   • Quick actions: বড় টিল "বুক অ্যাপয়েন্টমেন্ট" কার্ড + পাশে দুইটি সাদা কার্ড
- *     (আমার অ্যাপয়েন্টমেন্ট / জরুরি যোগাযোগ), নিচে সেকেন্ডারি অ্যাকশন চিপস সারি
- *     (প্রেসক্রিপশন / প্রোফাইল / [অ্যাডমিন-শুধু] পেমেন্ট ভেরিফিকেশন)
- *   • "আসন্ন অ্যাপয়েন্টমেন্ট" প্রিভিউ (date-badge কার্ড) + "সব দেখুন" লিংক
- *   • নিচে ডার্ক "আজকের স্বাস্থ্য টিপস" ব্যানার কার্ড
- *
- * সমস্ত আগের ফিচার অক্ষুণ্ণ: বটম ন্যাভিগেশন (হোম/অ্যাপয়েন্টমেন্ট/প্রোফাইল),
- * প্রোফাইল প্যানেল, অ্যাপয়েন্টমেন্ট লিস্ট লোডিং, কল/লগআউট/অ্যাডমিন অ্যাকশন ইত্যাদি।
- * ---------------------------------------------------------------------
- */
 class HomeActivity : AppCompatActivity() {
 
-    // ---------------------------------------------------------------
-    // Palette — আপলোড করা ছবির ডিজাইন সিস্টেম অনুযায়ী
-    // ---------------------------------------------------------------
     private val colorPrimary = Color.parseColor("#0F6C61")
     private val colorPrimaryLight = Color.parseColor("#16897A")
-    private val colorPrimaryDark = Color.parseColor("#0A2A26")
+    private val colorPrimaryDark = Color.parseColor("#0A4A42")
     private val colorAccent = Color.parseColor("#F59E0B")
-    private val colorAccentSoft = Color.parseColor("#FEF3C7")
-    private val colorScreenBg = Color.parseColor("#F8FFFE")
+    private val colorBg = Color.parseColor("#F4F7F6")
+    private val colorTextMuted = Color.parseColor("#6B7280")
+    private val colorDark = Color.parseColor("#111827")
     private val colorCard = Color.WHITE
-    private val colorBorder = Color.parseColor("#E6EFED")
-    private val colorTextMuted = Color.parseColor("#6B7C7A")
-    private val colorDark = Color.parseColor("#0A2A26")
-    private val colorChipBg = Color.parseColor("#EEF6F4")
-    private val colorDanger = Color.parseColor("#DC2626")
-    private val colorDangerSoft = Color.parseColor("#FEE2E2")
-    private val colorSuccess = Color.parseColor("#16A34A")
+    private val colorFieldBorder = Color.parseColor("#E7ECEA")
 
     // ডাক্তারের তথ্য
     private val doctorPhoneForCall = "+8801632336631" // TODO: বসান
-    private val doctorName = "ডা. মাসুম বিল্লাহ সানি"
-    private val doctorCreds = "MBBS, DMU, PGT, MCGP, CCD • BMDC A-17630"
-    private val doctorHospital = "পার্কভিউ হাসপাতাল"
-    private val doctorRating = "৪.৯"
-    private val doctorPatients = "২.৩k রোগী"
-    private val doctorTags = listOf("মেডিসিন", "শিশু", "ডায়াবেটিস")
 
     private lateinit var appointmentsContainer: LinearLayout
-    private lateinit var homeUpcomingContainer: LinearLayout
     private lateinit var greetingText: TextView
+    private lateinit var actionsGrid: GridLayout
 
     // ---------------- ন্যাভিগেশন ----------------
     private enum class Tab { HOME, APPOINTMENTS, PROFILE }
@@ -87,7 +56,7 @@ class HomeActivity : AppCompatActivity() {
     private lateinit var navProfile: NavItemViews
 
     // ---------------- প্রোফাইল প্যানেল ----------------
-    private lateinit var profileAvatar: TextView
+    private lateinit var profileAvatar: PatientAvatarView
     private lateinit var profileNameText: TextView
     private lateinit var profilePhoneText: TextView
     private lateinit var profileDetailsContainer: LinearLayout
@@ -103,7 +72,7 @@ class HomeActivity : AppCompatActivity() {
 
         val root = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            setBackgroundColor(colorScreenBg)
+            setBackgroundColor(colorBg)
         }
 
         // ---------------- HOME PANEL ----------------
@@ -113,77 +82,64 @@ class HomeActivity : AppCompatActivity() {
         }
         val homeContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(46), dp(18), dp(110))
+            setPadding(0, 0, 0, dp(100))
         }
 
-        // ---------------- হালকা টপ-বার: অ্যাভাটার + শুভেচ্ছা + নোটিফিকেশন বেল ----------------
+        // ---------------- HEADER ----------------
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(colorPrimaryLight, colorPrimary, colorPrimaryDark))
+            setPadding(dp(22), dp(44), dp(22), dp(26))
         }
-        val nameFirstLetter = (SupabaseClient.getName(this)?.trim()?.firstOrNull() ?: 'র').toString()
-        val headerAvatar = circleAvatar(nameFirstLetter, 46, colorPrimary)
         val headerTextCol = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val greetingPrefix = text(timeBasedGreeting(), 12.5f, Typeface.NORMAL, colorTextMuted, Gravity.START)
-        greetingText = text("${SupabaseClient.getName(this) ?: "রোগী"} 👋", 17f, Typeface.BOLD, colorDark, Gravity.START)
-        headerTextCol.addView(greetingPrefix)
+        greetingText = text("স্বাগতম, ${SupabaseClient.getName(this) ?: "রোগী"}", 18f, Typeface.BOLD, Color.WHITE, Gravity.START)
+        val appTitle = text("SunnyCare ☀ Doctor", 12f, Typeface.NORMAL, Color.argb(210, 255, 255, 255), Gravity.START)
         headerTextCol.addView(greetingText)
+        headerTextCol.addView(appTitle)
 
-        val bellBtn = FrameLayout(this).apply {
-            background = roundedBg(Color.WHITE, 30f)
-            elevation = dp(3).toFloat()
-            layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
-            addView(text("🔔", 18f, Typeface.NORMAL, colorDark, Gravity.CENTER).apply {
-                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            })
-            addView(View(this@HomeActivity).apply {
-                background = roundedBg(colorDanger, 10f)
-                layoutParams = FrameLayout.LayoutParams(dp(9), dp(9)).apply { gravity = Gravity.TOP or Gravity.END; topMargin = dp(8); rightMargin = dp(8) }
-            })
-            setOnClickListener { showComingSoon("নোটিফিকেশন") }
+        val logoutBtn = TextView(this).apply {
+            text = "লগ আউট  ⎋"
+            setTextColor(Color.WHITE)
+            textSize = 12.5f
+            setTypeface(null, Typeface.BOLD)
+            background = roundedBg(Color.argb(50, 255, 255, 255), 30f)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            setOnClickListener { onLogout() }
         }
-        header.addView(headerAvatar)
         header.addView(headerTextCol)
-        header.addView(bellBtn)
+        header.addView(logoutBtn)
 
-        // ---------------- DOCTOR CARD ----------------
+        // ---------------- DOCTOR CARD (redesigned, unique) ----------------
         val doctorCard = buildDoctorCard()
 
-        // ---------------- QUICK ACTIONS (প্রাইমারি + সেকেন্ডারি) ----------------
-        val quickActionsPrimary = buildPrimaryQuickActions()
-        val quickActionsSecondary = buildSecondaryQuickActions()
-
-        // ---------------- আসন্ন অ্যাপয়েন্টমেন্ট (হোম প্রিভিউ) ----------------
-        val upcomingHeaderRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(22) }
+        // ---------------- QUICK ACTIONS ----------------
+        actionsGrid = GridLayout(this).apply {
+            columnCount = 2
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(14), dp(18), dp(14), 0)
+            }
         }
-        upcomingHeaderRow.addView(text("আসন্ন অ্যাপয়েন্টমেন্ট", 15f, Typeface.BOLD, colorDark, Gravity.START).apply {
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        actionsGrid.addView(actionCard("📅", "অ্যাপয়েন্টমেন্ট বুক", colorPrimary) {
+            startActivity(Intent(this, BookAppointmentActivity::class.java))
         })
-        upcomingHeaderRow.addView(text("সব দেখুন", 12.5f, Typeface.BOLD, colorPrimary, Gravity.END).apply {
-            isClickable = true; isFocusable = true
-            setOnClickListener { switchTab(Tab.APPOINTMENTS) }
-        })
-        homeUpcomingContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
-        }
+        actionsGrid.addView(actionCard("📞", "ডাক্তারকে কল করুন", Color.parseColor("#2563EB")) { callDoctor() })
+        actionsGrid.addView(actionCard("💊", "প্রেসক্রিপশন", Color.parseColor("#7C3AED")) { showComingSoon("প্রেসক্রিপশন হিস্ট্রি") })
+        actionsGrid.addView(actionCard("👤", "আমার প্রোফাইল", Color.parseColor("#DB2777")) { switchTab(Tab.PROFILE) })
 
-        // ---------------- স্বাস্থ্য টিপস ব্যানার ----------------
-        val tipBanner = buildHealthTipBanner()
+        // ---------------- ADMIN-ONLY: পেমেন্ট ভেরিফিকেশন ----------------
+        if (SupabaseClient.isAdmin(this)) {
+            actionsGrid.addView(actionCard("✅", "পেমেন্ট ভেরিফিকেশন", Color.parseColor("#059669")) {
+                startActivity(Intent(this, AdminPaymentVerificationActivity::class.java))
+            })
+        }
 
         homeContent.addView(header)
         homeContent.addView(doctorCard)
-        homeContent.addView(quickActionsPrimary)
-        homeContent.addView(quickActionsSecondary)
-        homeContent.addView(upcomingHeaderRow)
-        homeContent.addView(homeUpcomingContainer)
-        homeContent.addView(tipBanner)
+        homeContent.addView(actionsGrid)
         homeScroll.addView(homeContent)
         homePanel = homeScroll
 
@@ -207,7 +163,7 @@ class HomeActivity : AppCompatActivity() {
         appointmentsScroll.addView(appointmentsContent)
         appointmentsPanel = appointmentsScroll
 
-        // ---------------- PROFILE PANEL ----------------
+        // ---------------- PROFILE PANEL (এই একটিভিটির মধ্যেই) ----------------
         val profileScroll = NestedScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -239,16 +195,6 @@ class HomeActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         loadAppointments()
-    }
-
-    private fun timeBasedGreeting(): String {
-        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        return when {
-            hour < 12 -> "সকাল ভালো,"
-            hour < 16 -> "শুভ অপরাহ্ন,"
-            hour < 20 -> "শুভ সন্ধ্যা,"
-            else -> "শুভ রাত্রি,"
-        }
     }
 
     // ------------------------------------------------------------------
@@ -325,225 +271,130 @@ class HomeActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // ডাক্তারের কার্ড — আপলোড করা ছবির (Image 1 / Image 2) মতো
+    // ডাক্তারের কার্ড - ইউনিক ও প্রিমিয়াম ডিজাইন
     // ------------------------------------------------------------------
     private fun buildDoctorCard(): LinearLayout {
-        val card = LinearLayout(this).apply {
+        val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = cardStroke(colorBorder, 20f)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            background = roundedBg(colorCard, 22f)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(18)
+                setMargins(dp(18), dp(-20), dp(18), 0)
             }
-            elevation = dp(3).toFloat()
+            elevation = dp(14).toFloat()
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(22).toFloat())
+                }
+            }
+            clipToOutline = true
         }
 
+        // উপরে একটা সরু গ্রেডিয়েন্ট রিবন - কার্ডকে আলাদা করে চেনায়
+        val ribbon = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5))
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(colorAccent, colorPrimary, colorPrimaryDark))
+        }
+        outer.addView(ribbon)
+
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+        }
+
+        // নাম + অ্যাভাটার + এভেইলেবিলিটি স্ট্যাটাস
         val topRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
         }
-        val avatar = squareAvatar("MS", 60, colorPrimaryDark, 16f)
-        val textCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(14) }
+        val avatarWrap = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64))
         }
-        val nameRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        nameRow.addView(text(doctorName, 15.5f, Typeface.BOLD, colorPrimaryDark, Gravity.START))
-        nameRow.addView(text(" ✓", 13f, Typeface.BOLD, colorSuccess, Gravity.START))
-        textCol.addView(nameRow)
-        textCol.addView(text(doctorCreds, 11f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
-            setPadding(0, dp(3), 0, 0)
+        avatarWrap.addView(DoctorAvatarView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(dp(64), dp(64))
         })
-        topRow.addView(avatar)
-        topRow.addView(textCol)
-        card.addView(topRow)
+        avatarWrap.addView(View(this).apply {
+            background = roundedBg(Color.parseColor("#22C55E"), 20f)
+            layoutParams = FrameLayout.LayoutParams(dp(14), dp(14)).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+            }
+        })
+        val doctorTextCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(14) }
+        }
+        doctorTextCol.addView(text("ডা. মাসুম বিল্লাহ সানি", 16.5f, Typeface.BOLD, colorDark, Gravity.START))
+        doctorTextCol.addView(text("মেডিসিন, শিশু ও ডায়াবেটিস বিশেষজ্ঞ", 12f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+            setPadding(0, dp(2), 0, 0)
+        })
+        doctorTextCol.addView(text("🟢 এখন অনলাইনে উপলব্ধ", 11f, Typeface.BOLD, Color.parseColor("#16A34A"), Gravity.START).apply {
+            setPadding(0, dp(6), 0, 0)
+        })
+        topRow.addView(avatarWrap)
+        topRow.addView(doctorTextCol)
+        inner.addView(topRow)
 
-        // রেটিং পিল + হাসপাতাল
+        // রেটিং রো
         val ratingRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(14), 0, 0)
         }
-        val ratingPill = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = roundedBg(colorAccentSoft, 30f)
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            addView(text("🏅 ", 12f, Typeface.NORMAL, colorAccent, Gravity.CENTER))
-            addView(text("$doctorRating • $doctorPatients", 11.5f, Typeface.BOLD, colorAccent, Gravity.CENTER))
-        }
-        ratingRow.addView(ratingPill)
-        ratingRow.addView(text("  •  $doctorHospital", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START))
-        card.addView(ratingRow)
+        ratingRow.addView(text("★★★★★", 13f, Typeface.BOLD, colorAccent, Gravity.START))
+        ratingRow.addView(text(" ৪.৮  •  ৫০০+ রোগী দেখেছেন", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START))
+        inner.addView(ratingRow)
 
-        // এক্সপার্টাইজ চিপস
-        val chipsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(12)
-            }
-        }
-        doctorTags.forEachIndexed { idx, tag ->
-            chipsRow.addView(text(tag, 11f, Typeface.BOLD, colorPrimaryDark, Gravity.CENTER).apply {
-                background = cardStroke(colorBorder, 30f)
-                setPadding(dp(14), dp(8), dp(14), dp(8))
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    if (idx > 0) marginStart = dp(8)
-                }
-            })
-        }
-        card.addView(chipsRow)
-
-        card.isClickable = true
-        card.isFocusable = true
-        card.setOnClickListener { showComingSoon("ডাক্তারের প্রোফাইল") }
-        return card
-    }
-
-    // ------------------------------------------------------------------
-    // প্রাইমারি কুইক অ্যাকশন — বড় "বুক অ্যাপয়েন্টমেন্ট" কার্ড + দুইটি সাদা কার্ড
-    // ------------------------------------------------------------------
-    private fun buildPrimaryQuickActions(): LinearLayout {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(18)
-            }
-        }
-
-        val bookCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBg(colorPrimaryDark, 20f)
-            setPadding(dp(18), dp(20), dp(16), dp(20))
-            isClickable = true
-            isFocusable = true
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = dp(10) }
-            setOnClickListener { startActivity(Intent(this@HomeActivity, BookAppointmentActivity::class.java)) }
-            addView(text("📅", 24f, Typeface.NORMAL, Color.WHITE, Gravity.START))
-            addView(text("অ্যাপয়েন্টমেন্ট বুক করুন", 14.5f, Typeface.BOLD, Color.WHITE, Gravity.START).apply {
-                setPadding(0, dp(14), 0, 0)
-            })
-            addView(text("ফি ৮০০ টাকা", 11.5f, Typeface.NORMAL, Color.argb(210, 255, 255, 255), Gravity.START).apply {
-                setPadding(0, dp(4), 0, 0)
-            })
-        }
-
-        val rightCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-        }
-        rightCol.addView(smallActionCard("📄", "আমার অ্যাপয়েন্টমেন্ট", colorPrimary) { switchTab(Tab.APPOINTMENTS) })
-        rightCol.addView(space(dp(10)))
-        rightCol.addView(smallActionCard("📞", "জরুরি যোগাযোগ", colorDanger) { callDoctor() })
-
-        row.addView(bookCard)
-        row.addView(rightCol)
-        return row
-    }
-
-    private fun smallActionCard(emoji: String, label: String, accentColor: Int, onClick: () -> Unit): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = cardStroke(colorBorder, 16f)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            isClickable = true
-            isFocusable = true
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-            setOnClickListener { onClick() }
-            addView(text(emoji, 16f, Typeface.NORMAL, accentColor, Gravity.CENTER).apply {
-                background = roundedBg(Color.argb(28, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor)), 30f)
-                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
-                gravity = Gravity.CENTER
-            })
-            addView(text(label, 12f, Typeface.BOLD, colorDark, Gravity.START).apply {
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) }
-            })
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // সেকেন্ডারি কুইক অ্যাকশন — আগের সব ফিচার (প্রেসক্রিপশন/প্রোফাইল/অ্যাডমিন) বজায় রাখতে
-    // ------------------------------------------------------------------
-    private fun buildSecondaryQuickActions(): LinearLayout {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(10)
-            }
-        }
-        val items = mutableListOf<Triple<String, String, () -> Unit>>(
-            Triple("💊", "প্রেসক্রিপশন") { showComingSoon("প্রেসক্রিপশন হিস্ট্রি") },
-            Triple("👤", "আমার প্রোফাইল") { switchTab(Tab.PROFILE) }
+        // ডিগ্রি
+        inner.addView(
+            text(
+                "এম.বি.বি.এস (সি.ইউ), ডি.এম.ইউ (আল্ট্রা), পিজিটি,\nএম.সি.জি.পি (মেডিসিন ও শিশু), সি.সি.ডি (ডায়াবেটিস- বারডেম, ঢাকা)",
+                11f, Typeface.NORMAL, colorTextMuted, Gravity.START
+            ).apply { setPadding(0, dp(12), 0, 0) }
         )
-        if (SupabaseClient.isAdmin(this)) {
-            items.add(Triple("✅", "পেমেন্ট ভেরিফিকেশন") {
-                startActivity(Intent(this, AdminPaymentVerificationActivity::class.java))
-            })
-        }
-        items.forEachIndexed { idx, (emoji, label, onClick) ->
-            row.addView(secondaryChip(emoji, label, onClick).apply {
-                (layoutParams as LinearLayout.LayoutParams).apply {
-                    if (idx > 0) marginStart = dp(10)
+
+        // ভেরিফাইড ব্যাজ
+        inner.addView(
+            text("✓ বি.এম.ডি.সি এ-১৭৬৩০ • Verified", 10.5f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
+                background = roundedBg(Color.parseColor("#E4F3F1"), 30f)
+                setPadding(dp(12), dp(6), dp(12), dp(6))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = dp(12)
+                }
+            }
+        )
+
+        // পাতলা বিভাজক
+        inner.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(16) }
+            setBackgroundColor(colorFieldBorder)
+        })
+
+        // বিশেষজ্ঞতা - স্ক্রলযোগ্য চিপস
+        val expertise = listOf("নাক-কান-গলা", "এলার্জি", "শ্বাসকষ্ট", "চর্মরোগ", "উচ্চ রক্তচাপ", "বাত ব্যাথা")
+        val chipsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        expertise.forEach { item ->
+            chipsRow.addView(text(item, 11f, Typeface.BOLD, colorPrimaryDark, Gravity.CENTER).apply {
+                background = roundedBg(Color.parseColor("#EEF6F4"), 30f)
+                setPadding(dp(12), dp(7), dp(12), dp(7))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = dp(8)
                 }
             })
         }
-        return row
-    }
-
-    private fun secondaryChip(emoji: String, label: String, onClick: () -> Unit): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            background = cardStroke(colorBorder, 16f)
-            setPadding(dp(10), dp(12), dp(10), dp(12))
-            isClickable = true
-            isFocusable = true
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { onClick() }
-            addView(text(emoji, 16f, Typeface.NORMAL, colorPrimaryDark, Gravity.CENTER))
-            addView(text(label, 10.5f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
-                setPadding(0, dp(6), 0, 0)
-            })
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // স্বাস্থ্য টিপস ব্যানার (নিচে ডার্ক কার্ড)
-    // ------------------------------------------------------------------
-    private fun buildHealthTipBanner(): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = roundedBg(colorPrimaryDark, 18f)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            isClickable = true
-            isFocusable = true
+        val chipsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(22)
+                topMargin = dp(14)
             }
-            setOnClickListener { showComingSoon("স্বাস্থ্য টিপস") }
-            addView(text("💓", 20f, Typeface.NORMAL, colorAccent, Gravity.CENTER).apply {
-                background = roundedBg(Color.argb(40, 255, 255, 255), 14f)
-                layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
-                gravity = Gravity.CENTER
-            })
-            val textCol = LinearLayout(this@HomeActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
-            }
-            textCol.addView(text("আজকের স্বাস্থ্য টিপস", 13.5f, Typeface.BOLD, Color.WHITE, Gravity.START))
-            textCol.addView(text("ডায়াবেটিসে করলা ও মেথির উপকারিতা...", 11f, Typeface.NORMAL, Color.argb(210, 255, 255, 255), Gravity.START).apply {
-                setPadding(0, dp(3), 0, 0)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-            })
-            addView(textCol)
-            addView(text("›", 20f, Typeface.BOLD, Color.WHITE, Gravity.CENTER))
+            addView(chipsRow)
         }
+        inner.addView(chipsScroll)
+
+        outer.addView(inner)
+        return outer
     }
 
     // ------------------------------------------------------------------
-    // প্রোফাইল প্যানেল
+    // প্রোফাইল প্যানেল - এই একটিভিটির মধ্যেই সম্পূর্ণ প্রোফাইল দেখা যায়
     // ------------------------------------------------------------------
     private fun buildProfilePanel(): LinearLayout {
         val panel = LinearLayout(this).apply {
@@ -560,12 +411,14 @@ class HomeActivity : AppCompatActivity() {
         val headCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            background = cardStroke(colorBorder, 20f)
+            background = roundedBg(colorCard, 22f)
             setPadding(dp(20), dp(24), dp(20), dp(24))
+            elevation = dp(8).toFloat()
         }
-        profileAvatar = circleAvatar(
-            (SupabaseClient.getName(this)?.trim()?.firstOrNull() ?: 'র').toString(), 84, colorPrimaryDark, textSizeSp = 30f
-        ).apply { layoutParams = LinearLayout.LayoutParams(dp(84), dp(84)).apply { gravity = Gravity.CENTER_HORIZONTAL } }
+        profileAvatar = PatientAvatarView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(84), dp(84)).apply { gravity = Gravity.CENTER_HORIZONTAL }
+            initial = (SupabaseClient.getName(this@HomeActivity)?.trim()?.firstOrNull() ?: 'র').toString()
+        }
         profileNameText = text(SupabaseClient.getName(this) ?: "রোগী", 17f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
             setPadding(0, dp(14), 0, 0)
         }
@@ -579,21 +432,22 @@ class HomeActivity : AppCompatActivity() {
 
         profileDetailsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = cardStroke(colorBorder, 18f)
+            background = roundedBg(colorCard, 20f)
             setPadding(dp(4), dp(4), dp(4), dp(4))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(16)
             }
+            elevation = dp(6).toFloat()
         }
         body.addView(profileDetailsContainer)
 
         val logoutFromProfile = TextView(this).apply {
             text = "লগ আউট করুন"
-            setTextColor(colorDanger)
+            setTextColor(Color.parseColor("#DC2626"))
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
             gravity = Gravity.CENTER
-            background = roundedBg(colorDangerSoft, 14f)
+            background = roundedBg(Color.parseColor("#FEE2E2"), 14f)
             setPadding(0, dp(14), 0, dp(14))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(20)
@@ -641,7 +495,7 @@ class HomeActivity : AppCompatActivity() {
                         if (added) {
                             profileDetailsContainer.addView(View(this@HomeActivity).apply {
                                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
-                                setBackgroundColor(colorBorder)
+                                setBackgroundColor(colorFieldBorder)
                             })
                         }
                         profileDetailsContainer.addView(it)
@@ -653,19 +507,15 @@ class HomeActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // অ্যাপয়েন্টমেন্ট লোডিং — একই ফেচ থেকে হোম-প্রিভিউ ও অ্যাপয়েন্টমেন্ট-ট্যাব দুটোই আপডেট হয়
-    // ------------------------------------------------------------------
     private fun loadAppointments() {
         val patientId = SupabaseClient.getPatientId(this) ?: return
         appointmentsContainer.removeAllViews()
-        homeUpcomingContainer.removeAllViews()
-        appointmentsContainer.addView(text("লোড হচ্ছে...", 12.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER))
-        homeUpcomingContainer.addView(text("লোড হচ্ছে...", 12.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER))
+        val loadingText = text("লোড হচ্ছে...", 12.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER)
+        appointmentsContainer.addView(loadingText)
 
         lifecycleScope.launch {
             val result = SupabaseClient.getAppointments(patientId)
             appointmentsContainer.removeAllViews()
-            homeUpcomingContainer.removeAllViews()
             result.onSuccess { rows ->
                 if (rows.length() == 0) {
                     appointmentsContainer.addView(
@@ -673,107 +523,55 @@ class HomeActivity : AppCompatActivity() {
                             setPadding(0, dp(20), 0, dp(20))
                         }
                     )
-                    homeUpcomingContainer.addView(
-                        text("কোনো অ্যাপয়েন্টমেন্ট নেই। উপরে থেকে নতুন বুক করুন।", 12f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER).apply {
-                            setPadding(0, dp(10), 0, dp(10))
-                        }
-                    )
                 } else {
                     for (i in 0 until rows.length()) {
                         val obj = rows.getJSONObject(i)
-                        val date = obj.optString("preferred_date")
-                        val time = obj.optString("preferred_time")
-                        val reason = obj.optString("reason")
-                        val status = obj.optString("status")
-
-                        appointmentsContainer.addView(appointmentCard(date, time, reason, status))
+                        appointmentsContainer.addView(appointmentRow(
+                            date = obj.optString("preferred_date"),
+                            time = obj.optString("preferred_time"),
+                            reason = obj.optString("reason"),
+                            status = obj.optString("status")
+                        ))
                         appointmentsContainer.addView(space(dp(10)))
-
-                        if (i < 2) {
-                            homeUpcomingContainer.addView(appointmentCard(date, time, reason, status))
-                            if (i == 0 && rows.length() > 1) homeUpcomingContainer.addView(space(dp(10)))
-                        }
                     }
                 }
             }.onFailure {
-                val errText = text("অ্যাপয়েন্টমেন্ট লোড করা যায়নি", 12.5f, Typeface.NORMAL, colorDanger, Gravity.CENTER)
-                appointmentsContainer.addView(errText)
-                homeUpcomingContainer.addView(
-                    text("অ্যাপয়েন্টমেন্ট লোড করা যায়নি", 12.5f, Typeface.NORMAL, colorDanger, Gravity.CENTER)
+                appointmentsContainer.addView(
+                    text("অ্যাপয়েন্টমেন্ট লোড করা যায়নি", 12.5f, Typeface.NORMAL, Color.parseColor("#D32F2F"), Gravity.CENTER)
                 )
             }
         }
     }
 
-    /** ছবির মতো: তারিখ ব্যাজ + শিরোনাম/সময় + স্ট্যাটাস লাইন + রঙিন ডট */
-    private fun appointmentCard(date: String, time: String, reason: String, status: String): LinearLayout {
+    private fun appointmentRow(date: String, time: String, reason: String, status: String): LinearLayout {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = cardStroke(colorBorder, 16f)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = roundedBg(colorCard, 16f)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
         }
-
-        val (monthAbbr, dayNum) = formatDateBadge(date)
-        val dateBadge = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            background = roundedBg(colorChipBg, 12f)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            layoutParams = LinearLayout.LayoutParams(dp(52), ViewGroup.LayoutParams.WRAP_CONTENT)
-            addView(text(monthAbbr, 10.5f, Typeface.BOLD, colorPrimary, Gravity.CENTER))
-            addView(text(dayNum, 15f, Typeface.BOLD, colorPrimaryDark, Gravity.CENTER))
-        }
-
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val titleLine = if (time.isNotBlank()) "${reason.ifBlank { "সাধারণ পরামর্শ" }} • $time" else reason.ifBlank { "সাধারণ পরামর্শ" }
-        col.addView(text(titleLine, 13f, Typeface.BOLD, colorDark, Gravity.START))
-        col.addView(text(statusText(status), 11f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+        col.addView(text("$date • $time", 13f, Typeface.BOLD, colorDark, Gravity.START))
+        col.addView(text(reason.ifEmpty { "সাধারণ পরামর্শ" }, 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
             setPadding(0, dp(4), 0, 0)
         })
 
-        val dot = View(this).apply {
-            background = roundedBg(statusColor(status), 10f)
-            layoutParams = LinearLayout.LayoutParams(dp(10), dp(10))
+        val (statusLabel, statusColor) = when (status) {
+            "confirmed" -> "কনফার্মড" to Color.parseColor("#16A34A")
+            "completed" -> "সম্পন্ন" to Color.parseColor("#2563EB")
+            "cancelled" -> "বাতিল" to Color.parseColor("#DC2626")
+            else -> "পেন্ডিং" to colorAccent
         }
-
-        row.addView(dateBadge)
+        val badge = text(statusLabel, 10.5f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+            background = roundedBg(statusColor, 30f)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+        }
         row.addView(col)
-        row.addView(dot)
+        row.addView(badge)
         return row
-    }
-
-    private fun statusText(status: String): String = when (status) {
-        "confirmed" -> "কনফার্মড করা হয়েছে"
-        "completed" -> "সম্পন্ন হয়েছে"
-        "cancelled" -> "বাতিল করা হয়েছে"
-        else -> "পেমেন্ট যাচাই চলছে"
-    }
-
-    private fun statusColor(status: String): Int = when (status) {
-        "confirmed" -> colorSuccess
-        "completed" -> Color.parseColor("#2563EB")
-        "cancelled" -> colorDanger
-        else -> colorAccent
-    }
-
-    /** "yyyy-MM-dd" ফরম্যাটের তারিখ থেকে বাংলা মাস-সংক্ষেপ ও দিনসংখ্যা বের করে, ব্যর্থ হলে কাঁচা টেক্সট রিটার্ন করে */
-    private fun formatDateBadge(dateStr: String): Pair<String, String> {
-        val monthAbbrevs = arrayOf("জানু", "ফেব্রু", "মার্চ", "এপ্রি", "মে", "জুন", "জুলা", "আগ", "সেপ্টে", "অক্টো", "নভে", "ডিসে")
-        return try {
-            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
-            val d = sdf.parse(dateStr)
-            val cal = Calendar.getInstance()
-            cal.time = d!!
-            val month = monthAbbrevs[cal.get(Calendar.MONTH)]
-            val day = cal.get(Calendar.DAY_OF_MONTH).toString()
-            Pair(month, day)
-        } catch (e: Exception) {
-            Pair("তারিখ", dateStr.takeLast(2))
-        }
     }
 
     // ------------------------------------------------------------------
@@ -802,6 +600,37 @@ class HomeActivity : AppCompatActivity() {
     // ------------------------------------------------------------------
     // UI helpers
     // ------------------------------------------------------------------
+    private fun actionCard(emoji: String, label: String, color: Int, onClick: () -> Unit): LinearLayout {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = roundedBg(colorCard, 18f)
+            setPadding(dp(14), dp(20), dp(14), dp(20))
+            layoutParams = GridLayout.LayoutParams(
+                GridLayout.spec(GridLayout.UNDEFINED, 1f),
+                GridLayout.spec(GridLayout.UNDEFINED, 1f)
+            ).apply {
+                width = 0
+                setMargins(dp(4), dp(4), dp(4), dp(4))
+            }
+            elevation = dp(2).toFloat()
+            setOnClickListener { onClick() }
+        }
+        val iconCircle = TextView(this).apply {
+            text = emoji
+            textSize = 22f
+            gravity = Gravity.CENTER
+            background = roundedBg(Color.argb(30, Color.red(color), Color.green(color), Color.blue(color)), 40f)
+            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52))
+        }
+        val labelView = text(label, 12f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
+            setPadding(0, dp(10), 0, 0)
+        }
+        card.addView(iconCircle)
+        card.addView(labelView)
+        return card
+    }
+
     private fun text(t: String, sizeSp: Float, style: Int, color: Int, gravity: Int): TextView = TextView(this).apply {
         text = t; textSize = sizeSp; setTypeface(null, style); setTextColor(color); this.gravity = gravity
     }
@@ -815,33 +644,49 @@ class HomeActivity : AppCompatActivity() {
         setColor(color)
     }
 
-    /** সাদা কার্ড + পাতলা বর্ডার — নতুন ডিজাইন সিস্টেমের মূল কার্ড টোকেন */
-    private fun cardStroke(borderColor: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = radiusDp * resources.displayMetrics.density
-        setColor(colorCard)
-        setStroke(dp(1), borderColor)
+    class DoctorAvatarView(context: Context) : View(context) {
+        private val paintBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+        private val paintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val paintRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 5f; color = Color.WHITE
+        }
+
+        init { setLayerType(LAYER_TYPE_SOFTWARE, null); paintBg.setShadowLayer(10f, 0f, 4f, Color.argb(70, 0, 0, 0)) }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            paintBg.shader = RadialGradient(w / 2, h / 2, w / 2, Color.parseColor("#16897A"), Color.parseColor("#0A4A42"), Shader.TileMode.CLAMP)
+            canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, paintBg)
+            canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, paintRing)
+            canvas.drawCircle(w / 2, h / 2, w * 0.30f, paintOrange.apply { color = Color.parseColor("#F59E0B") })
+            val crossW = w * 0.22f; val crossH = w * 0.07f
+            canvas.drawRect(w / 2 - crossW / 2, h / 2 - crossH / 2, w / 2 + crossW / 2, h / 2 + crossH / 2, paintWhite)
+            canvas.drawRect(w / 2 - crossH / 2, h / 2 - crossW / 2, w / 2 + crossH / 2, h / 2 + crossW / 2, paintWhite)
+        }
     }
 
-    /** বৃত্তাকার ইনিশিয়াল অ্যাভাটার (রোগী/হেডার অ্যাভাটারের জন্য) */
-    private fun circleAvatar(initial: String, sizeDp: Int, bg: Int, textSizeSp: Float = sizeDp * 0.36f): TextView = TextView(this).apply {
-        text = initial.uppercase()
-        gravity = Gravity.CENTER
-        setTextColor(Color.WHITE)
-        setTypeface(null, Typeface.BOLD)
-        textSize = textSizeSp
-        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(bg) }
-        layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
-    }
+    /** রোগীর প্রোফাইল অ্যাভাটার - নামের প্রথম অক্ষর দিয়ে তৈরি (কোনো ছবি ছাড়া) */
+    class PatientAvatarView(context: Context) : View(context) {
+        var initial: String = "র"
+            set(value) { field = value; invalidate() }
 
-    /** স্কয়ার-রাউন্ডেড ইনিশিয়াল অ্যাভাটার (ডাক্তারের অ্যাভাটারের জন্য, ছবির "MS" ব্যাজের মতো) */
-    private fun squareAvatar(initial: String, sizeDp: Int, bg: Int, radiusDp: Float): TextView = TextView(this).apply {
-        text = initial.uppercase()
-        gravity = Gravity.CENTER
-        setTextColor(Color.WHITE)
-        setTypeface(null, Typeface.BOLD)
-        textSize = sizeDp * 0.30f
-        background = roundedBg(bg, radiusDp)
-        layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+        private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
+        }
+
+        init { textPaint.textSize = 30f * resources.displayMetrics.scaledDensity / resources.displayMetrics.density }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            bgPaint.shader = RadialGradient(w / 2, h / 2, w / 2, Color.parseColor("#16897A"), Color.parseColor("#0A4A42"), Shader.TileMode.CLAMP)
+            canvas.drawCircle(w / 2, h / 2, w / 2, bgPaint)
+            textPaint.textSize = h * 0.4f
+            val cy = h / 2 - (textPaint.descent() + textPaint.ascent()) / 2
+            canvas.drawText(initial.uppercase(), w / 2, cy, textPaint)
+        }
     }
 }
