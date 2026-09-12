@@ -3,9 +3,6 @@ package com.konasl.nagad
 import android.app.Activity
 import android.app.Application
 import android.graphics.Typeface
-import android.graphics.fonts.Font
-import android.graphics.fonts.FontFamily
-import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -28,12 +25,10 @@ class MyApp : Application() {
 
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
-                
-                // DecorView পাওয়ার পর Auto Watcher চালু করো
                 activity.window.decorView.post {
                     val root = activity.window.decorView.rootView as ViewGroup
                     applyFontToAllViews(root)
-                    watchForNewViews(root) // নতুন Programmatically View Add হলেও ধরবে
+                    watchForNewViews(root)
                 }
             }
             override fun onActivityStarted(activity: Activity) {}
@@ -50,31 +45,21 @@ class MyApp : Application() {
             val fontFile = File(filesDir, "fonts/SolaimanLipi.ttf")
             if (fontFile.exists()) {
                 banglaTypeface = Typeface.createFromFile(fontFile)
-                mixedTypeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val systemFamily = FontFamily.Builder(Font.Builder(Typeface.DEFAULT).build()).build()
-                    Typeface.CustomFallbackBuilder(systemFamily)
-                        .addCustomFallback(
-                            FontFamily.Builder(Font.Builder(banglaTypeface!!).build()).build()
-                        ).build()
-                } else {
-                    banglaTypeface
-                }
+                // মিক্সড ফন্ট = SolaimanLipi, কিন্তু ইংরেজি না থাকলে আমরা Apply ই করবো না
+                // তাই ইংরেজি আগের মতোই সুন্দর থাকবে
+                mixedTypeface = banglaTypeface
             }
         } catch (e: Exception) { e.printStackTrace() }
     }
 
-    // নতুন View Add হলে অটো ধরার জন্য Watcher
     private fun watchForNewViews(viewGroup: ViewGroup) {
         viewGroup.setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
             override fun onChildViewAdded(parent: View, child: View) {
                 applyFontToAllViews(child)
-                if (child is ViewGroup) {
-                    watchForNewViews(child) // ভেতরে আরও ViewGroup থাকলে সেটাও Watch করো
-                }
+                if (child is ViewGroup) watchForNewViews(child)
             }
             override fun onChildViewRemoved(parent: View, child: View) {}
         })
-        // আগে থেকে থাকা ViewGroup গুলোতেও Watcher লাগাও
         viewGroup.children.forEach { child ->
             if (child is ViewGroup) watchForNewViews(child)
         }
@@ -87,8 +72,8 @@ class MyApp : Application() {
                 val hasBangla = view.text.any { c -> c.code in 2432..2559 } ||
                         view.hint?.any { c -> c.code in 2432..2559 } == true
 
+                // EditText হলে সবসময়, TextView হলে শুধু বাংলা থাকলে
                 if (isInput || hasBangla) {
-                    // EditText এর hint সহ ফন্ট Apply করার গ্যারান্টি
                     if (view.typeface != tf) {
                         val oldStyle = view.typeface?.style ?: Typeface.NORMAL
                         view.typeface = Typeface.create(tf, oldStyle)
