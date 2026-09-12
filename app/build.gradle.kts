@@ -43,4 +43,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+	// Supabase - Full Stack (No Firebase at all)
+    // Postgrest = Database (profiles, otps, appointments)
+    implementation("io.github.jan-tennert.supabase:postgrest-kt:2.5.1")
+    // Realtime = Chat (future)
+    implementation("io.github.jan-tennert.supabase:realtime-kt:2.5.1")
+    // Storage = Reports upload (future)
+    implementation("io.github.jan-tennert.supabase:storage-kt:2.5.1")
+    // Supabase KT = Main client
+    implementation("io.github.jan-tennert.supabase:supabase-kt:2.5.1")
 }
