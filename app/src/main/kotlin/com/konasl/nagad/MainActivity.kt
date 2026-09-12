@@ -2,6 +2,7 @@ package com.konasl.nagad
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -149,10 +150,14 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(root)
 
-        // Auto navigate after 2.6s
+        // Auto navigate after 2.6s - WITH LOGIN CHECK (ADDED, UI NOT CHANGED)
         Handler(Looper.getMainLooper()).postDelayed({
-            // startActivity(Intent(this, LoginActivity::class.java))
-            // finish()
+            if (SupabaseClient.isLoggedIn(this)) {
+                startActivity(Intent(this, HomeActivity::class.java))
+            } else {
+                startActivity(Intent(this, LoginActivity::class.java))
+            }
+            finish()
         }, 2600)
     }
 
@@ -168,14 +173,8 @@ class MainActivity : AppCompatActivity() {
             val h = height.toFloat()
             val cx = w / 2
             val cy = h / 2
-
-            // White Circle BG
             canvas.drawCircle(cx, cy, w / 2, paintWhite)
-
-            // Orange Sun
             canvas.drawCircle(cx, cy, w * 0.22f, paintOrange)
-
-            // Sun Rays - 8 lines
             for (i in 0 until 8) {
                 val angle = Math.toRadians((i * 45).toDouble())
                 val r1 = w * 0.30f
@@ -186,8 +185,6 @@ class MainActivity : AppCompatActivity() {
                 val ey = cy + r2 * Math.sin(angle).toFloat()
                 canvas.drawLine(sx, sy, ex, ey, paintOrangeStroke)
             }
-
-            // White Medical Cross
             val crossW = w * 0.24f
             val crossH = w * 0.08f
             canvas.drawRect(cx - crossW / 2, cy - crossH / 2, cx + crossW / 2, cy + crossH / 2, paintWhite)
