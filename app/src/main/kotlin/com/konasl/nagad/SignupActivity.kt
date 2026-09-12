@@ -1,11 +1,13 @@
 package com.konasl.nagad
 
+import android.app.Dialog
 import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
@@ -13,6 +15,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -35,7 +38,9 @@ class SignupActivity : AppCompatActivity() {
     private lateinit var emergencyInput: EditText
     private lateinit var historyInput: EditText
     private lateinit var genderGroup: RadioGroup
-    private lateinit var bloodGroupSpinner: Spinner
+    private lateinit var bloodGroupField: TextView
+    private var selectedBloodGroup: String = ""
+    private val bloodGroups = arrayOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "জানা নেই")
     private lateinit var statusText: TextView
     private lateinit var submitBtn: Button
     private lateinit var progress: ProgressBar
@@ -129,14 +134,31 @@ class SignupActivity : AppCompatActivity() {
         }
 
         val bloodLabel = label("রক্তের গ্রুপ")
-        bloodGroupSpinner = Spinner(this).apply {
-            val groups = arrayOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "জানা নেই")
-            adapter = ArrayAdapter(this@SignupActivity, android.R.layout.simple_spinner_dropdown_item, groups)
+
+        // Spinner-এর বদলে অ্যাপের কালার থিম মেনে তৈরি একটি কাস্টম ক্লিকেবল ফিল্ড,
+        // যাতে ট্যাপ করলে অ্যাপের কালারে স্টাইল করা কাস্টম ডায়ালগ ওপেন হয়
+        selectedBloodGroup = bloodGroups[0]
+        bloodGroupField = text(selectedBloodGroup, 14.5f, Typeface.NORMAL, Color.parseColor("#1F2937"), Gravity.START).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val bloodGroupArrow = text("▾", 16f, Typeface.BOLD, colorPrimary, Gravity.END)
+        val bloodGroupRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedBg(colorFieldBg, 14f)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            isClickable = true
+            isFocusable = true
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(8)
             }
-            background = roundedBg(colorFieldBg, 14f)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            addView(bloodGroupField)
+            addView(bloodGroupArrow)
+            setOnClickListener {
+                hideKeyboard()
+                root.requestFocus()
+                showBloodGroupDialog()
+            }
         }
 
         addressInput = fieldInput("ঠিকানা", InputType.TYPE_CLASS_TEXT, multiLine = true, imeAction = EditorInfo.IME_ACTION_NEXT)
@@ -213,7 +235,7 @@ class SignupActivity : AppCompatActivity() {
         card.addView(genderGroup)
         card.addView(space(dp(14)))
         card.addView(bloodLabel)
-        card.addView(bloodGroupSpinner)
+        card.addView(bloodGroupRow)
         card.addView(space(dp(14)))
         card.addView(label("ঠিকানা"))
         card.addView(addressInput)
@@ -301,6 +323,69 @@ class SignupActivity : AppCompatActivity() {
         currentFocus?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
     }
 
+    // অ্যাপের কালার থিম (colorPrimary/colorFieldBg) অনুসরণ করে রক্তের গ্রুপ নির্বাচনের কাস্টম ডায়ালগ
+    private fun showBloodGroupDialog() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val dialogRoot = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(Color.WHITE, 20f)
+            setPadding(dp(20), dp(20), dp(20), dp(10))
+        }
+
+        val dialogTitle = text("রক্তের গ্রুপ নির্বাচন করুন", 16f, Typeface.BOLD, colorPrimaryDark, Gravity.START).apply {
+            setPadding(0, 0, 0, dp(14))
+        }
+        dialogRoot.addView(dialogTitle)
+
+        bloodGroups.forEach { group ->
+            val isSelected = group == selectedBloodGroup
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = roundedBg(if (isSelected) Color.argb(28, 15, 108, 97) else colorFieldBg, 12f)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                isClickable = true
+                isFocusable = true
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = dp(8)
+                }
+            }
+            val rowLabel = text(group, 14.5f, if (isSelected) Typeface.BOLD else Typeface.NORMAL, if (isSelected) colorPrimary else Color.parseColor("#1F2937"), Gravity.START).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            row.addView(rowLabel)
+            if (isSelected) {
+                row.addView(text("✓", 15f, Typeface.BOLD, colorPrimary, Gravity.END))
+            }
+            row.setOnClickListener {
+                selectedBloodGroup = group
+                bloodGroupField.text = group
+                dialog.dismiss()
+            }
+            dialogRoot.addView(row)
+        }
+
+        val cancelText = text("বাতিল করুন", 14f, Typeface.BOLD, colorTextMuted, Gravity.CENTER).apply {
+            setPadding(0, dp(16), 0, dp(6))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { dialog.dismiss() }
+        }
+        dialogRoot.addView(cancelText)
+
+        dialog.setContentView(dialogRoot)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.CENTER)
+            val params = attributes
+            params.width = (resources.displayMetrics.widthPixels * 0.86).toInt()
+            attributes = params
+        }
+        dialog.show()
+    }
+
     private fun onSubmit() {
         val name = nameInput.text.toString().trim()
         if (name.isEmpty()) {
@@ -311,7 +396,7 @@ class SignupActivity : AppCompatActivity() {
         val gender = when (genderGroup.indexOfChild(findViewById(genderGroup.checkedRadioButtonId))) {
             0 -> "পুরুষ"; 1 -> "মহিলা"; else -> "অন্যান্য"
         }
-        val bloodGroup = bloodGroupSpinner.selectedItem?.toString() ?: ""
+        val bloodGroup = selectedBloodGroup
         val address = addressInput.text.toString().trim()
         val emergency = emergencyInput.text.toString().trim()
         val history = historyInput.text.toString().trim()
