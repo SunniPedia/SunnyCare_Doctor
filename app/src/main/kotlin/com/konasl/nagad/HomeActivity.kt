@@ -5,11 +5,16 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
 import android.graphics.Outline
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.RadialGradient
+import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -50,7 +55,14 @@ class HomeActivity : AppCompatActivity() {
     private lateinit var appointmentsPanel: View
     private lateinit var profilePanel: View
 
-    private data class NavItemViews(val root: LinearLayout, val icon: TextView, val label: TextView)
+    private data class NavItemViews(
+        val root: LinearLayout,
+        val pill: LinearLayout,
+        val icon: ImageView,
+        val iconDrawable: VectorIconDrawable,
+        val label: TextView
+    )
+
     private lateinit var navHome: NavItemViews
     private lateinit var navAppointments: NavItemViews
     private lateinit var navProfile: NavItemViews
@@ -72,7 +84,10 @@ class HomeActivity : AppCompatActivity() {
 
         val root = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            setBackgroundColor(colorBg)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.parseColor("#F8FBFA"), colorBg)
+            )
         }
 
         // ---------------- HOME PANEL ----------------
@@ -85,59 +100,78 @@ class HomeActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(100))
         }
 
-        // ---------------- HEADER ----------------
+        // ---------------- HEADER (গ্রেডিয়েন্ট + গ্লো ডেকোরেশন) ----------------
+        val headerContainer = FrameLayout(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(colorPrimaryLight, colorPrimary, colorPrimaryDark)
+            ).apply {
+                setCornerRadii(floatArrayOf(0f, 0f, 0f, 0f, dp(28).toFloat(), dp(28).toFloat(), dp(28).toFloat(), dp(28).toFloat()))
+            }
+            clipToPadding = false
+        }
+        headerContainer.addView(glowCircle(dp(170), Color.argb(26, 255, 255, 255), Gravity.TOP or Gravity.END, dp(-60), dp(-55)))
+        headerContainer.addView(glowCircle(dp(120), Color.argb(24, Color.red(colorAccent), Color.green(colorAccent), Color.blue(colorAccent)), Gravity.BOTTOM or Gravity.START, dp(-40), dp(-35)))
+
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(colorPrimaryLight, colorPrimary, colorPrimaryDark))
-            setPadding(dp(22), dp(44), dp(22), dp(26))
+            setPadding(dp(22), dp(44), dp(22), dp(30))
         }
         val headerTextCol = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         greetingText = text("স্বাগতম, ${SupabaseClient.getName(this) ?: "রোগী"}", 18f, Typeface.BOLD, Color.WHITE, Gravity.START)
-        val appTitle = text("SunnyCare ☀ Doctor", 12f, Typeface.NORMAL, Color.argb(210, 255, 255, 255), Gravity.START)
+        val appTitle = text("SunnyCare Doctor", 12f, Typeface.NORMAL, Color.argb(210, 255, 255, 255), Gravity.START).apply {
+            compoundDrawablePadding = dp(5)
+            setCompoundDrawablesWithIntrinsicBounds(
+                VectorIconDrawable(VectorIconDrawable.IconType.SUN, Color.argb(230, 255, 255, 255), dp(13)), null, null, null
+            )
+        }
         headerTextCol.addView(greetingText)
-        headerTextCol.addView(appTitle)
+        headerTextCol.addView(appTitle.apply { setPadding(0, dp(4), 0, 0) })
 
         val logoutBtn = TextView(this).apply {
-            text = "লগ আউট  ⎋"
+            text = "লগ আউট"
             setTextColor(Color.WHITE)
             textSize = 12.5f
             setTypeface(null, Typeface.BOLD)
             background = roundedBg(Color.argb(50, 255, 255, 255), 30f)
             setPadding(dp(14), dp(8), dp(14), dp(8))
+            compoundDrawablePadding = dp(6)
+            setCompoundDrawablesWithIntrinsicBounds(null, null, VectorIconDrawable(VectorIconDrawable.IconType.LOGOUT, Color.WHITE, dp(16)), null)
             setOnClickListener { onLogout() }
         }
         header.addView(headerTextCol)
         header.addView(logoutBtn)
+        headerContainer.addView(header)
 
-        // ---------------- DOCTOR CARD (redesigned, unique) ----------------
+        // ---------------- DOCTOR CARD (গ্রেডিয়েন্ট বর্ডার সহ) ----------------
         val doctorCard = buildDoctorCard()
 
         // ---------------- QUICK ACTIONS ----------------
         actionsGrid = GridLayout(this).apply {
             columnCount = 2
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(dp(14), dp(18), dp(14), 0)
+                setMargins(dp(14), dp(20), dp(14), 0)
             }
         }
-        actionsGrid.addView(actionCard("📅", "অ্যাপয়েন্টমেন্ট বুক", colorPrimary) {
+        actionsGrid.addView(actionCard(VectorIconDrawable.IconType.CALENDAR, "অ্যাপয়েন্টমেন্ট বুক", colorPrimary) {
             startActivity(Intent(this, BookAppointmentActivity::class.java))
         })
-        actionsGrid.addView(actionCard("📞", "ডাক্তারকে কল করুন", Color.parseColor("#2563EB")) { callDoctor() })
-        actionsGrid.addView(actionCard("💊", "প্রেসক্রিপশন", Color.parseColor("#7C3AED")) { showComingSoon("প্রেসক্রিপশন হিস্ট্রি") })
-        actionsGrid.addView(actionCard("👤", "আমার প্রোফাইল", Color.parseColor("#DB2777")) { switchTab(Tab.PROFILE) })
+        actionsGrid.addView(actionCard(VectorIconDrawable.IconType.PHONE, "ডাক্তারকে কল করুন", Color.parseColor("#2563EB")) { callDoctor() })
+        actionsGrid.addView(actionCard(VectorIconDrawable.IconType.PILL, "প্রেসক্রিপশন", Color.parseColor("#7C3AED")) { showComingSoon("প্রেসক্রিপশন হিস্ট্রি") })
+        actionsGrid.addView(actionCard(VectorIconDrawable.IconType.PERSON, "আমার প্রোফাইল", Color.parseColor("#DB2777")) { switchTab(Tab.PROFILE) })
 
         // ---------------- ADMIN-ONLY: পেমেন্ট ভেরিফিকেশন ----------------
         if (SupabaseClient.isAdmin(this)) {
-            actionsGrid.addView(actionCard("✅", "পেমেন্ট ভেরিফিকেশন", Color.parseColor("#059669")) {
+            actionsGrid.addView(actionCard(VectorIconDrawable.IconType.SHIELD, "পেমেন্ট ভেরিফিকেশন", Color.parseColor("#059669")) {
                 startActivity(Intent(this, AdminPaymentVerificationActivity::class.java))
             })
         }
 
-        homeContent.addView(header)
+        homeContent.addView(headerContainer)
         homeContent.addView(doctorCard)
         homeContent.addView(actionsGrid)
         homeScroll.addView(homeContent)
@@ -211,10 +245,17 @@ class HomeActivity : AppCompatActivity() {
     private fun updateNavStyle() {
         listOf(navHome to Tab.HOME, navAppointments to Tab.APPOINTMENTS, navProfile to Tab.PROFILE).forEach { (item, tab) ->
             val active = tab == currentTab
-            val color = if (active) colorPrimary else colorTextMuted
-            item.icon.setTextColor(color)
+            val color = if (active) Color.WHITE else colorTextMuted
+            item.iconDrawable.setTint(color)
             item.label.setTextColor(color)
             item.label.setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
+            item.pill.background = if (active) {
+                GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(colorPrimaryLight, colorPrimaryDark)).apply {
+                    cornerRadius = dp(18).toFloat()
+                }
+            } else {
+                null
+            }
         }
     }
 
@@ -235,70 +276,103 @@ class HomeActivity : AppCompatActivity() {
                 setMargins(dp(18), 0, dp(18), dp(16))
             }
         }
-        navHome = navItem("🏠", "হোম") { switchTab(Tab.HOME) }
-        navAppointments = navItem("📅", "অ্যাপয়েন্টমেন্ট") { switchTab(Tab.APPOINTMENTS) }
-        navProfile = navItem("👤", "প্রোফাইল") { switchTab(Tab.PROFILE) }
+        navHome = navItem(VectorIconDrawable.IconType.HOME, "হোম") { switchTab(Tab.HOME) }
+        navAppointments = navItem(VectorIconDrawable.IconType.CALENDAR, "অ্যাপয়েন্টমেন্ট") { switchTab(Tab.APPOINTMENTS) }
+        navProfile = navItem(VectorIconDrawable.IconType.PERSON, "প্রোফাইল") { switchTab(Tab.PROFILE) }
         nav.addView(navHome.root)
         nav.addView(navAppointments.root)
         nav.addView(navProfile.root)
         return nav
     }
 
-    private fun navItem(emoji: String, labelText: String, onClick: () -> Unit): NavItemViews {
-        val icon = text(emoji, 19f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER)
+    private fun navItem(iconType: VectorIconDrawable.IconType, labelText: String, onClick: () -> Unit): NavItemViews {
+        val drawable = VectorIconDrawable(iconType, colorTextMuted, dp(22))
+        val icon = ImageView(this).apply {
+            setImageDrawable(drawable)
+            layoutParams = LinearLayout.LayoutParams(dp(22), dp(22))
+        }
         val labelView = text(labelText, 10.5f, Typeface.BOLD, colorTextMuted, Gravity.CENTER).apply {
-            setPadding(0, dp(3), 0, 0)
+            setPadding(0, dp(4), 0, 0)
+        }
+        val pill = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(6), dp(8), dp(6), dp(8))
+            addView(icon)
+            addView(labelView)
         }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setPadding(0, dp(6), 0, dp(6))
+            setPadding(dp(4), dp(2), dp(4), dp(2))
             isClickable = true
             isFocusable = true
-            addView(icon)
-            addView(labelView)
+            addView(pill)
             setOnClickListener { onClick() }
         }
-        return NavItemViews(root, icon, labelView)
+        return NavItemViews(root, pill, icon, drawable, labelView)
     }
 
-    private fun panelTopBar(titleText: String): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(colorPrimaryLight, colorPrimary, colorPrimaryDark))
-        setPadding(dp(22), dp(44), dp(22), dp(22))
-        addView(text(titleText, 18f, Typeface.BOLD, Color.WHITE, Gravity.START))
-    }
-
-    // ------------------------------------------------------------------
-    // ডাক্তারের কার্ড - ইউনিক ও প্রিমিয়াম ডিজাইন
-    // ------------------------------------------------------------------
-    private fun buildDoctorCard(): LinearLayout {
-        val outer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBg(colorCard, 22f)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(dp(18), dp(-20), dp(18), 0)
+    private fun panelTopBar(titleText: String): View {
+        val container = FrameLayout(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(colorPrimaryLight, colorPrimary, colorPrimaryDark)
+            ).apply {
+                setCornerRadii(floatArrayOf(0f, 0f, 0f, 0f, dp(28).toFloat(), dp(28).toFloat(), dp(28).toFloat(), dp(28).toFloat()))
             }
+        }
+        container.addView(glowCircle(dp(150), Color.argb(24, 255, 255, 255), Gravity.TOP or Gravity.END, dp(-55), dp(-45)))
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(44), dp(22), dp(22))
+        }
+        inner.addView(text(titleText, 18f, Typeface.BOLD, Color.WHITE, Gravity.START))
+        container.addView(inner)
+        return container
+    }
+
+    private fun glowCircle(size: Int, color: Int, gravityVal: Int, marginTopOrBottom: Int, marginSideVal: Int): View {
+        return View(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(color)
+            }
+            layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                gravity = gravityVal
+                if (gravityVal and Gravity.TOP == Gravity.TOP) topMargin = marginTopOrBottom else bottomMargin = marginTopOrBottom
+                if (gravityVal and Gravity.END == Gravity.END) rightMargin = marginSideVal else leftMargin = marginSideVal
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // ডাক্তারের কার্ড - গ্রেডিয়েন্ট বর্ডার সহ প্রিমিয়াম ডিজাইন
+    // ------------------------------------------------------------------
+    private fun buildDoctorCard(): View {
+        val borderWrap = FrameLayout(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(colorAccent, colorPrimary, colorPrimaryDark)
+            ).apply { cornerRadius = dp(24).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(18), dp(-22), dp(18), 0)
+            }
+            setPadding(dp(2), dp(2), dp(2), dp(2))
             elevation = dp(14).toFloat()
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, dp(22).toFloat())
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(24).toFloat())
                 }
             }
             clipToOutline = true
         }
 
-        // উপরে একটা সরু গ্রেডিয়েন্ট রিবন - কার্ডকে আলাদা করে চেনায়
-        val ribbon = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5))
-            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(colorAccent, colorPrimary, colorPrimaryDark))
-        }
-        outer.addView(ribbon)
-
         val inner = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(18), dp(18), dp(18))
+            background = roundedBg(colorCard, 22f)
+            setPadding(dp(18), dp(20), dp(18), dp(18))
         }
 
         // নাম + অ্যাভাটার + এভেইলেবিলিটি স্ট্যাটাস
@@ -313,8 +387,12 @@ class HomeActivity : AppCompatActivity() {
             layoutParams = FrameLayout.LayoutParams(dp(64), dp(64))
         })
         avatarWrap.addView(View(this).apply {
-            background = roundedBg(Color.parseColor("#22C55E"), 20f)
-            layoutParams = FrameLayout.LayoutParams(dp(14), dp(14)).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#22C55E"))
+                setStroke(dp(2), Color.WHITE)
+            }
+            layoutParams = FrameLayout.LayoutParams(dp(16), dp(16)).apply {
                 gravity = Gravity.BOTTOM or Gravity.END
             }
         })
@@ -326,20 +404,31 @@ class HomeActivity : AppCompatActivity() {
         doctorTextCol.addView(text("মেডিসিন, শিশু ও ডায়াবেটিস বিশেষজ্ঞ", 12f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
             setPadding(0, dp(2), 0, 0)
         })
-        doctorTextCol.addView(text("🟢 এখন অনলাইনে উপলব্ধ", 11f, Typeface.BOLD, Color.parseColor("#16A34A"), Gravity.START).apply {
+        doctorTextCol.addView(text("এখন অনলাইনে উপলব্ধ", 11f, Typeface.BOLD, Color.parseColor("#16A34A"), Gravity.START).apply {
             setPadding(0, dp(6), 0, 0)
+            compoundDrawablePadding = dp(6)
+            setCompoundDrawablesWithIntrinsicBounds(
+                VectorIconDrawable(VectorIconDrawable.IconType.DOT, Color.parseColor("#22C55E"), dp(9)), null, null, null
+            )
         })
         topRow.addView(avatarWrap)
         topRow.addView(doctorTextCol)
         inner.addView(topRow)
 
-        // রেটিং রো
+        // রেটিং রো (ক্যানভাস স্টার আইকন)
         val ratingRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(14), 0, 0)
         }
-        ratingRow.addView(text("★★★★★", 13f, Typeface.BOLD, colorAccent, Gravity.START))
+        val starsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        repeat(5) {
+            starsRow.addView(ImageView(this).apply {
+                setImageDrawable(VectorIconDrawable(VectorIconDrawable.IconType.STAR, colorAccent, dp(14)))
+                layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginEnd = dp(2) }
+            })
+        }
+        ratingRow.addView(starsRow)
         ratingRow.addView(text(" ৪.৮  •  ৫০০+ রোগী দেখেছেন", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START))
         inner.addView(ratingRow)
 
@@ -351,11 +440,15 @@ class HomeActivity : AppCompatActivity() {
             ).apply { setPadding(0, dp(12), 0, 0) }
         )
 
-        // ভেরিফাইড ব্যাজ
+        // ভেরিফাইড ব্যাজ (ক্যানভাস চেক আইকন)
         inner.addView(
-            text("✓ বি.এম.ডি.সি এ-১৭৬৩০ • Verified", 10.5f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
+            text("বি.এম.ডি.সি এ-১৭৬৩০ • Verified", 10.5f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
                 background = roundedBg(Color.parseColor("#E4F3F1"), 30f)
                 setPadding(dp(12), dp(6), dp(12), dp(6))
+                compoundDrawablePadding = dp(6)
+                setCompoundDrawablesWithIntrinsicBounds(
+                    VectorIconDrawable(VectorIconDrawable.IconType.CHECK, colorPrimary, dp(13)), null, null, null
+                )
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = dp(12)
                 }
@@ -389,8 +482,8 @@ class HomeActivity : AppCompatActivity() {
         }
         inner.addView(chipsScroll)
 
-        outer.addView(inner)
-        return outer
+        borderWrap.addView(inner)
+        return borderWrap
     }
 
     // ------------------------------------------------------------------
@@ -449,6 +542,10 @@ class HomeActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             background = roundedBg(Color.parseColor("#FEE2E2"), 14f)
             setPadding(0, dp(14), 0, dp(14))
+            compoundDrawablePadding = dp(8)
+            setCompoundDrawablesWithIntrinsicBounds(
+                VectorIconDrawable(VectorIconDrawable.IconType.LOGOUT, Color.parseColor("#DC2626"), dp(16)), null, null, null
+            )
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(20)
             }
@@ -549,6 +646,7 @@ class HomeActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             background = roundedBg(colorCard, 16f)
             setPadding(dp(16), dp(14), dp(16), dp(14))
+            elevation = dp(2).toFloat()
         }
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -566,7 +664,9 @@ class HomeActivity : AppCompatActivity() {
             else -> "পেন্ডিং" to colorAccent
         }
         val badge = text(statusLabel, 10.5f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
-            background = roundedBg(statusColor, 30f)
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(lighten(statusColor, 0.12f), statusColor)).apply {
+                cornerRadius = dp(30).toFloat()
+            }
             setPadding(dp(10), dp(5), dp(10), dp(5))
         }
         row.addView(col)
@@ -600,28 +700,43 @@ class HomeActivity : AppCompatActivity() {
     // ------------------------------------------------------------------
     // UI helpers
     // ------------------------------------------------------------------
-    private fun actionCard(emoji: String, label: String, color: Int, onClick: () -> Unit): LinearLayout {
+    private fun actionCard(iconType: VectorIconDrawable.IconType, label: String, color: Int, onClick: () -> Unit): LinearLayout {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            background = roundedBg(colorCard, 18f)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.WHITE, Color.argb(20, Color.red(color), Color.green(color), Color.blue(color)))
+            ).apply { cornerRadius = dp(18).toFloat() }
             setPadding(dp(14), dp(20), dp(14), dp(20))
             layoutParams = GridLayout.LayoutParams(
                 GridLayout.spec(GridLayout.UNDEFINED, 1f),
                 GridLayout.spec(GridLayout.UNDEFINED, 1f)
             ).apply {
                 width = 0
-                setMargins(dp(4), dp(4), dp(4), dp(4))
+                setMargins(dp(6), dp(6), dp(6), dp(6))
             }
-            elevation = dp(2).toFloat()
+            elevation = dp(4).toFloat()
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(18).toFloat())
+                }
+            }
+            clipToOutline = true
             setOnClickListener { onClick() }
         }
-        val iconCircle = TextView(this).apply {
-            text = emoji
-            textSize = 22f
-            gravity = Gravity.CENTER
-            background = roundedBg(Color.argb(30, Color.red(color), Color.green(color), Color.blue(color)), 40f)
-            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52))
+        val iconCircle = ImageView(this).apply {
+            setImageDrawable(VectorIconDrawable(iconType, Color.WHITE, dp(26)))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setGradientType(GradientDrawable.RADIAL_GRADIENT)
+                setColors(intArrayOf(lighten(color, 0.28f), darken(color, 0.08f)))
+                setGradientRadius(dp(34).toFloat())
+                setGradientCenter(0.3f, 0.3f)
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+            setPadding(dp(15), dp(15), dp(15), dp(15))
+            elevation = dp(3).toFloat()
         }
         val labelView = text(label, 12f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
             setPadding(0, dp(10), 0, 0)
@@ -642,6 +757,237 @@ class HomeActivity : AppCompatActivity() {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = radiusDp * resources.displayMetrics.density
         setColor(color)
+    }
+
+    private fun lighten(color: Int, amount: Float): Int {
+        val r = (Color.red(color) + (255 - Color.red(color)) * amount).toInt().coerceIn(0, 255)
+        val g = (Color.green(color) + (255 - Color.green(color)) * amount).toInt().coerceIn(0, 255)
+        val b = (Color.blue(color) + (255 - Color.blue(color)) * amount).toInt().coerceIn(0, 255)
+        return Color.rgb(r, g, b)
+    }
+
+    private fun darken(color: Int, amount: Float): Int {
+        val r = (Color.red(color) * (1 - amount)).toInt().coerceIn(0, 255)
+        val g = (Color.green(color) * (1 - amount)).toInt().coerceIn(0, 255)
+        val b = (Color.blue(color) * (1 - amount)).toInt().coerceIn(0, 255)
+        return Color.rgb(r, g, b)
+    }
+
+    // ------------------------------------------------------------------
+    // ক্যানভাসে আঁকা ভেক্টর আইকন (কোনো ইমোজি নেই) - সব কুইক অ্যাকশন,
+    // বটম ন্যাভ, ব্যাজ, ও হেডারের আইকনে ব্যবহৃত হয়
+    // ------------------------------------------------------------------
+    class VectorIconDrawable(
+        private val type: IconType,
+        color: Int,
+        private val sizePx: Int = 96
+    ) : Drawable() {
+
+        enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT }
+
+        private var iconColor: Int = color
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = iconColor }
+        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = iconColor
+        }
+
+        fun setTint(c: Int) {
+            iconColor = c
+            fillPaint.color = c
+            strokePaint.color = c
+            invalidateSelf()
+        }
+
+        override fun getIntrinsicWidth(): Int = sizePx
+        override fun getIntrinsicHeight(): Int = sizePx
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            strokePaint.strokeWidth = w * 0.09f
+            canvas.save()
+            canvas.translate(b.left.toFloat(), b.top.toFloat())
+            val pad = w * 0.1f
+            canvas.translate(pad, pad)
+            val s = w - pad * 2
+            when (type) {
+                IconType.HOME -> drawHome(canvas, s)
+                IconType.CALENDAR -> drawCalendar(canvas, s)
+                IconType.PHONE -> drawPhone(canvas, s)
+                IconType.PILL -> drawPill(canvas, s)
+                IconType.PERSON -> drawPerson(canvas, s)
+                IconType.CHECK -> drawCheck(canvas, s)
+                IconType.STAR -> drawStar(canvas, s)
+                IconType.LOGOUT -> drawLogout(canvas, s)
+                IconType.SUN -> drawSun(canvas, s)
+                IconType.DOT -> drawDot(canvas, s)
+                IconType.SHIELD -> drawShield(canvas, s)
+                IconType.ARROW_RIGHT -> drawArrowRight(canvas, s)
+            }
+            canvas.restore()
+        }
+
+        override fun setAlpha(alpha: Int) {
+            fillPaint.alpha = alpha
+            strokePaint.alpha = alpha
+        }
+
+        override fun setColorFilter(colorFilter: ColorFilter?) {
+            fillPaint.colorFilter = colorFilter
+            strokePaint.colorFilter = colorFilter
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+
+        private fun drawHome(canvas: Canvas, s: Float) {
+            val roof = Path().apply {
+                moveTo(s * 0.5f, 0f)
+                lineTo(s * 0.98f, s * 0.42f)
+                lineTo(s * 0.80f, s * 0.42f)
+                lineTo(s * 0.80f, s * 0.40f)
+                lineTo(s * 0.20f, s * 0.40f)
+                lineTo(s * 0.20f, s * 0.42f)
+                lineTo(s * 0.02f, s * 0.42f)
+                close()
+            }
+            canvas.drawPath(roof, fillPaint)
+            canvas.drawRoundRect(s * 0.20f, s * 0.42f, s * 0.80f, s * 0.98f, s * 0.04f, s * 0.04f, fillPaint)
+        }
+
+        private fun drawCalendar(canvas: Canvas, s: Float) {
+            canvas.drawRoundRect(0f, s * 0.14f, s, s, s * 0.12f, s * 0.12f, strokePaint)
+            canvas.drawLine(0f, s * 0.36f, s, s * 0.36f, strokePaint)
+            canvas.drawLine(s * 0.26f, 0f, s * 0.26f, s * 0.26f, strokePaint)
+            canvas.drawLine(s * 0.74f, 0f, s * 0.74f, s * 0.26f, strokePaint)
+            canvas.drawCircle(s * 0.32f, s * 0.60f, s * 0.06f, fillPaint)
+            canvas.drawCircle(s * 0.5f, s * 0.60f, s * 0.06f, fillPaint)
+            canvas.drawCircle(s * 0.68f, s * 0.60f, s * 0.06f, fillPaint)
+            canvas.drawCircle(s * 0.32f, s * 0.80f, s * 0.06f, fillPaint)
+            canvas.drawCircle(s * 0.5f, s * 0.80f, s * 0.06f, fillPaint)
+        }
+
+        private fun drawPhone(canvas: Canvas, s: Float) {
+            val path = Path()
+            path.moveTo(s * 0.08f, s * 0.20f)
+            path.cubicTo(s * 0.05f, s * 0.05f, s * 0.22f, -s * 0.02f, s * 0.30f, s * 0.14f)
+            path.cubicTo(s * 0.36f, s * 0.26f, s * 0.30f, s * 0.30f, s * 0.26f, s * 0.36f)
+            path.cubicTo(s * 0.32f, s * 0.52f, s * 0.46f, s * 0.66f, s * 0.62f, s * 0.72f)
+            path.cubicTo(s * 0.68f, s * 0.68f, s * 0.72f, s * 0.62f, s * 0.84f, s * 0.68f)
+            path.cubicTo(s * 1.0f, s * 0.76f, s * 0.94f, s * 0.94f, s * 0.80f, s * 0.96f)
+            path.cubicTo(s * 0.48f, s * 1.0f, s * 0.02f, s * 0.54f, s * 0.08f, s * 0.20f)
+            path.close()
+            canvas.drawPath(path, fillPaint)
+        }
+
+        private fun drawPill(canvas: Canvas, s: Float) {
+            canvas.save()
+            canvas.rotate(-45f, s / 2, s / 2)
+            val r = s * 0.22f
+            canvas.drawRoundRect(s * 0.1f, s * 0.35f, s * 0.9f, s * 0.65f, r, r, strokePaint)
+            canvas.drawLine(s * 0.5f, s * 0.35f, s * 0.5f, s * 0.65f, strokePaint)
+            canvas.drawRoundRect(s * 0.1f, s * 0.35f, s * 0.5f, s * 0.65f, r, r, fillPaint)
+            canvas.restore()
+        }
+
+        private fun drawPerson(canvas: Canvas, s: Float) {
+            canvas.drawCircle(s * 0.5f, s * 0.28f, s * 0.22f, fillPaint)
+            val path = Path()
+            val rectF = RectF(s * 0.08f, s * 0.55f, s * 0.92f, s * 1.25f)
+            path.addArc(rectF, 180f, 180f)
+            canvas.drawPath(path, fillPaint)
+        }
+
+        private fun drawCheck(canvas: Canvas, s: Float) {
+            canvas.drawCircle(s / 2, s / 2, s / 2, fillPaint)
+            val checkPaint = Paint(strokePaint).apply {
+                color = Color.WHITE
+                strokeWidth = s * 0.1f
+            }
+            val path = Path()
+            path.moveTo(s * 0.28f, s * 0.52f)
+            path.lineTo(s * 0.44f, s * 0.68f)
+            path.lineTo(s * 0.74f, s * 0.32f)
+            canvas.drawPath(path, checkPaint)
+        }
+
+        private fun drawStar(canvas: Canvas, s: Float) {
+            val path = Path()
+            val cx = s / 2
+            val cy = s / 2
+            val outerR = s / 2
+            val innerR = outerR * 0.42f
+            for (i in 0 until 10) {
+                val angle = Math.toRadians((i * 36 - 90).toDouble())
+                val r = if (i % 2 == 0) outerR else innerR
+                val x = cx + (r * Math.cos(angle)).toFloat()
+                val y = cy + (r * Math.sin(angle)).toFloat()
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            path.close()
+            canvas.drawPath(path, fillPaint)
+        }
+
+        private fun drawLogout(canvas: Canvas, s: Float) {
+            canvas.drawRoundRect(0f, 0f, s * 0.55f, s, s * 0.08f, s * 0.08f, strokePaint)
+            canvas.drawLine(s * 0.40f, s * 0.5f, s * 0.98f, s * 0.5f, strokePaint)
+            val arrow = Path()
+            arrow.moveTo(s * 0.78f, s * 0.30f)
+            arrow.lineTo(s * 0.98f, s * 0.5f)
+            arrow.lineTo(s * 0.78f, s * 0.70f)
+            canvas.drawPath(arrow, strokePaint)
+        }
+
+        private fun drawSun(canvas: Canvas, s: Float) {
+            canvas.drawCircle(s / 2, s / 2, s * 0.28f, fillPaint)
+            for (i in 0 until 8) {
+                val angle = Math.toRadians((i * 45).toDouble())
+                val x1 = s / 2 + (s * 0.36f * Math.cos(angle)).toFloat()
+                val y1 = s / 2 + (s * 0.36f * Math.sin(angle)).toFloat()
+                val x2 = s / 2 + (s * 0.48f * Math.cos(angle)).toFloat()
+                val y2 = s / 2 + (s * 0.48f * Math.sin(angle)).toFloat()
+                canvas.drawLine(x1, y1, x2, y2, strokePaint)
+            }
+        }
+
+        private fun drawDot(canvas: Canvas, s: Float) {
+            canvas.drawCircle(s / 2, s / 2, s / 2, fillPaint)
+        }
+
+        private fun drawShield(canvas: Canvas, s: Float) {
+            val path = Path()
+            path.moveTo(s * 0.5f, 0f)
+            path.lineTo(s * 0.95f, s * 0.18f)
+            path.lineTo(s * 0.95f, s * 0.55f)
+            path.cubicTo(s * 0.95f, s * 0.82f, s * 0.75f, s * 0.96f, s * 0.5f, s)
+            path.cubicTo(s * 0.25f, s * 0.96f, s * 0.05f, s * 0.82f, s * 0.05f, s * 0.55f)
+            path.lineTo(s * 0.05f, s * 0.18f)
+            path.close()
+            canvas.drawPath(path, fillPaint)
+            val check = Paint(strokePaint).apply {
+                color = Color.WHITE
+                strokeWidth = s * 0.09f
+            }
+            val cp = Path()
+            cp.moveTo(s * 0.32f, s * 0.5f)
+            cp.lineTo(s * 0.45f, s * 0.64f)
+            cp.lineTo(s * 0.70f, s * 0.34f)
+            canvas.drawPath(cp, check)
+        }
+
+        private fun drawArrowRight(canvas: Canvas, s: Float) {
+            canvas.drawLine(0f, s / 2, s * 0.75f, s / 2, strokePaint)
+            val arrow = Path()
+            arrow.moveTo(s * 0.55f, s * 0.25f)
+            arrow.lineTo(s * 0.85f, s * 0.5f)
+            arrow.lineTo(s * 0.55f, s * 0.75f)
+            canvas.drawPath(arrow, strokePaint)
+        }
     }
 
     class DoctorAvatarView(context: Context) : View(context) {
@@ -673,17 +1019,25 @@ class HomeActivity : AppCompatActivity() {
             set(value) { field = value; invalidate() }
 
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 5f; color = Color.WHITE
+        }
         private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
         }
 
-        init { textPaint.textSize = 30f * resources.displayMetrics.scaledDensity / resources.displayMetrics.density }
+        init {
+            setLayerType(LAYER_TYPE_SOFTWARE, null)
+            bgPaint.setShadowLayer(12f, 0f, 5f, Color.argb(60, 0, 0, 0))
+            textPaint.textSize = 30f * resources.displayMetrics.scaledDensity / resources.displayMetrics.density
+        }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val w = width.toFloat(); val h = height.toFloat()
             bgPaint.shader = RadialGradient(w / 2, h / 2, w / 2, Color.parseColor("#16897A"), Color.parseColor("#0A4A42"), Shader.TileMode.CLAMP)
-            canvas.drawCircle(w / 2, h / 2, w / 2, bgPaint)
+            canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, bgPaint)
+            canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, ringPaint)
             textPaint.textSize = h * 0.4f
             val cy = h / 2 - (textPaint.descent() + textPaint.ascent()) / 2
             canvas.drawText(initial.uppercase(), w / 2, cy, textPaint)
