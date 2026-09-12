@@ -28,7 +28,7 @@ class HomeActivity : AppCompatActivity() {
     private val colorCard = Color.WHITE
 
     // ডাক্তারের তথ্য
-    private val doctorPhoneForCall = "+8801XXXXXXXXX" // TODO: বসান
+    private val doctorPhoneForCall = "+8801632336631" // TODO: বসান
 
     private lateinit var appointmentsContainer: LinearLayout
     private lateinit var greetingText: TextView
