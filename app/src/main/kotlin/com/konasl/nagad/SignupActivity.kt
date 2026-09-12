@@ -94,7 +94,7 @@ class SignupActivity : AppCompatActivity() {
         phone = intent.getStringExtra("phone") ?: ""
 
         appFont = try {
-            Typeface.createFromAsset(assets, "fonts/SolaimanLipi.ttf")
+            Typeface.createFromAsset(assets, "fonts/solaimanlipi.ttf")
         } catch (e: Exception) {
             null
         }
