@@ -21,10 +21,9 @@ class MyApp : Application() {
         super.onCreate()
         loadFont()
 
-        // এইটা হলো ম্যাজিক - প্রতিটা Activity কে অটো Track করবে
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
-                // Activity এর View লোড হওয়ার পর ফন্ট Apply করো
+                // Activity এর View রেডি হলে অটো ফন্ট Apply হবে
                 activity.window.decorView.post {
                     applyFontToAllViews(activity.window.decorView.rootView)
                 }
@@ -38,39 +37,26 @@ class MyApp : Application() {
         })
     }
 
-    private fun loadFont() {
+    fun loadFont() {
         try {
             val fontFile = File(filesDir, "fonts/SolaimanLipi.ttf")
             if (fontFile.exists()) {
                 solaimanLipi = Typeface.createFromFile(fontFile)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    // এই ফাংশনটা ডাউনলোড শেষ হলে কল করবে, তাহলে সাথে সাথেই পুরো অ্যাপে ফন্ট চেঞ্জ হবে
-    fun refreshFont() {
-        loadFont()
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
     private fun applyFontToAllViews(view: View) {
         if (view is ViewGroup) {
-            view.children.forEach { child ->
-                applyFontToAllViews(child)
-            }
+            view.children.forEach { applyFontToAllViews(it) }
         } else if (view is TextView) {
-            // শুধু বাংলায় SolaimanLipi, ইংরেজি আগের মতোই থাকবে
-            if (isBangla(view.text.toString())) {
-                solaimanLipi?.let {
+            solaimanLipi?.let {
+                // শুধু বাংলা থাকলেই Apply হবে, ইংরেজি ভাঙবে না
+                if (view.text.any { c -> c.code in 2432..2559 }) {
                     val oldStyle = view.typeface?.style ?: Typeface.NORMAL
                     view.typeface = Typeface.create(it, oldStyle)
                 }
             }
         }
-    }
-
-    private fun isBangla(text: String): Boolean {
-        return text.any { it.code in 2432..2559 }
     }
 }
