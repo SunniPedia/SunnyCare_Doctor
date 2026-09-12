@@ -1,18 +1,21 @@
 package com.konasl.nagad
 
+import android.app.Dialog
 import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.widget.*
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
@@ -25,6 +28,7 @@ class LoginActivity : AppCompatActivity() {
     private val colorAccent = Color.parseColor("#F59E0B")
     private val colorFieldBg = Color.parseColor("#F1F5F4")
     private val colorTextMuted = Color.parseColor("#6B7280")
+    private val colorDark = Color.parseColor("#111827")
 
     private lateinit var phoneInput: EditText
     private lateinit var otpInput: EditText
@@ -36,6 +40,10 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
 
     private var currentPhone: String = ""
+    private var canResend = false
+    private var resendTimer: CountDownTimer? = null
+
+    private val OTP_VALIDITY_MS = 2 * 60 * 1000L // ২ মিনিট
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,6 +62,7 @@ class LoginActivity : AppCompatActivity() {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
             )
+            isFillViewport = true
         }
 
         val container = LinearLayout(this).apply {
@@ -96,7 +105,7 @@ class LoginActivity : AppCompatActivity() {
 
         sendOtpBtn = primaryButton("OTP পাঠান") { onSendOtp() }
 
-        // ---- OTP section (hidden initially) ----
+        // ---- OTP section (হাইড থাকে, OTP পাঠানোর পর দেখায়) ----
         otpSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -121,7 +130,7 @@ class LoginActivity : AppCompatActivity() {
         resendText = text("OTP আবার পাঠান", 12.5f, Typeface.BOLD, colorPrimary).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(14), 0, 0)
-            setOnClickListener { onSendOtp() }
+            setOnClickListener { if (canResend) onSendOtp() }
         }
         otpSection.addView(otpLabel)
         otpSection.addView(otpInput)
@@ -166,6 +175,11 @@ class LoginActivity : AppCompatActivity() {
         setContentView(root)
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        resendTimer?.cancel()
+    }
+
     // ------------------------------------------------------------------
     private fun onSendOtp() {
         val phone = phoneInput.text.toString().trim()
@@ -180,13 +194,10 @@ class LoginActivity : AppCompatActivity() {
             setLoading(false)
             result.onSuccess { code ->
                 otpSection.visibility = View.VISIBLE
+                otpInput.text.clear()
                 statusText.text = ""
-                // যেহেতু রিয়েল SMS গেটওয়ে নেই, ডেমো হিসেবে কোডটা ডায়ালগে দেখানো হচ্ছে
-                AlertDialog.Builder(this@LoginActivity)
-                    .setTitle("আপনার OTP কোড (Demo)")
-                    .setMessage("কোড: $code\n\nবাস্তব SMS পাঠাতে Supabase-এ একটি SMS provider (Twilio/Vonage) যুক্ত করতে হবে।")
-                    .setPositiveButton("ঠিক আছে", null)
-                    .show()
+                showOtpSentDialog(code)
+                startResendTimer()
             }.onFailure {
                 statusText.text = it.message ?: "OTP পাঠাতে সমস্যা হয়েছে"
             }
@@ -205,7 +216,7 @@ class LoginActivity : AppCompatActivity() {
             verifyResult.onSuccess { matched ->
                 if (!matched) {
                     setLoading(false)
-                    statusText.text = "কোড সঠিক নয় বা মেয়াদ শেষ"
+                    statusText.text = "দয়া করে সঠিক ওটিপি লিখুন"
                     return@onSuccess
                 }
                 val patientResult = SupabaseClient.findPatientByPhone(currentPhone)
@@ -231,7 +242,7 @@ class LoginActivity : AppCompatActivity() {
                 }
             }.onFailure {
                 setLoading(false)
-                statusText.text = it.message ?: "ভেরিফিকেশনে সমস্যা হয়েছে"
+                statusText.text = "দয়া করে সঠিক ওটিপি লিখুন"
             }
         }
     }
@@ -240,6 +251,89 @@ class LoginActivity : AppCompatActivity() {
         progress.visibility = if (loading) View.VISIBLE else View.GONE
         sendOtpBtn.isEnabled = !loading
         verifyBtn.isEnabled = !loading
+    }
+
+    // ------------------------------------------------------------------
+    // ২ মিনিটের রিসেন্ড টাইমার
+    // ------------------------------------------------------------------
+    private fun startResendTimer() {
+        canResend = false
+        resendText.alpha = 0.55f
+        resendTimer?.cancel()
+        resendTimer = object : CountDownTimer(OTP_VALIDITY_MS, 1000) {
+            override fun onTick(millisUntilFinished: Long) {
+                val totalSec = millisUntilFinished / 1000
+                val m = totalSec / 60
+                val s = totalSec % 60
+                resendText.text = "OTP আবার পাঠান (%02d:%02d)".format(m, s)
+            }
+
+            override fun onFinish() {
+                canResend = true
+                resendText.alpha = 1f
+                resendText.text = "OTP আবার পাঠান"
+            }
+        }.start()
+    }
+
+    // ------------------------------------------------------------------
+    // কাস্টম OTP ডায়ালগ (কোনো টেকনিক্যাল ব্যাখ্যা ছাড়া, শুধু কোড দেখানো)
+    // ------------------------------------------------------------------
+    private fun showOtpSentDialog(code: String) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.setCancelable(true)
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = roundedBg(Color.WHITE, 24f)
+            setPadding(dp(28), dp(30), dp(28), dp(26))
+        }
+
+        val badge = OtpBadgeView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        }
+
+        val title = text("আপনার OTP কোড", 15.5f, Typeface.BOLD, colorDark).apply {
+            setPadding(0, dp(16), 0, 0)
+        }
+
+        val codeText = text(code, 32f, Typeface.BOLD, colorPrimary).apply {
+            letterSpacing = 0.25f
+            setPadding(0, dp(10), 0, 0)
+        }
+
+        val note = text("২ মিনিটের মধ্যে কোডটি লিখুন", 12f, Typeface.NORMAL, colorTextMuted).apply {
+            setPadding(0, dp(10), 0, 0)
+        }
+
+        val okBtn = Button(this).apply {
+            text = "ঠিক আছে"
+            setTextColor(Color.WHITE)
+            isAllCaps = false
+            setTypeface(null, Typeface.BOLD)
+            background = roundedBg(colorPrimary, 14f)
+            setPadding(dp(40), dp(12), dp(40), dp(12))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(20) }
+            setOnClickListener { dialog.dismiss() }
+        }
+
+        layout.addView(badge)
+        layout.addView(title)
+        layout.addView(codeText)
+        layout.addView(note)
+        layout.addView(okBtn)
+
+        dialog.setContentView(layout)
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.85).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        dialog.show()
     }
 
     // ------------------------------------------------------------------
@@ -286,6 +380,27 @@ class LoginActivity : AppCompatActivity() {
             val crossW = w * 0.22f; val crossH = w * 0.075f
             canvas.drawRect(cx - crossW / 2, cy - crossH / 2, cx + crossW / 2, cy + crossH / 2, paintWhite)
             canvas.drawRect(cx - crossH / 2, cy - crossW / 2, cx + crossH / 2, cy + crossW / 2, paintWhite)
+        }
+    }
+
+    /** কাস্টম ডায়ালগের ভেতরের ব্যাজ আইকন - বৃত্তের ভিতরে একটা মেসেজ/চিঠি চিহ্ন (drawable ছাড়া আঁকা) */
+    class OtpBadgeView(context: android.content.Context) : View(context) {
+        private val paintBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E4F3F1"); style = Paint.Style.FILL }
+        private val paintStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#0F6C61"); style = Paint.Style.STROKE; strokeWidth = 5f; strokeCap = Paint.Cap.ROUND
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            val cx = w / 2; val cy = h / 2
+            canvas.drawCircle(cx, cy, w / 2, paintBg)
+            val boxW = w * 0.42f; val boxH = h * 0.28f
+            val left = cx - boxW / 2; val top = cy - boxH / 2
+            val right = cx + boxW / 2; val bottom = cy + boxH / 2
+            canvas.drawRect(left, top, right, bottom, paintStroke)
+            canvas.drawLine(left, top, cx, cy + boxH * 0.12f, paintStroke)
+            canvas.drawLine(right, top, cx, cy + boxH * 0.12f, paintStroke)
         }
     }
 }
