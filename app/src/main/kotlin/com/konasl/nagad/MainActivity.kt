@@ -67,7 +67,7 @@ class MainActivity : AppCompatActivity() {
         val drName = createText("ডা. মাসুম বিল্লাহ সানি", 19f, Typeface.BOLD, Color.WHITE, Gravity.CENTER)
 
         val degrees = createText(
-            "এম.বি.বি.এস (সি.ইউ), ডি.এম.ইউ (আল্ট্রা),\nপিজিটি, এম.সি.জি.পি (মেডিসিন ও শিশু),\nসি.সি.ডি (ডায়াবেটিস- বারডেম, ঢাকা)",
+            "এম.বি.বি.এস (সি.ইউ), ডি.এম.ইউ (আল্ট্রা),\nপিজিটি, এম.সি.জি.পি (মেডিসিন ও শিশু),\nসি.সি.ডি (ডায়াবেটিস- বারডেম, ঢাকা)",
             11.5f, Typeface.NORMAL, Color.argb(230, 255, 255, 255), Gravity.CENTER
         )
 
@@ -115,7 +115,7 @@ class MainActivity : AppCompatActivity() {
 
         // 9. FOOTER
         val footer = createText(
-            "মেডিসিন-শিশু, ডায়াবেটিস, উচ্চ রক্তচাপ, বাত ব্যাথা,\nনাক-কান-গলা, এলার্জি, শ্বাসকষ্ট ও চর্মরোগে অভিজ্ঞ।",
+            "মেডিসিন-শিশু, ডায়াবেটিস, উচ্চ রক্তচাপ, বাত ব্যাথা,\nনাক-কান-গলা, এলার্জি, শ্বাসকষ্ট ও চর্মরোগে অভিজ্ঞ।",
             9f, Typeface.NORMAL, Color.argb(115, 255, 255, 255), Gravity.CENTER
         ).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -150,7 +150,7 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(root)
 
-        // Auto navigate after 2.6s - WITH LOGIN CHECK (ADDED, UI NOT CHANGED)
+        // Auto navigate after 2.6s - WITH LOGIN CHECK
         Handler(Looper.getMainLooper()).postDelayed({
             if (SupabaseClient.isLoggedIn(this)) {
                 startActivity(Intent(this, HomeActivity::class.java))
