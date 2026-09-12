@@ -1,177 +1,257 @@
 package com.konasl.nagad
 
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
-import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.launch
 
 class SignupActivity : AppCompatActivity() {
+
+    private val colorPrimary = Color.parseColor("#0F6C61")
+    private val colorPrimaryDark = Color.parseColor("#0A4A42")
+    private val colorFieldBg = Color.parseColor("#F1F5F4")
+    private val colorTextMuted = Color.parseColor("#6B7280")
+
+    private lateinit var nameInput: EditText
+    private lateinit var ageInput: EditText
+    private lateinit var addressInput: EditText
+    private lateinit var emergencyInput: EditText
+    private lateinit var historyInput: EditText
+    private lateinit var genderGroup: RadioGroup
+    private lateinit var bloodGroupSpinner: Spinner
+    private lateinit var statusText: TextView
+    private lateinit var submitBtn: Button
+    private lateinit var progress: ProgressBar
+
+    private var phone: String = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val phone = intent.getStringExtra("phone") ?: ""
+        phone = intent.getStringExtra("phone") ?: ""
 
-        val scroll = ScrollView(this)
-        val root = LinearLayout(this).apply {
+        val root = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(colorPrimary, colorPrimaryDark))
+        }
+
+        val scroll = NestedScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+
+        val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#FDFCF8"))
-            setPadding(dp(24), dp(32), dp(24), dp(24))
+            setPadding(dp(24), dp(48), dp(24), dp(40))
         }
 
-        val icon = MainActivity.SunnyCareIconView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(72), dp(72)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(16) }
+        val icon = SignupIconView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        }
+        val title = text("প্রোফাইল তৈরি করুন", 22f, Typeface.BOLD, Color.WHITE, Gravity.CENTER)
+        val subtitle = text("চিকিৎসা সেবা পেতে আপনার তথ্য দিন", 13f, Typeface.NORMAL, Color.argb(220, 255, 255, 255), Gravity.CENTER)
+        val phoneBadge = text("যাচাইকৃত নাম্বার: $phone", 12f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+            background = roundedBg(Color.argb(45, 255, 255, 255), 30f)
+            setPadding(dp(14), dp(6), dp(14), dp(6))
         }
 
-        val title = TextView(this).apply {
-            text = "রোগীর তথ্য দিন"
-            textSize = 20f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#0F6C61"))
-        }
-        val sub = TextView(this).apply {
-            text = "মোবাইল: $phone"
-            textSize = 12f
-            setTextColor(Color.GRAY)
-        }
-
-        // Helper to create input field programmatically
-        fun createInput(hint: String, inputType: Int = InputType.TYPE_CLASS_TEXT): EditText {
-            val bg = GradientDrawable().apply {
-                cornerRadius = dp(12).toFloat()
-                setColor(Color.WHITE)
-                setStroke(dp(1), Color.parseColor("#E5E7EB"))
-            }
-            return EditText(this).apply {
-                this.hint = hint
-                this.inputType = inputType
-                background = bg
-                setPadding(dp(14), dp(16), dp(14), dp(16))
-                textSize = 14f
-                layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(Color.WHITE, 24f)
+            setPadding(dp(22), dp(24), dp(22), dp(24))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(24)
             }
         }
 
-        val nameInput = createInput("পূর্ণ নাম (বাংলা/English)")
-        val ageInput = createInput("বয়স", InputType.TYPE_CLASS_NUMBER)
-        val weightInput = createInput("ওজন (kg)", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
-        val addressInput = createInput("ঠিকানা - গ্রাম/থানা")
+        nameInput = fieldInput("পূর্ণ নাম *", InputType.TYPE_CLASS_TEXT)
+        ageInput = fieldInput("বয়স", InputType.TYPE_CLASS_NUMBER)
 
-        // Gender chips programmatically
-        val genderLabel = TextView(this).apply { text = "লিঙ্গ"; textSize = 12f; setTextColor(Color.GRAY); setPadding(0, dp(16), 0, dp(4)) }
-        val genderLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        var selectedGender = "পুরুষ"
-        val genders = listOf("পুরুষ", "মহিলা", "অন্যান্য")
-        val genderViews = mutableListOf<TextView>()
-        genders.forEach { g ->
-            val chipBg = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(if (g == selectedGender) Color.parseColor("#0F6C61") else Color.WHITE); setStroke(dp(1), Color.parseColor("#0F6C61")) }
-            val tv = TextView(this).apply {
-                text = g
-                textSize = 12f
-                setTypeface(null, Typeface.BOLD)
-                setTextColor(if (g == selectedGender) Color.WHITE else Color.parseColor("#0F6C61"))
-                background = chipBg
-                setPadding(dp(16), dp(8), dp(16), dp(8))
-                layoutParams = LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(8) }
-                isClickable = true
-                setOnClickListener {
-                    selectedGender = g
-                    genderViews.forEach {
-                        val isSel = it.text == g
-                        it.background = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(if (isSel) Color.parseColor("#0F6C61") else Color.WHITE); setStroke(dp(1), Color.parseColor("#0F6C61")) }
-                        it.setTextColor(if (isSel) Color.WHITE else Color.parseColor("#0F6C61"))
-                    }
-                }
-            }
-            genderViews.add(tv)
-            genderLayout.addView(tv)
+        val genderLabel = label("লিঙ্গ")
+        genderGroup = RadioGroup(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(RadioButton(this@SignupActivity).apply { text = "পুরুষ"; id = View.generateViewId() })
+            addView(RadioButton(this@SignupActivity).apply { text = "মহিলা"; id = View.generateViewId(); (layoutParams as? LinearLayout.LayoutParams)?.leftMargin = dp(20) })
+            addView(RadioButton(this@SignupActivity).apply { text = "অন্যান্য"; id = View.generateViewId() })
+            (getChildAt(0).layoutParams as LinearLayout.LayoutParams).rightMargin = dp(20)
+            (getChildAt(1).layoutParams as LinearLayout.LayoutParams).rightMargin = dp(20)
+            check(getChildAt(0).id)
         }
 
-        // Chronic diseases chips
-        val diseaseLabel = TextView(this).apply { text = "পুরাতন রোগ (থাকলে সিলেক্ট করুন)"; textSize = 12f; setTextColor(Color.GRAY); setPadding(0, dp(16), 0, dp(4)) }
-        val diseaseLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(-1, -2) }
-        val diseases = listOf("ডায়াবেটিস", "উচ্চ রক্তচাপ", "এলার্জি", "হাঁপানি")
-        val selectedDiseases = mutableSetOf<String>()
-        diseases.forEach { d ->
-            val tv = TextView(this).apply {
-                text = d
-                textSize = 11f
-                setTextColor(Color.parseColor("#6B7280"))
-                background = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(Color.parseColor("#F3F4F6")) }
-                setPadding(dp(12), dp(6), dp(12), dp(6))
-                layoutParams = LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(6) }
-                isClickable = true
-                setOnClickListener {
-                    if (selectedDiseases.contains(d)) {
-                        selectedDiseases.remove(d)
-                        setBackgroundColor(Color.parseColor("#F3F4F6"))
-                    } else {
-                        selectedDiseases.add(d)
-                        background = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(Color.parseColor("#FEF3C7")); setStroke(dp(1), Color.parseColor("#F59E0B")) }
-                    }
-                }
+        val bloodLabel = label("রক্তের গ্রুপ")
+        bloodGroupSpinner = Spinner(this).apply {
+            val groups = arrayOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "জানা নেই")
+            adapter = ArrayAdapter(this@SignupActivity, android.R.layout.simple_spinner_dropdown_item, groups)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(8)
             }
-            diseaseLayout.addView(tv)
+            background = roundedBg(colorFieldBg, 14f)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
         }
 
-        val btn = TextView(this).apply {
-            text = "রেজিস্ট্রেশন সম্পন্ন করুন  ✓"
-            textSize = 15f
-            setTypeface(null, Typeface.BOLD)
+        addressInput = fieldInput("ঠিকানা", InputType.TYPE_CLASS_TEXT, multiLine = true)
+        emergencyInput = fieldInput("জরুরি যোগাযোগ নাম্বার", InputType.TYPE_CLASS_PHONE)
+        historyInput = fieldInput("পূর্ববর্তী রোগ/অ্যালার্জি (যদি থাকে)", InputType.TYPE_CLASS_TEXT, multiLine = true)
+
+        submitBtn = Button(this).apply {
+            text = "প্রোফাইল সাবমিট করুন"
             setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); colors = intArrayOf(Color.parseColor("#0F6C61"), Color.parseColor("#0A4A42")); orientation = GradientDrawable.Orientation.LEFT_RIGHT }
-            setPadding(0, dp(18), 0, dp(18))
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(28) }
-            isClickable = true
-            setOnClickListener {
-                val name = nameInput.text.toString().trim()
-                if (name.isEmpty()) { Toast.makeText(this@SignupActivity, "নাম দিন", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+            isAllCaps = false
+            setTypeface(null, Typeface.BOLD)
+            textSize = 15f
+            background = roundedBg(colorPrimary, 14f)
+            setPadding(0, dp(14), 0, dp(14))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(18)
+            }
+            setOnClickListener { onSubmit() }
+        }
 
-                lifecycleScope.launch {
-                    try {
-                        SupabaseClient.client.from("profiles").insert(
-                            mapOf(
-                                "phone" to phone,
-                                "name" to name,
-                                "age" to (ageInput.text.toString().toIntOrNull() ?: 0),
-                                "gender" to selectedGender,
-                                "weight" to (weightInput.text.toString().toFloatOrNull() ?: 0f),
-                                "address" to addressInput.text.toString(),
-                                "chronic_diseases" to selectedDiseases.toList()
-                            )
-                        )
-                        SupabaseClient.saveLogin(this@SignupActivity, phone, name)
-                        startActivity(Intent(this@SignupActivity, HomeActivity::class.java))
-                        finishAffinity()
-                    } catch (e: Exception) {
-                        Toast.makeText(this@SignupActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                    }
-                }
+        progress = ProgressBar(this).apply {
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(12)
             }
         }
 
-        root.addView(icon)
-        root.addView(title)
-        root.addView(sub)
-        root.addView(nameInput)
-        root.addView(ageInput)
-        root.addView(genderLabel)
-        root.addView(genderLayout)
-        root.addView(weightInput)
-        root.addView(addressInput)
-        root.addView(diseaseLabel)
-        root.addView(diseaseLayout)
-        root.addView(btn)
+        statusText = text("", 12.5f, Typeface.NORMAL, Color.parseColor("#D32F2F"), Gravity.CENTER).apply {
+            setPadding(0, dp(10), 0, 0)
+        }
 
-        scroll.addView(root)
-        setContentView(scroll)
+        card.addView(label("পূর্ণ নাম *"))
+        card.addView(nameInput)
+        card.addView(space(dp(14)))
+        card.addView(label("বয়স"))
+        card.addView(ageInput)
+        card.addView(space(dp(14)))
+        card.addView(genderLabel)
+        card.addView(genderGroup)
+        card.addView(space(dp(14)))
+        card.addView(bloodLabel)
+        card.addView(bloodGroupSpinner)
+        card.addView(space(dp(14)))
+        card.addView(label("ঠিকানা"))
+        card.addView(addressInput)
+        card.addView(space(dp(14)))
+        card.addView(label("জরুরি যোগাযোগ নাম্বার"))
+        card.addView(emergencyInput)
+        card.addView(space(dp(14)))
+        card.addView(label("পূর্ববর্তী রোগ/অ্যালার্জি"))
+        card.addView(historyInput)
+        card.addView(submitBtn)
+        card.addView(progress)
+        card.addView(statusText)
+
+        container.addView(icon)
+        container.addView(space(dp(12)))
+        container.addView(title)
+        container.addView(subtitle)
+        container.addView(space(dp(14)))
+        container.addView(phoneBadge)
+        container.addView(card)
+
+        scroll.addView(container)
+        root.addView(scroll)
+        setContentView(root)
     }
-    fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun onSubmit() {
+        val name = nameInput.text.toString().trim()
+        if (name.isEmpty()) {
+            statusText.text = "নাম আবশ্যক"
+            return
+        }
+        val age = ageInput.text.toString().trim().toIntOrNull()
+        val gender = when (genderGroup.indexOfChild(findViewById(genderGroup.checkedRadioButtonId))) {
+            0 -> "পুরুষ"; 1 -> "মহিলা"; else -> "অন্যান্য"
+        }
+        val bloodGroup = bloodGroupSpinner.selectedItem?.toString() ?: ""
+        val address = addressInput.text.toString().trim()
+        val emergency = emergencyInput.text.toString().trim()
+        val history = historyInput.text.toString().trim()
+
+        submitBtn.isEnabled = false
+        progress.visibility = View.VISIBLE
+        statusText.text = ""
+
+        lifecycleScope.launch {
+            val result = SupabaseClient.registerPatient(
+                SupabaseClient.NewPatient(
+                    phone = phone,
+                    fullName = name,
+                    age = age,
+                    gender = gender,
+                    bloodGroup = bloodGroup,
+                    address = address,
+                    emergencyContact = emergency,
+                    medicalHistory = history
+                )
+            )
+            progress.visibility = View.GONE
+            submitBtn.isEnabled = true
+            result.onSuccess { patient ->
+                SupabaseClient.saveSession(this@SignupActivity, patient.getString("id"), phone, name)
+                startActivity(Intent(this@SignupActivity, HomeActivity::class.java))
+                finish()
+            }.onFailure {
+                statusText.text = it.message ?: "প্রোফাইল সেভ করতে সমস্যা হয়েছে"
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    private fun fieldInput(hintText: String, type: Int, multiLine: Boolean = false): EditText = EditText(this).apply {
+        hint = hintText
+        inputType = if (multiLine) type or InputType.TYPE_TEXT_FLAG_MULTI_LINE else type
+        if (multiLine) minLines = 2
+        setPadding(dp(16), dp(14), dp(16), dp(14))
+        background = roundedBg(colorFieldBg, 14f)
+        textSize = 14.5f
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(6)
+        }
+    }
+
+    private fun label(t: String): TextView = text(t, 12.5f, Typeface.BOLD, colorTextMuted, Gravity.START)
+
+    private fun text(t: String, sizeSp: Float, style: Int, color: Int, gravity: Int): TextView = TextView(this).apply {
+        text = t; textSize = sizeSp; setTypeface(null, style); setTextColor(color); this.gravity = gravity
+    }
+
+    private fun space(h: Int): View = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, h) }
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun roundedBg(color: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = radiusDp * resources.displayMetrics.density
+        setColor(color)
+    }
+
+    class SignupIconView(context: android.content.Context) : View(context) {
+        private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+        private val paintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F59E0B"); style = Paint.Style.FILL }
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            canvas.drawCircle(w / 2, h / 2, w / 2, paintWhite)
+            canvas.drawCircle(w / 2, h * 0.38f, w * 0.16f, paintOrange)
+            val path = android.graphics.Path().apply {
+                moveTo(w * 0.22f, h * 0.82f)
+                quadTo(w * 0.5f, h * 0.55f, w * 0.78f, h * 0.82f)
+                lineTo(w * 0.22f, h * 0.82f)
+                close()
+            }
+            canvas.drawPath(path, paintOrange)
+        }
+    }
 }
