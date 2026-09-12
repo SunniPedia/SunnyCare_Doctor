@@ -30,18 +30,40 @@ import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
+/**
+ * ---------------------------------------------------------------------
+ * SignupActivity — SunnyCare Prototype Design System-এর সাথে মিলিয়ে রিস্কিন করা হয়েছে:
+ *   • Primary: #0F6C61 (teal) / Dark: #0A2A26
+ *   • Screen bg: #F8FFFE (mint) | Card bg: #FFFFFF | Border: #E6EFED
+ *   • Corner radius: বড় কার্ড 22-24dp, কম্পোনেন্ট 12-16dp (প্রোটোটাইপের মতো)
+ *   • Glass/verified badge স্টাইল, soft shadow 0_8px_24px
+ *   • SolaimanLipi বাংলা ফন্ট (assets/fonts/SolaimanLipi.ttf থাকলে অটো-লোড হবে, না থাকলে system font)
+ *
+ * সমস্ত আগের ফিচার/লজিক অপরিবর্তিত রাখা হয়েছে: ফর্ম ফিল্ড, কীবোর্ড হ্যান্ডলিং,
+ * ফোকাস-চেইন, ব্লাড গ্রুপ ডায়ালগ, ভ্যালিডেশন, SupabaseClient কল, সেশন সেভ ইত্যাদি।
+ * ---------------------------------------------------------------------
+ */
 class SignupActivity : AppCompatActivity() {
 
     // ---------------------------------------------------------------
-    // Palette
+    // Palette — প্রোটোটাইপ ডিজাইন সিস্টেম অনুযায়ী
     // ---------------------------------------------------------------
     private val colorPrimary = Color.parseColor("#0F6C61")
     private val colorPrimaryLight = Color.parseColor("#16897A")
-    private val colorPrimaryDark = Color.parseColor("#0A4A42")
-    private val colorFieldBg = Color.parseColor("#F1F5F4")
-    private val colorFieldBorder = Color.parseColor("#E2E8E6")
-    private val colorTextMuted = Color.parseColor("#6B7280")
-    private val colorDark = Color.parseColor("#111827")
+    private val colorPrimaryDark = Color.parseColor("#0A2A26")
+    private val colorScreenBg = Color.parseColor("#F8FFFE")
+    private val colorCardBg = Color.WHITE
+    private val colorBorder = Color.parseColor("#E6EFED")
+    private val colorFieldBg = Color.parseColor("#F8FFFE")
+    private val colorFieldBorderActive = colorPrimary
+    private val colorTextMuted = Color.parseColor("#6B7C7A")
+    private val colorDark = Color.parseColor("#0A2A26")
+    private val colorSunFrom = Color.parseColor("#FBBF24")
+    private val colorSunTo = Color.parseColor("#F59E0B")
+    private val colorError = Color.parseColor("#D32F2F")
+
+    // SolaimanLipi ফন্ট — assets/fonts/SolaimanLipi.ttf পাওয়া গেলে ব্যবহার হবে, নাহলে system default
+    private var appFont: Typeface? = null
 
     private lateinit var nameInput: EditText
     private lateinit var ageInput: EditText
@@ -71,6 +93,12 @@ class SignupActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         phone = intent.getStringExtra("phone") ?: ""
 
+        appFont = try {
+            Typeface.createFromAsset(assets, "fonts/SolaimanLipi.ttf")
+        } catch (e: Exception) {
+            null
+        }
+
         // কীবোর্ড ওপেন হলে স্ক্রিন রিসাইজ হয়ে ফর্মটা স্ক্রল-এবল থাকবে, কোনো ফিল্ড কীবোর্ডের নিচে চাপা পড়বে না।
         // SOFT_INPUT_STATE_HIDDEN দিয়ে নিশ্চিত করা হচ্ছে Activity ওপেন হওয়ার সাথে সাথেই যেন
         // প্রথম EditText অটো-ফোকাস হয়ে কীবোর্ড নিজে থেকে পপ-আপ না করে।
@@ -79,22 +107,16 @@ class SignupActivity : AppCompatActivity() {
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
         )
 
+        // রুট ব্যাকগ্রাউন্ড এখন প্রোটোটাইপের মতো হালকা মিন্ট ফ্ল্যাট বেজ (ফুল-স্ক্রিন গ্র্যাডিয়েন্টের বদলে)
         val root = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(colorPrimaryLight, colorPrimary, colorPrimaryDark)
-            )
+            setBackgroundColor(colorScreenBg)
             // রুট ভিউকে ফোকাসেবল করা হলো যাতে এটিই ডিফল্ট ফোকাস নেয়, কোনো EditText না।
             // এতে Activity চালু হওয়ার মুহূর্তে অনাকাঙ্ক্ষিতভাবে কীবোর্ড উঠবে না।
             isFocusableInTouchMode = true
             isFocusable = true
         }
         rootView = root
-
-        val decor = SignupDecorView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
 
         val scroll = NestedScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -115,35 +137,95 @@ class SignupActivity : AppCompatActivity() {
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(48), dp(24), dp(40))
+            setPadding(dp(18), dp(28), dp(18), dp(24))
         }
         containerView = container
-        normalContainerBottomPadding = dp(40)
+        normalContainerBottomPadding = dp(24)
 
-        val icon = SignupIconView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(68), dp(68)).apply { gravity = Gravity.CENTER_HORIZONTAL }
-        }
-        val title = text("প্রোফাইল তৈরি করুন", 22f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply { letterSpacing = 0.01f }
-        val subtitle = text("চিকিৎসা সেবা পেতে আপনার তথ্য দিন", 13f, Typeface.NORMAL, Color.argb(220, 255, 255, 255), Gravity.CENTER)
-        val phoneBadge = text("যাচাইকৃত নাম্বার: $phone", 12f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
-            background = roundedBg(Color.argb(45, 255, 255, 255), 30f)
-            setPadding(dp(14), dp(6), dp(14), dp(6))
-        }
-
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBg(Color.WHITE, 26f)
-            setPadding(dp(22), dp(26), dp(22), dp(24))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(24)
-            }
-            elevation = dp(16).toFloat()
+        // --------------------------------------------------------
+        // হিরো হেডার কার্ড — প্রোটোটাইপের rounded-[24px] গ্র্যাডিয়েন্ট হিরো স্টাইল
+        // --------------------------------------------------------
+        val heroCard = FrameLayout(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(colorPrimaryLight, colorPrimaryDark)
+            ).apply { cornerRadius = dp(24).toFloat() }
+            clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: android.graphics.Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, dp(26).toFloat())
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(24).toFloat())
+                }
+            }
+            elevation = dp(10).toFloat()
+        }
+        val heroDecor = SignupDecorView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        val heroContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(24), dp(30), dp(24), dp(28))
+        }
+
+        val icon = SignupIconView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        }
+        val title = text("প্রোফাইল তৈরি করুন", 20f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+            letterSpacing = 0.01f
+        }
+        val subtitle = text("চিকিৎসা সেবা পেতে আপনার তথ্য দিন", 12.5f, Typeface.NORMAL, Color.argb(215, 255, 255, 255), Gravity.CENTER)
+
+        // প্রোটোটাইপের "Glass BMDC badge" কম্পোনেন্ট স্টাইলে ভেরিফায়েড নাম্বার ব্যাজ
+        val phoneBadge = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(30).toFloat()
+                setColor(Color.argb(40, 255, 255, 255))
+                setStroke(dp(1), Color.argb(70, 255, 255, 255))
+            }
+            setPadding(dp(14), dp(7), dp(14), dp(7))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(14)
+            }
+            addView(checkBadgeView(this@SignupActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { rightMargin = dp(6) }
+            })
+            addView(text("যাচাইকৃত নাম্বার: $phone", 11.5f, Typeface.BOLD, Color.WHITE, Gravity.CENTER))
+        }
+
+        heroContent.addView(icon)
+        heroContent.addView(space(dp(10)))
+        heroContent.addView(title)
+        heroContent.addView(space(dp(4)))
+        heroContent.addView(subtitle)
+        heroContent.addView(phoneBadge)
+
+        heroCard.addView(heroDecor)
+        heroCard.addView(heroContent)
+
+        // --------------------------------------------------------
+        // ফর্ম কার্ড — প্রোটোটাইপের "rounded-[20px] bg-white border border-[#E6EFED]" স্টাইল
+        // --------------------------------------------------------
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = cardBg()
+            setPadding(dp(20), dp(22), dp(20), dp(20))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(18)
+            }
+            elevation = dp(6).toFloat()
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(20).toFloat())
                 }
             }
             clipToOutline = true
+        }
+
+        val formHeading = text("ব্যক্তিগত তথ্য", 13.5f, Typeface.BOLD, colorDark, Gravity.START).apply {
+            setPadding(0, 0, 0, dp(4))
         }
 
         nameInput = fieldInput("পূর্ণ নাম *", InputType.TYPE_CLASS_TEXT, imeAction = EditorInfo.IME_ACTION_NEXT)
@@ -165,15 +247,15 @@ class SignupActivity : AppCompatActivity() {
         // Spinner-এর বদলে অ্যাপের কালার থিম মেনে তৈরি একটি কাস্টম ক্লিকেবল ফিল্ড,
         // যাতে ট্যাপ করলে অ্যাপের কালারে স্টাইল করা কাস্টম ডায়ালগ ওপেন হয়
         selectedBloodGroup = bloodGroups[0]
-        bloodGroupField = text(selectedBloodGroup, 14.5f, Typeface.BOLD, colorDark, Gravity.START).apply {
+        bloodGroupField = text(selectedBloodGroup, 14f, Typeface.BOLD, colorDark, Gravity.START).apply {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val bloodGroupArrow = text("▾", 16f, Typeface.BOLD, colorPrimary, Gravity.END)
+        val bloodGroupArrow = text("▾", 15f, Typeface.BOLD, colorPrimary, Gravity.END)
         bloodGroupRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = fieldBg(false)
-            setPadding(dp(16), dp(14), dp(16), dp(14))
+            setPadding(dp(16), dp(13), dp(16), dp(13))
             isClickable = true
             isFocusable = true
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -238,21 +320,24 @@ class SignupActivity : AppCompatActivity() {
             onSubmit()
         }.apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(20)
+                topMargin = dp(22)
             }
         }
 
         progress = ProgressBar(this).apply {
             visibility = View.GONE
+            indeterminateTintList = ColorStateList.valueOf(colorPrimary)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(12)
             }
         }
 
-        statusText = text("", 12.5f, Typeface.NORMAL, Color.parseColor("#D32F2F"), Gravity.CENTER).apply {
+        statusText = text("", 12.5f, Typeface.NORMAL, colorError, Gravity.CENTER).apply {
             setPadding(0, dp(10), 0, 0)
         }
 
+        card.addView(formHeading)
+        card.addView(space(dp(10)))
         card.addView(label("পূর্ণ নাম *"))
         card.addView(nameInput)
         card.addView(space(dp(14)))
@@ -276,20 +361,30 @@ class SignupActivity : AppCompatActivity() {
         card.addView(submitBtn)
         card.addView(progress)
         card.addView(statusText)
-        card.addView(space(dp(40))) // কীবোর্ড খোলা অবস্থায় সাবমিট বাটন যেন নিচে চাপা না পড়ে
+        card.addView(space(dp(30))) // কীবোর্ড খোলা অবস্থায় সাবমিট বাটন যেন নিচে চাপা না পড়ে
 
-        container.addView(icon)
-        container.addView(space(dp(12)))
-        container.addView(title)
-        container.addView(subtitle)
-        container.addView(space(dp(14)))
-        container.addView(phoneBadge)
+        // প্রোটোটাইপের "Components" চিপ স্টাইলে ছোট ফুটার ইঙ্গিত (ডিজাইন সিস্টেম কনসিস্টেন্সি)
+        val footNote = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(16)
+            }
+            addView(dotView(this@SignupActivity, Color.parseColor("#10B981")).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(6), dp(6)).apply { rightMargin = dp(6) }
+            })
+            addView(text("আপনার তথ্য নিরাপদে সংরক্ষিত থাকবে", 10.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER))
+        }
+
+        container.addView(heroCard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         container.addView(card)
+        container.addView(footNote)
 
         scroll.addView(container)
-        root.addView(decor)
         root.addView(scroll)
         setContentView(root)
+
+        applyFontRecursively(root)
 
         // Activity তৈরি হওয়ার সময় রুট ভিউ ফোকাস নিয়ে নেয়, ফলে কোনো EditText অটো-ফোকাসড না হয়ে
         // কীবোর্ড নিজে থেকে খুলে যায় না — ইউজার নিজে ট্যাপ করলে তবেই কীবোর্ড আসবে
@@ -359,12 +454,12 @@ class SignupActivity : AppCompatActivity() {
 
         val dialogRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedBg(Color.WHITE, 22f)
+            background = roundedBg(Color.WHITE, 20f)
             setPadding(dp(20), dp(20), dp(20), dp(10))
-            elevation = dp(18).toFloat()
+            elevation = dp(14).toFloat()
         }
 
-        val dialogTitle = text("রক্তের গ্রুপ নির্বাচন করুন", 16f, Typeface.BOLD, colorPrimaryDark, Gravity.START).apply {
+        val dialogTitle = text("রক্তের গ্রুপ নির্বাচন করুন", 15.5f, Typeface.BOLD, colorPrimaryDark, Gravity.START).apply {
             setPadding(0, 0, 0, dp(14))
         }
         dialogRoot.addView(dialogTitle)
@@ -374,7 +469,14 @@ class SignupActivity : AppCompatActivity() {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = roundedBg(if (isSelected) Color.argb(28, 15, 108, 97) else colorFieldBg, 14f)
+                background = if (isSelected)
+                    GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(14).toFloat()
+                        setColor(Color.argb(24, 15, 108, 97))
+                        setStroke(dp(1), colorPrimary)
+                    }
+                else roundedBg(colorFieldBg, 14f)
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 isClickable = true
                 isFocusable = true
@@ -404,6 +506,8 @@ class SignupActivity : AppCompatActivity() {
             setOnClickListener { dialog.dismiss() }
         }
         dialogRoot.addView(cancelText)
+
+        applyFontRecursively(dialogRoot)
 
         dialog.setContentView(dialogRoot)
         dialog.window?.apply {
@@ -468,7 +572,7 @@ class SignupActivity : AppCompatActivity() {
         imeAction: Int = EditorInfo.IME_ACTION_NEXT
     ): EditText = EditText(this).apply {
         hint = hintText
-        setHintTextColor(Color.parseColor("#9CA3AF"))
+        setHintTextColor(Color.parseColor("#9AA8A5"))
         inputType = if (multiLine) type or InputType.TYPE_TEXT_FLAG_MULTI_LINE else type
         if (multiLine) minLines = 2
         // মাল্টি-লাইন ফিল্ডে "Enter"-কে newline হিসেবে ব্যবহার না করে কাস্টম ime action ব্যবহার করা হচ্ছে,
@@ -484,12 +588,20 @@ class SignupActivity : AppCompatActivity() {
         }
     }
 
-    /** ফোকাস/আনফোকাস অনুযায়ী বর্ডার-কালার বদলায় এমন ইনপুট-ফিল্ড ব্যাকগ্রাউন্ড (কোনো drawable resource ছাড়া) */
+    /** ফোকাস/আনফোকাস অনুযায়ী বর্ডার-কালার বদলায় এমন ইনপুট-ফিল্ড ব্যাকগ্রাউন্ড — প্রোটোটাইপের #E6EFED বর্ডার টোকেন অনুযায়ী */
     private fun fieldBg(active: Boolean): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(14).toFloat()
         setColor(colorFieldBg)
-        setStroke(dp(1).coerceAtLeast(1).let { (1.6f * resources.displayMetrics.density).toInt() }, if (active) colorPrimary else colorFieldBorder)
+        setStroke((1.6f * resources.displayMetrics.density).toInt(), if (active) colorFieldBorderActive else colorBorder)
+    }
+
+    /** কার্ডের ব্যাকগ্রাউন্ড — সাদা + #E6EFED বর্ডার, প্রোটোটাইপের rounded-[20px] কার্ড টোকেন */
+    private fun cardBg(): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(20).toFloat()
+        setColor(colorCardBg)
+        setStroke(dp(1), colorBorder)
     }
 
     /** থিম কালারে ট্রাই-স্টেট রেডিও বাটন, বড় টাচ-এরিয়া ও প্রিমিয়াম টাইপোগ্রাফি সহ */
@@ -501,7 +613,7 @@ class SignupActivity : AppCompatActivity() {
         setPadding(dp(6), 0, 0, 0)
         buttonTintList = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf(-android.R.attr.state_checked)),
-            intArrayOf(colorPrimary, Color.parseColor("#B9C1BF"))
+            intArrayOf(colorPrimary, Color.parseColor("#B9C7C4"))
         )
     }
 
@@ -515,7 +627,7 @@ class SignupActivity : AppCompatActivity() {
         background = GradientDrawable(
             GradientDrawable.Orientation.LEFT_RIGHT,
             intArrayOf(colorPrimaryLight, colorPrimaryDark)
-        ).apply { cornerRadius = dp(15).toFloat() }
+        ).apply { cornerRadius = dp(16).toFloat() }
         elevation = dp(3).toFloat()
         setPadding(0, dp(14), 0, dp(14))
         setOnTouchListener { v, event ->
@@ -532,7 +644,7 @@ class SignupActivity : AppCompatActivity() {
     private fun label(t: String): TextView = text(t, 12.5f, Typeface.BOLD, colorTextMuted, Gravity.START)
 
     private fun text(t: String, sizeSp: Float, style: Int, color: Int, gravity: Int): TextView = TextView(this).apply {
-        text = t; textSize = sizeSp; setTypeface(null, style); setTextColor(color); this.gravity = gravity
+        text = t; textSize = sizeSp; setTypeface(appFont, style); setTextColor(color); this.gravity = gravity
     }
 
     private fun space(h: Int): View = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, h) }
@@ -544,19 +656,54 @@ class SignupActivity : AppCompatActivity() {
         setColor(color)
     }
 
+    /** পুরো ভিউ-ট্রি জুড়ে SolaimanLipi ফন্ট প্রয়োগ করা হয় (স্টাইল/বোল্ড অক্ষুণ্ণ রেখে) */
+    private fun applyFontRecursively(view: View) {
+        val font = appFont ?: return
+        when (view) {
+            is TextView -> view.setTypeface(font, view.typeface?.style ?: Typeface.NORMAL)
+            is ViewGroup -> for (i in 0 until view.childCount) applyFontRecursively(view.getChildAt(i))
+        }
+    }
+
+    /** ছোট সলিড ডট ইন্ডিকেটর (প্রোটোটাইপের emerald status dot-এর মতো) */
+    private fun dotView(context: Context, color: Int): View = View(context).apply {
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+    }
+
+    /** ছোট চেক-ব্যাজ আইকন — Lucide-চেক আইকনের বিকল্প, ভেরিফায়েড ব্যাজের ভেতরে ব্যবহৃত */
+    private fun checkBadgeView(context: Context): View = object : View(context) {
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 2.4f
+            strokeCap = Paint.Cap.ROUND
+        }
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            val path = android.graphics.Path().apply {
+                moveTo(w * 0.18f, h * 0.52f)
+                lineTo(w * 0.42f, h * 0.76f)
+                lineTo(w * 0.85f, h * 0.24f)
+            }
+            canvas.drawPath(path, p)
+        }
+    }
+
     /** ব্যাকগ্রাউন্ড গ্রেডিয়েন্টের উপর হালকা translucent বৃত্ত - depth যোগ করার জন্য (কোনো resource ছাড়া) */
     class SignupDecorView(context: Context) : View(context) {
-        private val p1 = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(24, 255, 255, 255) }
-        private val p2 = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(15, 255, 255, 255) }
+        private val p1 = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(22, 255, 255, 255) }
+        private val p2 = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(14, 255, 255, 255) }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val w = width.toFloat(); val h = height.toFloat()
-            canvas.drawCircle(w * 0.88f, h * 0.06f, w * 0.34f, p1)
-            canvas.drawCircle(w * 0.08f, h * 0.18f, w * 0.20f, p2)
+            canvas.drawCircle(w * 0.90f, h * 0.05f, w * 0.32f, p1)
+            canvas.drawCircle(w * 0.06f, h * 0.90f, w * 0.22f, p2)
         }
     }
 
+    /** SunnyCare আইকন — সাদা বৃত্ত + কমলা সূর্য + মেডিকেল ক্রস (প্রোটোটাইপের কম্পোনেন্ট টোকেন অনুযায়ী) */
     class SignupIconView(context: Context) : View(context) {
         private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
         private val paintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
