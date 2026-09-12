@@ -1,6 +1,9 @@
 package com.konasl.nagad
 
 import android.app.TimePickerDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -27,9 +30,13 @@ class BookAppointmentActivity : AppCompatActivity() {
 
     private val appointmentFee = 800
 
+    // TODO: আসল bKash/Nagad মার্চেন্ট/পার্সোনাল নাম্বার বসান
+    private val bkashMerchantNumber = "01XXXXXXXXX"
+    private val nagadMerchantNumber = "01XXXXXXXXX"
+
     data class DateOption(val label: String, val dayNum: Int, val month: String, val isoDate: String)
     data class TimeSlot(val label: String, val value24: String)
-    data class PaymentOption(val label: String, val emoji: String)
+    data class PaymentOption(val label: String, val emoji: String, val merchantNumber: String? = null)
 
     private var selectedDate: DateOption? = null
     private var selectedTime24: String? = null
@@ -39,6 +46,10 @@ class BookAppointmentActivity : AppCompatActivity() {
     private lateinit var timeGrid: GridLayout
     private lateinit var customTimeBtn: TextView
     private lateinit var paymentRow: LinearLayout
+    private lateinit var manualPayCard: LinearLayout
+    private lateinit var manualPayNumberText: TextView
+    private lateinit var manualPayInstructionText: TextView
+    private lateinit var trxIdInput: EditText
     private lateinit var reasonInput: EditText
     private lateinit var nameInput: EditText
     private lateinit var phoneInput: EditText
@@ -57,9 +68,9 @@ class BookAppointmentActivity : AppCompatActivity() {
     )
 
     private val paymentOptions = listOf(
-        PaymentOption("বিকাশ", "📱"),
-        PaymentOption("নগদ", "💳"),
-        PaymentOption("সরাসরি (ভিজিটে)", "🏥")
+        PaymentOption("বিকাশ", "📱", bkashMerchantNumber),
+        PaymentOption("নগদ", "💳", nagadMerchantNumber),
+        PaymentOption("সরাসরি (ভিজিটে)", "🏥", null)
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -203,6 +214,48 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
         buildPaymentOptions()
 
+        // ---------------- MANUAL PAYMENT CARD (bKash/Nagad সিলেক্ট করলে দেখা যাবে) ----------------
+        manualPayCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(Color.parseColor("#FFF8EC"), 16f)
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(18), dp(10), dp(18), 0)
+            }
+            visibility = View.GONE
+        }
+        manualPayInstructionText = text(
+            "নিচের নাম্বারে Send Money করে Transaction ID টি নিচে লিখুন",
+            11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START
+        )
+        val numberRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(10), 0, dp(14))
+        }
+        manualPayNumberText = text("01XXXXXXXXX", 17f, Typeface.BOLD, Color.parseColor("#111827"), Gravity.START).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val copyBtn = text("কপি করুন", 11.5f, Typeface.BOLD, colorPrimary, Gravity.CENTER).apply {
+            background = roundedBg(Color.WHITE, 12f)
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            setOnClickListener {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Payment Number", manualPayNumberText.text.toString()))
+                Toast.makeText(this@BookAppointmentActivity, "নাম্বার কপি হয়েছে", Toast.LENGTH_SHORT).show()
+            }
+        }
+        numberRow.addView(manualPayNumberText)
+        numberRow.addView(copyBtn)
+
+        trxIdInput = styledInput("Transaction ID (TrxID) লিখুন", "")
+        trxIdInput.background = roundedBg(Color.WHITE, 12f)
+
+        manualPayCard.addView(manualPayInstructionText)
+        manualPayCard.addView(numberRow)
+        manualPayCard.addView(fieldLabel("Transaction ID"))
+        manualPayCard.addView(trxIdInput)
+
         // ---------------- CONFIRM BUTTON ----------------
         totalFeeText = text("সর্বমোট: ৳ $appointmentFee", 13f, Typeface.BOLD, Color.parseColor("#111827"), Gravity.START)
         val confirmWrap = LinearLayout(this).apply {
@@ -236,6 +289,7 @@ class BookAppointmentActivity : AppCompatActivity() {
         page.addView(infoCard)
         page.addView(paymentSection)
         page.addView(paymentRow)
+        page.addView(manualPayCard)
         page.addView(confirmWrap)
 
         scroll.addView(page)
@@ -391,8 +445,22 @@ class BookAppointmentActivity : AppCompatActivity() {
                     check.text = if (selected) "●" else "○"
                     check.setTextColor(if (selected) colorPrimary else colorTextMuted)
                 }
+                updateManualPayCard(option)
             }
             paymentRow.addView(row)
+        }
+    }
+
+    /** bKash/Nagad সিলেক্ট করলে মার্চেন্ট নাম্বার + TrxID ইনপুট দেখায়, "সরাসরি" সিলেক্ট করলে লুকিয়ে যায় */
+    private fun updateManualPayCard(option: PaymentOption) {
+        if (option.merchantNumber != null) {
+            manualPayNumberText.text = option.merchantNumber
+            manualPayInstructionText.text =
+                "${option.label}-এ (Send Money) $appointmentFee টাকা পাঠিয়ে Transaction ID টি নিচে লিখুন"
+            manualPayCard.visibility = View.VISIBLE
+        } else {
+            manualPayCard.visibility = View.GONE
+            trxIdInput.setText("")
         }
     }
 
@@ -401,6 +469,7 @@ class BookAppointmentActivity : AppCompatActivity() {
         val name = nameInput.text.toString().trim()
         val phone = phoneInput.text.toString().trim()
         val reason = reasonInput.text.toString().trim()
+        val trxId = trxIdInput.text.toString().trim()
 
         if (selectedDate == null) { Toast.makeText(this, "তারিখ নির্বাচন করুন", Toast.LENGTH_SHORT).show(); return }
         if (selectedTime24 == null) { Toast.makeText(this, "সময় নির্বাচন করুন", Toast.LENGTH_SHORT).show(); return }
@@ -408,10 +477,17 @@ class BookAppointmentActivity : AppCompatActivity() {
         if (reason.isEmpty()) { Toast.makeText(this, "সমস্যার বিবরণ দিন", Toast.LENGTH_SHORT).show(); return }
         if (selectedPayment == null) { Toast.makeText(this, "পেমেন্ট পদ্ধতি নির্বাচন করুন", Toast.LENGTH_SHORT).show(); return }
 
+        val isManualPayment = manualPayCard.visibility == View.VISIBLE
+        if (isManualPayment && trxId.isEmpty()) {
+            Toast.makeText(this, "Transaction ID লিখুন", Toast.LENGTH_SHORT).show(); return
+        }
+
         val patientId = SupabaseClient.getPatientId(this)
         if (patientId == null) {
             Toast.makeText(this, "সেশন পাওয়া যায়নি, আবার লগইন করুন", Toast.LENGTH_SHORT).show(); return
         }
+
+        val paymentStatus = if (isManualPayment) "pending_verification" else "not_applicable"
 
         confirmBtn.isEnabled = false
         lifecycleScope.launch {
@@ -423,10 +499,16 @@ class BookAppointmentActivity : AppCompatActivity() {
                 date = selectedDate!!.isoDate,
                 time = selectedTime24!!,
                 paymentMethod = selectedPayment!!,
-                fee = appointmentFee
+                fee = appointmentFee,
+                transactionId = trxId,
+                paymentStatus = paymentStatus
             )
             result.onSuccess {
-                Toast.makeText(this@BookAppointmentActivity, "অ্যাপয়েন্টমেন্ট বুক হয়েছে", Toast.LENGTH_SHORT).show()
+                val msg = if (isManualPayment)
+                    "অ্যাপয়েন্টমেন্ট বুক হয়েছে, পেমেন্ট যাচাই হলে কনফার্ম করা হবে"
+                else
+                    "অ্যাপয়েন্টমেন্ট বুক হয়েছে"
+                Toast.makeText(this@BookAppointmentActivity, msg, Toast.LENGTH_LONG).show()
                 setResult(RESULT_OK)
                 finish()
             }.onFailure {
