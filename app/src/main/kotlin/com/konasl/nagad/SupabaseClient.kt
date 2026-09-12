@@ -272,33 +272,34 @@ object SupabaseClient {
     // APPOINTMENTS
     // ---------------------------------------------------------------------
 
-    suspend fun createAppointment(
-        patientId: String,
-        patientName: String,
-        phone: String,
-        reason: String,
-        date: String,
-        time: String
-    ): Result<JSONObject> = try {
-        val json = JSONObject().apply {
-            put("patient_id", patientId)
-            put("patient_name", patientName)
-            put("phone", phone)
-            put("reason", reason)
-            put("preferred_date", date)
-            put("preferred_time", time)
-            put("status", "pending")
-        }
-        val rows = post("appointments", json)
-        Result.success(rows.getJSONObject(0))
-    } catch (e: Exception) {
-        Result.failure(e)
+suspend fun createAppointment(
+    patientId: String,
+    patientName: String,
+    phone: String,
+    reason: String,
+    date: String,
+    time: String,
+    paymentMethod: String = "",
+    fee: Int = 800,
+    transactionId: String = "",
+    paymentStatus: String = "not_applicable"
+): Result<JSONObject> = try {
+    val json = JSONObject().apply {
+        put("patient_id", patientId)
+        put("patient_name", patientName)
+        put("phone", phone)
+        put("reason", reason)
+        put("preferred_date", date)
+        put("preferred_time", time)
+        put("status", "pending")
+        put("payment_method", paymentMethod)
+        put("fee", fee)
+        put("transaction_id", transactionId)
+        put("payment_status", paymentStatus)
     }
-
-    suspend fun getAppointments(patientId: String): Result<JSONArray> = try {
-        val rows = get("appointments?patient_id=eq.$patientId&order=created_at.desc")
-        Result.success(rows)
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
+    val rows = post("appointments", json)
+    Result.success(rows.getJSONObject(0))
+} catch (e: Exception) {
+    Result.failure(e)
+}
 }
