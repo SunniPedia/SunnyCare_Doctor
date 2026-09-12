@@ -11,6 +11,7 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
@@ -41,6 +42,9 @@ class SignupActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         phone = intent.getStringExtra("phone") ?: ""
 
+        // কীবোর্ড ওপেন হলে স্ক্রিন রিসাইজ হয়ে ফর্মটা স্ক্রল-এবল থাকবে, কোনো ফিল্ড কীবোর্ডের নিচে চাপা পড়বে না
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
         val root = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(colorPrimary, colorPrimaryDark))
@@ -48,6 +52,8 @@ class SignupActivity : AppCompatActivity() {
 
         val scroll = NestedScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            isFillViewport = true
+            clipToPadding = false
         }
 
         val container = LinearLayout(this).apply {
@@ -151,6 +157,7 @@ class SignupActivity : AppCompatActivity() {
         card.addView(submitBtn)
         card.addView(progress)
         card.addView(statusText)
+        card.addView(space(dp(40))) // কীবোর্ড খোলা অবস্থায় সাবমিট বাটন যেন নিচে চাপা না পড়ে
 
         container.addView(icon)
         container.addView(space(dp(12)))
