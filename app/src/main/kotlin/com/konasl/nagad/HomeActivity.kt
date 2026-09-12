@@ -246,7 +246,7 @@ class HomeActivity : AppCompatActivity() {
         listOf(navHome to Tab.HOME, navAppointments to Tab.APPOINTMENTS, navProfile to Tab.PROFILE).forEach { (item, tab) ->
             val active = tab == currentTab
             val color = if (active) Color.WHITE else colorTextMuted
-            item.iconDrawable.setTint(color)
+            item.iconDrawable.updateTint(color)
             item.label.setTextColor(color)
             item.label.setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
             item.pill.background = if (active) {
@@ -779,13 +779,13 @@ class HomeActivity : AppCompatActivity() {
     // ------------------------------------------------------------------
     class VectorIconDrawable(
         private val type: IconType,
-        color: Int,
+        initialColor: Int,
         private val sizePx: Int = 96
     ) : Drawable() {
 
         enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT }
 
-        private var iconColor: Int = color
+        private var iconColor: Int = initialColor
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = iconColor }
         private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -794,7 +794,7 @@ class HomeActivity : AppCompatActivity() {
             color = iconColor
         }
 
-        fun setTint(c: Int) {
+        fun updateTint(c: Int) {
             iconColor = c
             fillPaint.color = c
             strokePaint.color = c
