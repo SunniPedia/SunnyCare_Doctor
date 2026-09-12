@@ -2,12 +2,9 @@ package com.konasl.nagad
 
 import android.animation.ValueAnimator
 import android.content.Context
-import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -16,19 +13,26 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
+import java.io.File
+import java.io.FileOutputStream
+import java.net.URL
+import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
+
+    private val FONT_URL = "https://cdn.jsdelivr.net/gh/SunniPedia/sunnipedia/fonts/SolaimanLipi.ttf"
+    private val FONT_NAME = "SolaimanLipi.ttf"
+    private var customTypeface: Typeface? = null
+    private val allTextViews = mutableListOf<TextView>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. BACKGROUND - Programmatically Gradient Drawable
         val gradientDrawable = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(Color.parseColor("#0F6C61"), Color.parseColor("#0A4A42"))
         )
 
-        // 2. ROOT LAYOUT
         val root = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -37,7 +41,6 @@ class MainActivity : AppCompatActivity() {
             background = gradientDrawable
         }
 
-        // 3. CENTER CONTAINER
         val centerLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -48,35 +51,25 @@ class MainActivity : AppCompatActivity() {
             setPadding(40)
         }
 
-        // 4. ICON - Programmatically Custom View (No drawable)
         val iconView = SunnyCareIconView(this).apply {
             layoutParams = LinearLayout.LayoutParams(dp(112), dp(112)).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
             }
         }
 
-        // 5. APP NAME
-        val appName = createText("SunnyCare ☀", 34f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
-            letterSpacing = 0.02f
-        }
-        val subName = createText("DOCTOR", 13f, Typeface.BOLD, Color.parseColor("#F59E0B"), Gravity.CENTER).apply {
-            letterSpacing = 0.3f
-        }
-
-        // 6. DOCTOR DETAILS - Keep All Details
+        // TextView গুলো বানালাম, পরে ফন্ট Apply করবো
+        val appName = createText("SunnyCare ☀", 34f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply { letterSpacing = 0.02f }
+        val subName = createText("DOCTOR", 13f, Typeface.BOLD, Color.parseColor("#F59E0B"), Gravity.CENTER).apply { letterSpacing = 0.3f }
         val drName = createText("ডা. মাসুম বিল্লাহ সানি", 19f, Typeface.BOLD, Color.WHITE, Gravity.CENTER)
-
         val degrees = createText(
             "এম.বি.বি.এস (সি.ইউ), ডি.এম.ইউ (আল্ট্রা),\nপিজিটি, এম.সি.জি.পি (মেডিসিন ও শিশু),\nসি.সি.ডি (ডায়াবেটিস- বারডেম, ঢাকা)",
             11.5f, Typeface.NORMAL, Color.argb(230, 255, 255, 255), Gravity.CENTER
         )
-
         val designation = createText(
             "এক্স মেডিকেল অফিসার:\nপার্কভিউ মেডিকেল কলেজ হাসপাতাল, সিলেট।",
             11f, Typeface.NORMAL, Color.argb(190, 255, 255, 255), Gravity.CENTER
         )
 
-        // 7. BMDC BADGE - Programmatically background
         val bmdcBg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(50).toFloat()
@@ -87,7 +80,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(14), dp(6), dp(14), dp(6))
         }
 
-        // 8. LOADING DOTS - Programmatically
         val dotsLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -113,7 +105,6 @@ class MainActivity : AppCompatActivity() {
         }
         animateDots(dots)
 
-        // 9. FOOTER
         val footer = createText(
             "মেডিসিন-শিশু, ডায়াবেটিস, উচ্চ রক্তচাপ, বাত ব্যাথা,\nনাক-কান-গলা, এলার্জি, শ্বাসকষ্ট ও চর্মরোগে অভিজ্ঞ।",
             9f, Typeface.NORMAL, Color.argb(115, 255, 255, 255), Gravity.CENTER
@@ -128,7 +119,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), 0, dp(16), 0)
         }
 
-        // ADD ALL VIEWS
         centerLayout.apply {
             addView(iconView)
             addView(space(dp(22)))
@@ -147,21 +137,58 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(centerLayout)
         root.addView(footer)
-
         setContentView(root)
 
-        // Auto navigate after 2.6s - WITH LOGIN CHECK
-        Handler(Looper.getMainLooper()).postDelayed({
+        // === ফন্ট লোডিং লজিক ===
+        loadFontAndApply()
+
+        // Auto navigate
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             if (SupabaseClient.isLoggedIn(this)) {
-                startActivity(Intent(this, HomeActivity::class.java))
+                startActivity(android.content.Intent(this, HomeActivity::class.java))
             } else {
-                startActivity(Intent(this, LoginActivity::class.java))
+                startActivity(android.content.Intent(this, LoginActivity::class.java))
             }
             finish()
         }, 2600)
     }
 
-    // Helper: Custom Icon View - Draw Sun + Medical Cross
+    private fun loadFontAndApply() {
+        thread {
+            try {
+                val fontDir = File(filesDir, "fonts")
+                if (!fontDir.exists()) fontDir.mkdirs()
+                val fontFile = File(fontDir, FONT_NAME)
+
+                if (!fontFile.exists()) {
+                    // প্রথমবার ডাউনলোড
+                    URL(FONT_URL).openStream().use { input ->
+                        FileOutputStream(fontFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                }
+
+                // ফাইল থেকে Typeface বানাও
+                customTypeface = Typeface.createFromFile(fontFile)
+
+                // UI Thread এ সব TextView তে Apply করো
+                runOnUiThread {
+                    customTypeface?.let { tf ->
+                        allTextViews.forEach { tv ->
+                            // আগের Bold/Normal স্টাইল ধরে রাখবে
+                            val oldStyle = tv.typeface?.style ?: Typeface.NORMAL
+                            tv.typeface = Typeface.create(tf, oldStyle)
+                        }
+                    }
+                }
+
+            } catch (e: Exception) {
+                e.printStackTrace() // নেট না থাকলে ডিফল্ট ফন্টেই চলবে
+            }
+        }
+    }
+
     class SunnyCareIconView(context: Context) : View(context) {
         private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
         private val paintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F59E0B"); style = Paint.Style.FILL; strokeWidth = 6f; strokeCap = Paint.Cap.ROUND }
@@ -196,6 +223,7 @@ class MainActivity : AppCompatActivity() {
         return TextView(this).apply {
             this.text = text
             textSize = sizeSp
+            // শুরুতে ডিফল্ট, পরে custom font আসলে replace হবে
             setTypeface(null, style)
             setTextColor(color)
             this.gravity = gravity
@@ -203,6 +231,7 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { this.gravity = Gravity.CENTER_HORIZONTAL }
+            allTextViews.add(this)
         }
     }
 
