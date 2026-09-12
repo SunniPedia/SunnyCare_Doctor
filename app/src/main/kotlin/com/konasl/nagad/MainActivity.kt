@@ -58,7 +58,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val appName = createText("SunnyCare ☀", 34f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply { letterSpacing = 0.02f }
-        val subName = createText("DOCTOR", 13f, Typeface.BOLD, Color.parseColor("#F59E0B"), Gravity.CENTER).apply { letterSpacing = 0.3f }
+        // subName (DOCTOR) বাদ দেওয়া হয়েছে
         val drName = createText("ডা. মাসুম বিল্লাহ সানি", 19f, Typeface.BOLD, Color.WHITE, Gravity.CENTER)
         val degrees = createText(
             "এম.বি.বি.এস (সি.ইউ), ডি.এম.ইউ (আল্ট্রা),\nপিজিটি, এম.সি.জি.পি (মেডিসিন ও শিশু),\nসি.সি.ডি (ডায়াবেটিস- বারডেম, ঢাকা)",
@@ -122,7 +122,7 @@ class MainActivity : AppCompatActivity() {
             addView(iconView)
             addView(space(dp(22)))
             addView(appName)
-            addView(subName)
+            // subName এখান থেকেও বাদ দেওয়া হয়েছে
             addView(space(dp(28)))
             addView(drName)
             addView(space(dp(8)))
@@ -138,7 +138,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(footer)
         setContentView(root)
 
-        // === ফন্ট লোডিং লজিক (আপডেট) ===
+        // === ফন্ট লোডিং লজিক ===
         loadFontAndApply()
 
         // Auto navigate
@@ -169,13 +169,12 @@ class MainActivity : AppCompatActivity() {
 
                 customTypeface = Typeface.createFromFile(fontFile)
                 
-                // MyApp কে জানিয়ে দাও ফন্ট রেডি
+                // MyApp কে জানিয়ে দাও ফন্ট রেডি - Auto System এর জন্য
                 (application as MyApp).loadFont()
 
                 runOnUiThread {
                     customTypeface?.let { tf ->
                         allTextViews.forEach { tv ->
-                            // শুধু বাংলা লেখায় Apply করো
                             if (tv.text.any { c -> c.code in 2432..2559 }) {
                                 val oldStyle = tv.typeface?.style ?: Typeface.NORMAL
                                 tv.typeface = Typeface.create(tf, oldStyle)
@@ -231,8 +230,8 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { this.gravity = Gravity.CENTER_HORIZONTAL }
-            // যদি MyApp এ আগে থেকেই ফন্ট থাকে, সাথে সাথে Apply করো
-            MyApp.solaimanLipi?.let {
+            // Build Error Fix: solaimanLipi -> banglaTypeface
+            MyApp.banglaTypeface?.let {
                 if (text.any { c -> c.code in 2432..2559 }) {
                     typeface = Typeface.create(it, style)
                 }
