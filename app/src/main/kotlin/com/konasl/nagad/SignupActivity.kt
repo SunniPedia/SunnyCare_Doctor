@@ -9,9 +9,12 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
@@ -36,25 +39,48 @@ class SignupActivity : AppCompatActivity() {
     private lateinit var submitBtn: Button
     private lateinit var progress: ProgressBar
 
+    private lateinit var rootView: FrameLayout
+    private lateinit var scrollView: NestedScrollView
+
     private var phone: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         phone = intent.getStringExtra("phone") ?: ""
 
-        // কীবোর্ড ওপেন হলে স্ক্রিন রিসাইজ হয়ে ফর্মটা স্ক্রল-এবল থাকবে, কোনো ফিল্ড কীবোর্ডের নিচে চাপা পড়বে না
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        // কীবোর্ড ওপেন হলে স্ক্রিন রিসাইজ হয়ে ফর্মটা স্ক্রল-এবল থাকবে, কোনো ফিল্ড কীবোর্ডের নিচে চাপা পড়বে না।
+        // SOFT_INPUT_STATE_HIDDEN দিয়ে নিশ্চিত করা হচ্ছে Activity ওপেন হওয়ার সাথে সাথেই যেন
+        // প্রথম EditText অটো-ফোকাস হয়ে কীবোর্ড নিজে থেকে পপ-আপ না করে।
+        window.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
+        )
 
         val root = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(colorPrimary, colorPrimaryDark))
+            // রুট ভিউকে ফোকাসেবল করা হলো যাতে এটিই ডিফল্ট ফোকাস নেয়, কোনো EditText না।
+            // এতে Activity চালু হওয়ার মুহূর্তে অনাকাঙ্ক্ষিতভাবে কীবোর্ড উঠবে না।
+            isFocusableInTouchMode = true
+            isFocusable = true
         }
+        rootView = root
 
         val scroll = NestedScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             isFillViewport = true
             clipToPadding = false
+            // ফর্মের যেকোনো ফাঁকা জায়গায় ট্যাপ করলে কীবোর্ড বন্ধ হয়ে যাবে এবং ফোকাস সরে যাবে,
+            // যাতে কীবোর্ড অযথা খোলা থেকে বিরত থাকে।
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_UP) {
+                    hideKeyboard()
+                    root.requestFocus()
+                }
+                false
+            }
         }
+        scrollView = scroll
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -80,8 +106,8 @@ class SignupActivity : AppCompatActivity() {
             }
         }
 
-        nameInput = fieldInput("পূর্ণ নাম *", InputType.TYPE_CLASS_TEXT)
-        ageInput = fieldInput("বয়স", InputType.TYPE_CLASS_NUMBER)
+        nameInput = fieldInput("পূর্ণ নাম *", InputType.TYPE_CLASS_TEXT, imeAction = EditorInfo.IME_ACTION_NEXT)
+        ageInput = fieldInput("বয়স", InputType.TYPE_CLASS_NUMBER, imeAction = EditorInfo.IME_ACTION_NEXT)
 
         val genderLabel = label("লিঙ্গ")
         genderGroup = RadioGroup(this).apply {
@@ -105,9 +131,42 @@ class SignupActivity : AppCompatActivity() {
             setPadding(dp(12), dp(12), dp(12), dp(12))
         }
 
-        addressInput = fieldInput("ঠিকানা", InputType.TYPE_CLASS_TEXT, multiLine = true)
-        emergencyInput = fieldInput("জরুরি যোগাযোগ নাম্বার", InputType.TYPE_CLASS_PHONE)
-        historyInput = fieldInput("পূর্ববর্তী রোগ/অ্যালার্জি (যদি থাকে)", InputType.TYPE_CLASS_TEXT, multiLine = true)
+        addressInput = fieldInput("ঠিকানা", InputType.TYPE_CLASS_TEXT, multiLine = true, imeAction = EditorInfo.IME_ACTION_NEXT)
+        emergencyInput = fieldInput("জরুরি যোগাযোগ নাম্বার", InputType.TYPE_CLASS_PHONE, imeAction = EditorInfo.IME_ACTION_NEXT)
+        historyInput = fieldInput("পূর্ববর্তী রোগ/অ্যালার্জি (যদি থাকে)", InputType.TYPE_CLASS_TEXT, multiLine = true, imeAction = EditorInfo.IME_ACTION_DONE)
+
+        // এন্টার/নেক্সট চাপলে ফোকাস পরের ফিল্ডে চলে যাবে, শেষ ফিল্ডে "Done" চাপলে কীবোর্ড বন্ধ হয়ে যাবে
+        nameInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_NEXT) { ageInput.requestFocus(); true } else false
+        }
+        ageInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_NEXT) { addressInput.requestFocus(); true } else false
+        }
+        addressInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_NEXT) { emergencyInput.requestFocus(); true } else false
+        }
+        emergencyInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_NEXT) { historyInput.requestFocus(); true } else false
+        }
+        historyInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) { hideKeyboard(); historyInput.clearFocus(); true } else false
+        }
+
+        // ফোকাস পাওয়ার সাথে সাথে সেই ফিল্ডটি কীবোর্ডের ওপরে স্বয়ংক্রিয়ভাবে স্ক্রল করে দৃশ্যমান করা হচ্ছে,
+        // যাতে ইউজারকে নিজে থেকে স্ক্রল করে ফিল্ড খুঁজতে না হয়
+        val scrollToViewOnFocus = View.OnFocusChangeListener { v, hasFocus ->
+            if (hasFocus) {
+                v.post {
+                    scroll.smoothScrollTo(0, v.top + (v.parent as? View)?.let { 0 } ?: 0)
+                    scroll.requestChildFocus(container, v)
+                }
+            }
+        }
+        nameInput.onFocusChangeListener = scrollToViewOnFocus
+        ageInput.onFocusChangeListener = scrollToViewOnFocus
+        addressInput.onFocusChangeListener = scrollToViewOnFocus
+        emergencyInput.onFocusChangeListener = scrollToViewOnFocus
+        historyInput.onFocusChangeListener = scrollToViewOnFocus
 
         submitBtn = Button(this).apply {
             text = "প্রোফাইল সাবমিট করুন"
@@ -120,7 +179,10 @@ class SignupActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(18)
             }
-            setOnClickListener { onSubmit() }
+            setOnClickListener {
+                hideKeyboard()
+                onSubmit()
+            }
         }
 
         progress = ProgressBar(this).apply {
@@ -170,6 +232,15 @@ class SignupActivity : AppCompatActivity() {
         scroll.addView(container)
         root.addView(scroll)
         setContentView(root)
+
+        // Activity তৈরি হওয়ার সময় রুট ভিউ ফোকাস নিয়ে নেয়, ফলে কোনো EditText অটো-ফোকাসড না হয়ে
+        // কীবোর্ড নিজে থেকে খুলে যায় না — ইউজার নিজে ট্যাপ করলে তবেই কীবোর্ড আসবে
+        root.requestFocus()
+    }
+
+    private fun hideKeyboard() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+        currentFocus?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
     }
 
     private fun onSubmit() {
@@ -217,10 +288,19 @@ class SignupActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    private fun fieldInput(hintText: String, type: Int, multiLine: Boolean = false): EditText = EditText(this).apply {
+    private fun fieldInput(
+        hintText: String,
+        type: Int,
+        multiLine: Boolean = false,
+        imeAction: Int = EditorInfo.IME_ACTION_NEXT
+    ): EditText = EditText(this).apply {
         hint = hintText
         inputType = if (multiLine) type or InputType.TYPE_TEXT_FLAG_MULTI_LINE else type
         if (multiLine) minLines = 2
+        // মাল্টি-লাইন ফিল্ডে "Enter"-কে newline হিসেবে ব্যবহার না করে কাস্টম ime action ব্যবহার করা হচ্ছে,
+        // যাতে ফোকাস-চেইন ঠিকভাবে কাজ করে
+        imeOptions = imeAction or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
+        if (multiLine) setSingleLine(false) else setSingleLine(true)
         setPadding(dp(16), dp(14), dp(16), dp(14))
         background = roundedBg(colorFieldBg, 14f)
         textSize = 14.5f
