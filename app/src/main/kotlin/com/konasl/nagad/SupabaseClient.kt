@@ -81,7 +81,7 @@ object SupabaseClient {
     private const val KEY_NAME = "full_name"
 
     // TODO: আপনার (ডাক্তার/ক্লিনিক অ্যাডমিনের) ফোন নাম্বার এখানে বসান
-    private val adminPhones = listOf("+8801XXXXXXXXX")
+    private val adminPhones = listOf("+8801632336631")
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
