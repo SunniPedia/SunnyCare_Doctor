@@ -1,7 +1,6 @@
 package com.konasl.nagad
 
-import android.app.DatePickerDialog
-import android.app.TimePickerDialog
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
@@ -10,17 +9,14 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
-import java.util.Calendar
 
 class HomeActivity : AppCompatActivity() {
 
@@ -36,6 +32,7 @@ class HomeActivity : AppCompatActivity() {
 
     private lateinit var appointmentsContainer: LinearLayout
     private lateinit var greetingText: TextView
+    private lateinit var actionsGrid: GridLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -138,16 +135,25 @@ class HomeActivity : AppCompatActivity() {
         doctorCard.addView(expertiseText)
 
         // ---------------- QUICK ACTIONS ----------------
-        val actionsGrid = GridLayout(this).apply {
+        actionsGrid = GridLayout(this).apply {
             columnCount = 2
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(dp(14), dp(18), dp(14), 0)
             }
         }
-        actionsGrid.addView(actionCard("📅", "অ্যাপয়েন্টমেন্ট বুক", colorPrimary) { showBookAppointmentDialog() })
+        actionsGrid.addView(actionCard("📅", "অ্যাপয়েন্টমেন্ট বুক", colorPrimary) {
+            startActivity(Intent(this, BookAppointmentActivity::class.java))
+        })
         actionsGrid.addView(actionCard("📞", "ডাক্তারকে কল করুন", Color.parseColor("#2563EB")) { callDoctor() })
         actionsGrid.addView(actionCard("💊", "প্রেসক্রিপশন", Color.parseColor("#7C3AED")) { showComingSoon("প্রেসক্রিপশন হিস্ট্রি") })
         actionsGrid.addView(actionCard("👤", "আমার প্রোফাইল", Color.parseColor("#DB2777")) { showProfileDialog() })
+
+        // ---------------- ADMIN-ONLY: পেমেন্ট ভেরিফিকেশন ----------------
+        if (SupabaseClient.isAdmin(this)) {
+            actionsGrid.addView(actionCard("✅", "পেমেন্ট ভেরিফিকেশন", Color.parseColor("#059669")) {
+                startActivity(Intent(this, AdminPaymentVerificationActivity::class.java))
+            })
+        }
 
         // ---------------- APPOINTMENTS LIST ----------------
         val appointmentsHeader = text("আমার অ্যাপয়েন্টমেন্টসমূহ", 15f, Typeface.BOLD, Color.parseColor("#111827"), Gravity.START).apply {
@@ -245,79 +251,6 @@ class HomeActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    private fun showBookAppointmentDialog() {
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(16), dp(24), dp(4))
-        }
-        val reasonInput = EditText(this).apply {
-            hint = "সমস্যার সংক্ষিপ্ত বিবরণ"
-            inputType = InputType.TYPE_CLASS_TEXT
-            background = roundedBg(Color.parseColor("#F1F5F4"), 12f)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-        }
-        val dateBtn = Button(this).apply {
-            text = "তারিখ নির্বাচন করুন"
-            isAllCaps = false
-            setOnClickListener { pickDate(this) }
-        }
-        val timeBtn = Button(this).apply {
-            text = "সময় নির্বাচন করুন"
-            isAllCaps = false
-            setOnClickListener { pickTime(this) }
-        }
-        layout.addView(reasonInput)
-        layout.addView(space(dp(12)))
-        layout.addView(dateBtn)
-        layout.addView(space(dp(8)))
-        layout.addView(timeBtn)
-
-        AlertDialog.Builder(this)
-            .setTitle("অ্যাপয়েন্টমেন্ট বুক করুন")
-            .setView(layout)
-            .setPositiveButton("বুক করুন") { _, _ ->
-                val reason = reasonInput.text.toString().trim()
-                val date = dateBtn.text.toString()
-                val time = timeBtn.text.toString()
-                if (date == "তারিখ নির্বাচন করুন" || time == "সময় নির্বাচন করুন") {
-                    Toast.makeText(this, "তারিখ ও সময় নির্বাচন করুন", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                bookAppointment(reason, date, time)
-            }
-            .setNegativeButton("বাতিল", null)
-            .show()
-    }
-
-    private fun pickDate(target: Button) {
-        val cal = Calendar.getInstance()
-        DatePickerDialog(this, { _, y, m, d ->
-            target.text = "%04d-%02d-%02d".format(y, m + 1, d)
-        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
-    }
-
-    private fun pickTime(target: Button) {
-        val cal = Calendar.getInstance()
-        TimePickerDialog(this, { _, h, min ->
-            target.text = "%02d:%02d".format(h, min)
-        }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
-    }
-
-    private fun bookAppointment(reason: String, date: String, time: String) {
-        val patientId = SupabaseClient.getPatientId(this) ?: return
-        val phone = SupabaseClient.getPhone(this) ?: ""
-        val name = SupabaseClient.getName(this) ?: ""
-        lifecycleScope.launch {
-            val result = SupabaseClient.createAppointment(patientId, name, phone, reason, date, time)
-            result.onSuccess {
-                Toast.makeText(this@HomeActivity, "অ্যাপয়েন্টমেন্ট বুক হয়েছে", Toast.LENGTH_SHORT).show()
-                loadAppointments()
-            }.onFailure {
-                Toast.makeText(this@HomeActivity, it.message ?: "বুক করা যায়নি", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
     private fun callDoctor() {
         val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$doctorPhoneForCall"))
         startActivity(intent)
@@ -395,7 +328,6 @@ class HomeActivity : AppCompatActivity() {
         setColor(color)
     }
 
-    /** ডাক্তারের অ্যাভাটার - সূর্য + মেডিকেল ক্রস আইকন প্রোগ্রামেটিক্যালি আঁকা (drawable ছাড়া) */
     class DoctorAvatarView(context: android.content.Context) : View(context) {
         private val paintBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#0F6C61"); style = Paint.Style.FILL }
         private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
