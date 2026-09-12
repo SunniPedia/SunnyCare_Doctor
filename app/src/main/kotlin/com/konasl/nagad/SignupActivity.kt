@@ -157,8 +157,16 @@ class SignupActivity : AppCompatActivity() {
         val scrollToViewOnFocus = View.OnFocusChangeListener { v, hasFocus ->
             if (hasFocus) {
                 v.post {
-                    scroll.smoothScrollTo(0, v.top + (v.parent as? View)?.let { 0 } ?: 0)
-                    scroll.requestChildFocus(container, v)
+                    // v-এর absolute Y-অবস্থান বের করে (parent chain ধরে যোগ করে) সেই পর্যন্ত স্ক্রল করা হচ্ছে,
+                    // যাতে ফোকাসড ফিল্ডটি কীবোর্ডের ওপরে দৃশ্যমান থাকে
+                    var offsetY = 0
+                    var current: View = v
+                    while (current !== scroll) {
+                        offsetY += current.top
+                        current = current.parent as View
+                    }
+                    val extraPadding = dp(16)
+                    scroll.smoothScrollTo(0, (offsetY - extraPadding).coerceAtLeast(0))
                 }
             }
         }
