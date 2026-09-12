@@ -31,7 +31,6 @@ import java.util.concurrent.TimeUnit
  *   expires_at timestamptz,
  *   created_at timestamptz default now()
  * );
- * -- ১০,০০০+ র‍্যান্ডম ৬ ডিজিট OTP অটো জেনারেট করে ইনসার্ট করতে:
  * insert into otp_codes (code)
  * select lpad(floor(random()*1000000)::text, 6, '0') from generate_series(1, 10000);
  *
@@ -57,10 +56,13 @@ import java.util.concurrent.TimeUnit
  *   preferred_date text,
  *   preferred_time text,
  *   status text default 'pending', -- pending / confirmed / completed / cancelled
+ *   payment_method text,
+ *   fee integer default 800,
+ *   transaction_id text,
+ *   payment_status text default 'not_applicable', -- not_applicable / pending_verification / verified / rejected
  *   created_at timestamptz default now()
  * );
  *
- * -- ডেমো অ্যাপের জন্য RLS বন্ধ রাখুন (Table > RLS disable) অথবা anon-friendly policy দিন:
  * alter table otp_codes disable row level security;
  * alter table patients disable row level security;
  * alter table appointments disable row level security;
@@ -77,6 +79,9 @@ object SupabaseClient {
     private const val KEY_PATIENT_ID = "patient_id"
     private const val KEY_PHONE = "phone"
     private const val KEY_NAME = "full_name"
+
+    // TODO: আপনার (ডাক্তার/ক্লিনিক অ্যাডমিনের) ফোন নাম্বার এখানে বসান
+    private val adminPhones = listOf("+8801XXXXXXXXX")
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -114,6 +119,11 @@ object SupabaseClient {
 
     fun getName(context: Context): String? =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_NAME, null)
+
+    fun isAdmin(context: Context): Boolean {
+        val phone = getPhone(context) ?: return false
+        return adminPhones.contains(phone)
+    }
 
     // ---------------------------------------------------------------------
     // LOW LEVEL REST HELPERS
@@ -272,77 +282,77 @@ object SupabaseClient {
     // APPOINTMENTS
     // ---------------------------------------------------------------------
 
-suspend fun createAppointment(
-    patientId: String,
-    patientName: String,
-    phone: String,
-    reason: String,
-    date: String,
-    time: String,
-    paymentMethod: String = "",
-    fee: Int = 800,
-    transactionId: String = "",
-    paymentStatus: String = "not_applicable"
-): Result<JSONObject> = try {
-    val json = JSONObject().apply {
-        put("patient_id", patientId)
-        put("patient_name", patientName)
-        put("phone", phone)
-        put("reason", reason)
-        put("preferred_date", date)
-        put("preferred_time", time)
-        put("status", "pending")
-        put("payment_method", paymentMethod)
-        put("fee", fee)
-        put("transaction_id", transactionId)
-        put("payment_status", paymentStatus)
+    suspend fun createAppointment(
+        patientId: String,
+        patientName: String,
+        phone: String,
+        reason: String,
+        date: String,
+        time: String,
+        paymentMethod: String = "",
+        fee: Int = 800,
+        transactionId: String = "",
+        paymentStatus: String = "not_applicable"
+    ): Result<JSONObject> = try {
+        val json = JSONObject().apply {
+            put("patient_id", patientId)
+            put("patient_name", patientName)
+            put("phone", phone)
+            put("reason", reason)
+            put("preferred_date", date)
+            put("preferred_time", time)
+            put("status", "pending")
+            put("payment_method", paymentMethod)
+            put("fee", fee)
+            put("transaction_id", transactionId)
+            put("payment_status", paymentStatus)
+        }
+        val rows = post("appointments", json)
+        Result.success(rows.getJSONObject(0))
+    } catch (e: Exception) {
+        Result.failure(e)
     }
-    val rows = post("appointments", json)
-    Result.success(rows.getJSONObject(0))
-} catch (e: Exception) {
-    Result.failure(e)
-}
-// ---------------------------------------------------------------------
-// ADMIN
-// ---------------------------------------------------------------------
 
-// TODO: আপনার (ডাক্তার/ক্লিনিক অ্যাডমিনের) ফোন নাম্বার এখানে বসান — এই নাম্বার দিয়ে লগইন করলে অ্যাডমিন প্যানেল দেখা যাবে
-private val adminPhones = listOf("+8801XXXXXXXXX")
-
-fun isAdmin(context: Context): Boolean {
-    val phone = getPhone(context) ?: return false
-    return adminPhones.contains(phone)
-}
-
-/** payment_status = pending_verification এমন সব অ্যাপয়েন্টমেন্ট আনে, যাচাইয়ের জন্য */
-suspend fun getPendingVerificationAppointments(): Result<JSONArray> = try {
-    val rows = get("appointments?payment_status=eq.pending_verification&order=created_at.desc")
-    Result.success(rows)
-} catch (e: Exception) {
-    Result.failure(e)
-}
-
-/** TrxID মিলিয়ে অ্যাডমিন পেমেন্ট ভেরিফাই করলে payment_status ও status আপডেট হয় */
-suspend fun verifyPayment(appointmentId: String): Result<Unit> = try {
-    val json = JSONObject().apply {
-        put("payment_status", "verified")
-        put("status", "confirmed")
+    suspend fun getAppointments(patientId: String): Result<JSONArray> = try {
+        val rows = get("appointments?patient_id=eq.$patientId&order=created_at.desc")
+        Result.success(rows)
+    } catch (e: Exception) {
+        Result.failure(e)
     }
-    patch("appointments?id=eq.$appointmentId", json)
-    Result.success(Unit)
-} catch (e: Exception) {
-    Result.failure(e)
-}
 
-/** ভুল/জাল TrxID হলে অ্যাডমিন রিজেক্ট করতে পারবে */
-suspend fun rejectPayment(appointmentId: String): Result<Unit> = try {
-    val json = JSONObject().apply {
-        put("payment_status", "rejected")
-        put("status", "cancelled")
+    // ---------------------------------------------------------------------
+    // ADMIN — পেমেন্ট ভেরিফিকেশন
+    // ---------------------------------------------------------------------
+
+    /** payment_status = pending_verification এমন সব অ্যাপয়েন্টমেন্ট আনে, যাচাইয়ের জন্য */
+    suspend fun getPendingVerificationAppointments(): Result<JSONArray> = try {
+        val rows = get("appointments?payment_status=eq.pending_verification&order=created_at.desc")
+        Result.success(rows)
+    } catch (e: Exception) {
+        Result.failure(e)
     }
-    patch("appointments?id=eq.$appointmentId", json)
-    Result.success(Unit)
-} catch (e: Exception) {
-    Result.failure(e)
-}
+
+    /** TrxID মিলিয়ে অ্যাডমিন পেমেন্ট ভেরিফাই করলে payment_status ও status আপডেট হয় */
+    suspend fun verifyPayment(appointmentId: String): Result<Unit> = try {
+        val json = JSONObject().apply {
+            put("payment_status", "verified")
+            put("status", "confirmed")
+        }
+        patch("appointments?id=eq.$appointmentId", json)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** ভুল/জাল TrxID হলে অ্যাডমিন রিজেক্ট করতে পারবে */
+    suspend fun rejectPayment(appointmentId: String): Result<Unit> = try {
+        val json = JSONObject().apply {
+            put("payment_status", "rejected")
+            put("status", "cancelled")
+        }
+        patch("appointments?id=eq.$appointmentId", json)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 }
