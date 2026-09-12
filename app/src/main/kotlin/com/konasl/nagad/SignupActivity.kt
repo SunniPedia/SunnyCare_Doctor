@@ -1,11 +1,15 @@
 package com.konasl.nagad
 
 import android.app.Dialog
+import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RadialGradient
 import android.graphics.Rect
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -27,10 +31,16 @@ import kotlinx.coroutines.launch
 
 class SignupActivity : AppCompatActivity() {
 
+    // ---------------------------------------------------------------
+    // Palette
+    // ---------------------------------------------------------------
     private val colorPrimary = Color.parseColor("#0F6C61")
+    private val colorPrimaryLight = Color.parseColor("#16897A")
     private val colorPrimaryDark = Color.parseColor("#0A4A42")
     private val colorFieldBg = Color.parseColor("#F1F5F4")
+    private val colorFieldBorder = Color.parseColor("#E2E8E6")
     private val colorTextMuted = Color.parseColor("#6B7280")
+    private val colorDark = Color.parseColor("#111827")
 
     private lateinit var nameInput: EditText
     private lateinit var ageInput: EditText
@@ -39,6 +49,7 @@ class SignupActivity : AppCompatActivity() {
     private lateinit var historyInput: EditText
     private lateinit var genderGroup: RadioGroup
     private lateinit var bloodGroupField: TextView
+    private lateinit var bloodGroupRow: LinearLayout
     private var selectedBloodGroup: String = ""
     private val bloodGroups = arrayOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "জানা নেই")
     private lateinit var statusText: TextView
@@ -69,7 +80,10 @@ class SignupActivity : AppCompatActivity() {
 
         val root = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(colorPrimary, colorPrimaryDark))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(colorPrimaryLight, colorPrimary, colorPrimaryDark)
+            )
             // রুট ভিউকে ফোকাসেবল করা হলো যাতে এটিই ডিফল্ট ফোকাস নেয়, কোনো EditText না।
             // এতে Activity চালু হওয়ার মুহূর্তে অনাকাঙ্ক্ষিতভাবে কীবোর্ড উঠবে না।
             isFocusableInTouchMode = true
@@ -77,10 +91,15 @@ class SignupActivity : AppCompatActivity() {
         }
         rootView = root
 
+        val decor = SignupDecorView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+
         val scroll = NestedScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             isFillViewport = true
             clipToPadding = false
+            overScrollMode = View.OVER_SCROLL_NEVER
             // ফর্মের যেকোনো ফাঁকা জায়গায় ট্যাপ করলে কীবোর্ড বন্ধ হয়ে যাবে এবং ফোকাস সরে যাবে,
             // যাতে কীবোর্ড অযথা খোলা থেকে বিরত থাকে।
             setOnTouchListener { _, event ->
@@ -101,9 +120,9 @@ class SignupActivity : AppCompatActivity() {
         normalContainerBottomPadding = dp(40)
 
         val icon = SignupIconView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply { gravity = Gravity.CENTER_HORIZONTAL }
+            layoutParams = LinearLayout.LayoutParams(dp(68), dp(68)).apply { gravity = Gravity.CENTER_HORIZONTAL }
         }
-        val title = text("প্রোফাইল তৈরি করুন", 22f, Typeface.BOLD, Color.WHITE, Gravity.CENTER)
+        val title = text("প্রোফাইল তৈরি করুন", 22f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply { letterSpacing = 0.01f }
         val subtitle = text("চিকিৎসা সেবা পেতে আপনার তথ্য দিন", 13f, Typeface.NORMAL, Color.argb(220, 255, 255, 255), Gravity.CENTER)
         val phoneBadge = text("যাচাইকৃত নাম্বার: $phone", 12f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
             background = roundedBg(Color.argb(45, 255, 255, 255), 30f)
@@ -112,11 +131,18 @@ class SignupActivity : AppCompatActivity() {
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedBg(Color.WHITE, 24f)
-            setPadding(dp(22), dp(24), dp(22), dp(24))
+            background = roundedBg(Color.WHITE, 26f)
+            setPadding(dp(22), dp(26), dp(22), dp(24))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(24)
             }
+            elevation = dp(16).toFloat()
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(26).toFloat())
+                }
+            }
+            clipToOutline = true
         }
 
         nameInput = fieldInput("পূর্ণ নাম *", InputType.TYPE_CLASS_TEXT, imeAction = EditorInfo.IME_ACTION_NEXT)
@@ -125,9 +151,9 @@ class SignupActivity : AppCompatActivity() {
         val genderLabel = label("লিঙ্গ")
         genderGroup = RadioGroup(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(RadioButton(this@SignupActivity).apply { text = "পুরুষ"; id = View.generateViewId() })
-            addView(RadioButton(this@SignupActivity).apply { text = "মহিলা"; id = View.generateViewId(); (layoutParams as? LinearLayout.LayoutParams)?.leftMargin = dp(20) })
-            addView(RadioButton(this@SignupActivity).apply { text = "অন্যান্য"; id = View.generateViewId() })
+            addView(styledRadio("পুরুষ"))
+            addView(styledRadio("মহিলা").apply { (layoutParams as? LinearLayout.LayoutParams)?.leftMargin = dp(20) })
+            addView(styledRadio("অন্যান্য"))
             (getChildAt(0).layoutParams as LinearLayout.LayoutParams).rightMargin = dp(20)
             (getChildAt(1).layoutParams as LinearLayout.LayoutParams).rightMargin = dp(20)
             check(getChildAt(0).id)
@@ -138,14 +164,14 @@ class SignupActivity : AppCompatActivity() {
         // Spinner-এর বদলে অ্যাপের কালার থিম মেনে তৈরি একটি কাস্টম ক্লিকেবল ফিল্ড,
         // যাতে ট্যাপ করলে অ্যাপের কালারে স্টাইল করা কাস্টম ডায়ালগ ওপেন হয়
         selectedBloodGroup = bloodGroups[0]
-        bloodGroupField = text(selectedBloodGroup, 14.5f, Typeface.NORMAL, Color.parseColor("#1F2937"), Gravity.START).apply {
+        bloodGroupField = text(selectedBloodGroup, 14.5f, Typeface.BOLD, colorDark, Gravity.START).apply {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val bloodGroupArrow = text("▾", 16f, Typeface.BOLD, colorPrimary, Gravity.END)
-        val bloodGroupRow = LinearLayout(this).apply {
+        bloodGroupRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = roundedBg(colorFieldBg, 14f)
+            background = fieldBg(false)
             setPadding(dp(16), dp(14), dp(16), dp(14))
             isClickable = true
             isFocusable = true
@@ -158,6 +184,13 @@ class SignupActivity : AppCompatActivity() {
                 hideKeyboard()
                 root.requestFocus()
                 showBloodGroupDialog()
+            }
+            setOnTouchListener { v, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> v.background = fieldBg(true)
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.background = fieldBg(false)
+                }
+                false
             }
         }
 
@@ -183,8 +216,10 @@ class SignupActivity : AppCompatActivity() {
         }
 
         // ফোকাস পাওয়ার সাথে সাথে সেই ফিল্ডটি কীবোর্ডের ওপরে স্বয়ংক্রিয়ভাবে স্ক্রল করে দৃশ্যমান করা হচ্ছে,
-        // যাতে ইউজারকে নিজে থেকে স্ক্রল করে ফিল্ড খুঁজতে না হয়
+        // যাতে ইউজারকে নিজে থেকে স্ক্রল করে ফিল্ড খুঁজতে না হয়। একইসাথে ফোকাস অনুযায়ী ফিল্ডের বর্ডার
+        // হাইলাইট করে প্রিমিয়াম ইনপুট-স্টেট দেখানো হচ্ছে।
         val scrollToViewOnFocus = View.OnFocusChangeListener { v, hasFocus ->
+            (v as? EditText)?.background = fieldBg(hasFocus)
             if (hasFocus) {
                 // কীবোর্ড আসার অ্যানিমেশন/রিসাইজ শেষ হওয়ার জন্য সামান্য অপেক্ষা করে তারপর স্ক্রল করা হচ্ছে,
                 // নাহলে রিসাইজ হওয়ার আগেই ভুল পজিশনে স্ক্রল হয়ে যেতে পারে
@@ -197,20 +232,12 @@ class SignupActivity : AppCompatActivity() {
         emergencyInput.onFocusChangeListener = scrollToViewOnFocus
         historyInput.onFocusChangeListener = scrollToViewOnFocus
 
-        submitBtn = Button(this).apply {
-            text = "প্রোফাইল সাবমিট করুন"
-            setTextColor(Color.WHITE)
-            isAllCaps = false
-            setTypeface(null, Typeface.BOLD)
-            textSize = 15f
-            background = roundedBg(colorPrimary, 14f)
-            setPadding(0, dp(14), 0, dp(14))
+        submitBtn = premiumButton("প্রোফাইল সাবমিট করুন") {
+            hideKeyboard()
+            onSubmit()
+        }.apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(18)
-            }
-            setOnClickListener {
-                hideKeyboard()
-                onSubmit()
+                topMargin = dp(20)
             }
         }
 
@@ -259,6 +286,7 @@ class SignupActivity : AppCompatActivity() {
         container.addView(card)
 
         scroll.addView(container)
+        root.addView(decor)
         root.addView(scroll)
         setContentView(root)
 
@@ -330,8 +358,9 @@ class SignupActivity : AppCompatActivity() {
 
         val dialogRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedBg(Color.WHITE, 20f)
+            background = roundedBg(Color.WHITE, 22f)
             setPadding(dp(20), dp(20), dp(20), dp(10))
+            elevation = dp(18).toFloat()
         }
 
         val dialogTitle = text("রক্তের গ্রুপ নির্বাচন করুন", 16f, Typeface.BOLD, colorPrimaryDark, Gravity.START).apply {
@@ -344,7 +373,7 @@ class SignupActivity : AppCompatActivity() {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = roundedBg(if (isSelected) Color.argb(28, 15, 108, 97) else colorFieldBg, 12f)
+                background = roundedBg(if (isSelected) Color.argb(28, 15, 108, 97) else colorFieldBg, 14f)
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 isClickable = true
                 isFocusable = true
@@ -438,6 +467,7 @@ class SignupActivity : AppCompatActivity() {
         imeAction: Int = EditorInfo.IME_ACTION_NEXT
     ): EditText = EditText(this).apply {
         hint = hintText
+        setHintTextColor(Color.parseColor("#9CA3AF"))
         inputType = if (multiLine) type or InputType.TYPE_TEXT_FLAG_MULTI_LINE else type
         if (multiLine) minLines = 2
         // মাল্টি-লাইন ফিল্ডে "Enter"-কে newline হিসেবে ব্যবহার না করে কাস্টম ime action ব্যবহার করা হচ্ছে,
@@ -445,11 +475,57 @@ class SignupActivity : AppCompatActivity() {
         imeOptions = imeAction or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
         if (multiLine) setSingleLine(false) else setSingleLine(true)
         setPadding(dp(16), dp(14), dp(16), dp(14))
-        background = roundedBg(colorFieldBg, 14f)
+        background = fieldBg(false)
         textSize = 14.5f
+        setTextColor(colorDark)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(6)
         }
+    }
+
+    /** ফোকাস/আনফোকাস অনুযায়ী বর্ডার-কালার বদলায় এমন ইনপুট-ফিল্ড ব্যাকগ্রাউন্ড (কোনো drawable resource ছাড়া) */
+    private fun fieldBg(active: Boolean): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(14).toFloat()
+        setColor(colorFieldBg)
+        setStroke(dp(1).coerceAtLeast(1).let { (1.6f * resources.displayMetrics.density).toInt() }, if (active) colorPrimary else colorFieldBorder)
+    }
+
+    /** থিম কালারে ট্রাই-স্টেট রেডিও বাটন, বড় টাচ-এরিয়া ও প্রিমিয়াম টাইপোগ্রাফি সহ */
+    private fun styledRadio(labelText: String): RadioButton = RadioButton(this).apply {
+        text = labelText
+        id = View.generateViewId()
+        textSize = 14f
+        setTextColor(colorDark)
+        setPadding(dp(6), 0, 0, 0)
+        buttonTintList = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf(-android.R.attr.state_checked)),
+            intArrayOf(colorPrimary, Color.parseColor("#B9C1BF"))
+        )
+    }
+
+    /** প্রিমিয়াম গ্রেডিয়েন্ট বাটন - প্রেস করলে হালকা স্কেল-অ্যানিমেশন, কোনো XML drawable ছাড়া */
+    private fun premiumButton(labelText: String, onClick: () -> Unit): Button = Button(this).apply {
+        text = labelText
+        setTextColor(Color.WHITE)
+        isAllCaps = false
+        setTypeface(null, Typeface.BOLD)
+        textSize = 15f
+        background = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(colorPrimaryLight, colorPrimaryDark)
+        ).apply { cornerRadius = dp(15).toFloat() }
+        elevation = dp(3).toFloat()
+        setPadding(0, dp(14), 0, dp(14))
+        setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+            }
+            false
+        }
+        setOnClickListener { onClick() }
     }
 
     private fun label(t: String): TextView = text(t, 12.5f, Typeface.BOLD, colorTextMuted, Gravity.START)
@@ -467,13 +543,37 @@ class SignupActivity : AppCompatActivity() {
         setColor(color)
     }
 
-    class SignupIconView(context: android.content.Context) : View(context) {
-        private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
-        private val paintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F59E0B"); style = Paint.Style.FILL }
+    /** ব্যাকগ্রাউন্ড গ্রেডিয়েন্টের উপর হালকা translucent বৃত্ত - depth যোগ করার জন্য (কোনো resource ছাড়া) */
+    class SignupDecorView(context: Context) : View(context) {
+        private val p1 = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(24, 255, 255, 255) }
+        private val p2 = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(15, 255, 255, 255) }
+
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val w = width.toFloat(); val h = height.toFloat()
-            canvas.drawCircle(w / 2, h / 2, w / 2, paintWhite)
+            canvas.drawCircle(w * 0.88f, h * 0.06f, w * 0.34f, p1)
+            canvas.drawCircle(w * 0.08f, h * 0.18f, w * 0.20f, p2)
+        }
+    }
+
+    class SignupIconView(context: Context) : View(context) {
+        private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+        private val paintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+        init {
+            setLayerType(LAYER_TYPE_SOFTWARE, null)
+            paintWhite.setShadowLayer(12f, 0f, 5f, Color.argb(55, 0, 0, 0))
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            canvas.drawCircle(w / 2, h / 2, w / 2 - 5f, paintWhite)
+            paintOrange.shader = RadialGradient(
+                w / 2, h * 0.38f, w * 0.20f,
+                Color.parseColor("#FBBF24"), Color.parseColor("#F59E0B"),
+                Shader.TileMode.CLAMP
+            )
             canvas.drawCircle(w / 2, h * 0.38f, w * 0.16f, paintOrange)
             val path = android.graphics.Path().apply {
                 moveTo(w * 0.22f, h * 0.82f)
