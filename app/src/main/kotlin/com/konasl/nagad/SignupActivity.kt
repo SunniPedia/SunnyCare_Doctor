@@ -88,10 +88,14 @@ class SignupActivity : AppCompatActivity() {
     private var normalContainerBottomPadding = 0
 
     private var phone: String = ""
+    // LoginActivity-তে OTP ভেরিফাই হওয়ার পরই ইউজার একটা পাসওয়ার্ড সেট করে ফেলেছে;
+    // সেটাই এখানে intent extra হিসেবে এসেছে, প্রোফাইল সাবমিট করার সময় এটাই হ্যাশ করে সেভ হবে।
+    private var password: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         phone = intent.getStringExtra("phone") ?: ""
+        password = intent.getStringExtra("password") ?: ""
 
         appFont = try {
             Typeface.createFromAsset(assets, "fonts/SolaimanLipi.ttf")
@@ -526,6 +530,12 @@ class SignupActivity : AppCompatActivity() {
             statusText.text = "নাম আবশ্যক"
             return
         }
+        if (password.isBlank()) {
+            // স্বাভাবিক ফ্লোতে এটা কখনো ঘটার কথা না (LoginActivity থেকেই পাসওয়ার্ড সেট করে এখানে আসা হয়),
+            // কিন্তু কোনো কারণে পাসওয়ার্ড ছাড়া এই স্ক্রিনে চলে এলে সরাসরি লগইন পেইজে ফেরত পাঠানো হচ্ছে
+            statusText.text = "পাসওয়ার্ড পাওয়া যায়নি, দয়া করে আবার শুরু থেকে চেষ্টা করুন"
+            return
+        }
         val age = ageInput.text.toString().trim().toIntOrNull()
         val gender = when (genderGroup.indexOfChild(findViewById(genderGroup.checkedRadioButtonId))) {
             0 -> "পুরুষ"; 1 -> "মহিলা"; else -> "অন্যান্য"
@@ -549,7 +559,8 @@ class SignupActivity : AppCompatActivity() {
                     bloodGroup = bloodGroup,
                     address = address,
                     emergencyContact = emergency,
-                    medicalHistory = history
+                    medicalHistory = history,
+                    password = password
                 )
             )
             progress.visibility = View.GONE

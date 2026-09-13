@@ -44,8 +44,16 @@ import java.util.concurrent.TimeUnit
  *   address text,
  *   emergency_contact text,
  *   medical_history text,
+ *   password_salt text,
+ *   password_hash text,
  *   created_at timestamptz default now()
  * );
+ *
+ * -- যদি patients টেবিল আগে থেকেই থাকে (পুরাতন অ্যাপ), শুধু এই দুই লাইন চালান:
+ * -- alter table patients add column if not exists password_salt text;
+ * -- alter table patients add column if not exists password_hash text;
+ * -- পুরাতন যেসব ইউজারের password_hash খালি থাকবে, তাদের অ্যাপ প্রথম লগইনেই
+ * -- নতুন পাসওয়ার্ড সেট করতে বলবে (LoginActivity তে handled)।
  *
  * create table appointments (
  *   id uuid primary key default gen_random_uuid(),
@@ -171,6 +179,28 @@ object SupabaseClient {
     }
 
     // ---------------------------------------------------------------------
+    // PASSWORD HASHING
+    // ---------------------------------------------------------------------
+    // NOTE: এখানে কোনো ব্যাকএন্ড সার্ভার ছাড়া শুধু Supabase REST (anon key) দিয়ে কাজ করা হচ্ছে,
+    // তাই bcrypt/argon2-এর মতো সার্ভার-সাইড হ্যাশিং সম্ভব না। এর বদলে প্রতিটা পাসওয়ার্ডের জন্য
+    // একটা আলাদা র‍্যান্ডম সল্ট (salt) জেনারেট করে salt+password এর SHA-256 হ্যাশ সেভ করা হয় —
+    // যা প্লেইন-টেক্সট পাসওয়ার্ড সেভ করার চেয়ে অনেক নিরাপদ। সত্যিকারের প্রোডাকশন-গ্রেড সিকিউরিটির
+    // জন্য ভবিষ্যতে Supabase Auth (ইমেইল/ফোন + পাসওয়ার্ড) ব্যবহার করার পরামর্শ থাকলো।
+    private fun sha256Hex(input: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val bytes = digest.digest(input.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun generateSalt(): String {
+        val bytes = ByteArray(16)
+        java.security.SecureRandom().nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun hashPassword(password: String, salt: String): String = sha256Hex("$salt:$password")
+
+    // ---------------------------------------------------------------------
     // OTP FLOW (using pre-generated otp_codes pool - no real SMS gateway)
     // ---------------------------------------------------------------------
 
@@ -258,10 +288,13 @@ object SupabaseClient {
         val bloodGroup: String,
         val address: String,
         val emergencyContact: String,
-        val medicalHistory: String
+        val medicalHistory: String,
+        val password: String // সাইনআপ ফর্মে ইউজারকে অবশ্যই একটা পাসওয়ার্ড সেট করতে বলতে হবে
     )
 
     suspend fun registerPatient(p: NewPatient): Result<JSONObject> = try {
+        val salt = generateSalt()
+        val hash = hashPassword(p.password, salt)
         val json = JSONObject().apply {
             put("phone", p.phone)
             put("full_name", p.fullName)
@@ -271,9 +304,38 @@ object SupabaseClient {
             put("address", p.address)
             put("emergency_contact", p.emergencyContact)
             put("medical_history", p.medicalHistory)
+            put("password_salt", salt)
+            put("password_hash", hash)
         }
         val rows = post("patients", json)
         Result.success(rows.getJSONObject(0))
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** প্রথমবার পাসওয়ার্ড সেট করা (পুরাতন অ্যাকাউন্ট যাদের password_hash খালি) অথবা অ্যাডমিন রিসেট করে দিলে */
+    suspend fun setPatientPassword(patientId: String, newPassword: String): Result<Unit> = try {
+        val salt = generateSalt()
+        val hash = hashPassword(newPassword, salt)
+        val json = JSONObject().apply {
+            put("password_salt", salt)
+            put("password_hash", hash)
+        }
+        patch("patients?id=eq.$patientId", json)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** লগইনের সময় ইউজারের দেওয়া পাসওয়ার্ড, patients টেবিলে সেভ থাকা salt+hash এর সাথে মিলিয়ে দেখে */
+    fun verifyPatientPassword(patient: JSONObject, enteredPassword: String): Result<Boolean> = try {
+        val salt = patient.optString("password_salt", "")
+        val hash = patient.optString("password_hash", "")
+        if (salt.isEmpty() || hash.isEmpty()) {
+            Result.success(false)
+        } else {
+            Result.success(hashPassword(enteredPassword, salt) == hash)
+        }
     } catch (e: Exception) {
         Result.failure(e)
     }

@@ -7,16 +7,19 @@ import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.os.CountDownTimer
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.*
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 class LoginActivity : AppCompatActivity() {
 
@@ -33,6 +36,9 @@ class LoginActivity : AppCompatActivity() {
     private val colorDark = Color.parseColor("#111827")
     private val colorError = Color.parseColor("#D32F2F")
 
+    // পাসওয়ার্ড ভুলে গেলে এই WhatsApp নাম্বারে (অ্যাডমিন/ক্লিনিক) যোগাযোগ করতে বলা হবে
+    private val ADMIN_WHATSAPP_NUMBER = "8801714656343"
+
     // ---------------------------------------------------------------
     // Views
     // ---------------------------------------------------------------
@@ -47,16 +53,34 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var card: LinearLayout
 
+    // --- পাসওয়ার্ড সেকশন (পুরাতন ইউজার লগইন / নতুন পাসওয়ার্ড সেট) ---
+    private lateinit var passwordSection: LinearLayout
+    private lateinit var passwordSectionLabel: TextView
+    private lateinit var passwordInput: EditText
+    private lateinit var passwordConfirmInput: EditText
+    private lateinit var passwordActionBtn: Button
+    private lateinit var forgotPasswordText: TextView
+    private lateinit var changeNumberText: TextView
+
     // ---------------------------------------------------------------
     // State
     // ---------------------------------------------------------------
     private enum class Field { PHONE, OTP }
+
+    /** পাসওয়ার্ড সেকশন তিনটা আলাদা কনটেক্সটে ব্যবহার হয়:
+     *  LOGIN          - বিদ্যমান পাসওয়ার্ড দিয়ে লগইন (রেজিস্টার্ড ইউজার, পাসওয়ার্ড সেট আছে)
+     *  SETUP_EXISTING - রেজিস্টার্ড কিন্তু পুরাতন/পাসওয়ার্ড-বিহীন অ্যাকাউন্টের জন্য নতুন পাসওয়ার্ড সেট
+     *  SETUP_NEW      - একদম নতুন (এখনো তৈরি হয়নি এমন) পেশেন্টের জন্য পাসওয়ার্ড সেট, যেটা সাইনআপ ফর্মের সাথে পাঠানো হবে
+     */
+    private enum class PasswordMode { LOGIN, SETUP_EXISTING, SETUP_NEW }
 
     private val phoneDigits = StringBuilder()
     private val otpDigits = StringBuilder()
     private var activeField = Field.PHONE
 
     private var currentPhone: String = ""
+    private var currentPatient: JSONObject? = null
+    private var passwordMode: PasswordMode = PasswordMode.LOGIN
     private var canResend = false
     private var resendTimer: CountDownTimer? = null
 
@@ -132,7 +156,7 @@ class LoginActivity : AppCompatActivity() {
             onTap = { setActiveField(Field.PHONE) }
         }
 
-        sendOtpBtn = premiumButton("OTP পাঠান") { onSendOtp() }.apply {
+        sendOtpBtn = premiumButton("পরবর্তী") { onPhoneNext() }.apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(16) }
@@ -164,13 +188,64 @@ class LoginActivity : AppCompatActivity() {
         resendText = text("OTP আবার পাঠান", 12.5f, Typeface.BOLD, colorPrimary).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(14), 0, 0)
-            setOnClickListener { if (canResend) onSendOtp() }
+            setOnClickListener { if (canResend) startOtpFlow(currentPhone) }
         }
 
         otpSection.addView(otpLabel)
         otpSection.addView(otpPin)
         otpSection.addView(verifyBtn)
         otpSection.addView(resendText)
+
+        // ---- Password section (হাইড থাকে; পুরাতন ইউজারের লগইন বা নতুন পাসওয়ার্ড সেট করার জন্য দেখায়) ----
+        passwordSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(20) }
+        }
+
+        passwordSectionLabel = text("পাসওয়ার্ড দিন", 12.5f, Typeface.BOLD, colorTextMuted).apply {
+            gravity = Gravity.START
+        }
+
+        passwordInput = passwordField("পাসওয়ার্ড").apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
+            ).apply { topMargin = dp(8) }
+        }
+
+        passwordConfirmInput = passwordField("পাসওয়ার্ড আবার লিখুন").apply {
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
+            ).apply { topMargin = dp(10) }
+        }
+
+        passwordActionBtn = premiumButton("লগইন করুন") { onPasswordAction() }.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(16) }
+        }
+
+        forgotPasswordText = text("পাসওয়ার্ড ভুলে গেছেন? Admin-কে WhatsApp এ জানান", 12.5f, Typeface.BOLD, colorPrimary).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, 0)
+            setOnClickListener { openForgotPasswordOnWhatsApp() }
+        }
+
+        changeNumberText = text("অন্য নাম্বার ব্যবহার করবেন?", 12f, Typeface.NORMAL, colorTextMuted).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(10), 0, 0)
+            setOnClickListener { resetToPhoneEntry() }
+        }
+
+        passwordSection.addView(passwordSectionLabel)
+        passwordSection.addView(passwordInput)
+        passwordSection.addView(passwordConfirmInput)
+        passwordSection.addView(passwordActionBtn)
+        passwordSection.addView(forgotPasswordText)
+        passwordSection.addView(changeNumberText)
 
         progress = ProgressBar(this).apply {
             visibility = View.GONE
@@ -196,6 +271,7 @@ class LoginActivity : AppCompatActivity() {
         card.addView(phoneDisplay)
         card.addView(sendOtpBtn)
         card.addView(otpSection)
+        card.addView(passwordSection)
         card.addView(progress)
         card.addView(statusText)
         card.addView(keypad)
@@ -259,7 +335,11 @@ class LoginActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    private fun onSendOtp() {
+    // ফোন নাম্বার দেওয়ার পর "পরবর্তী" চাপলে প্রথমে চেক করা হয় নাম্বারটা রেজিস্টার্ড কিনা।
+    // রেজিস্টার্ড হলে পাসওয়ার্ড চাওয়া হয় (OTP ছাড়াই — শুধু ফোন নাম্বার দিয়ে যেন কেউ ঢুকতে না পারে)।
+    // নতুন নাম্বার হলে আগের মতোই OTP ভেরিফিকেশনের মাধ্যমে সাইনআপে পাঠানো হয়।
+    // ------------------------------------------------------------------
+    private fun onPhoneNext() {
         val phone = phoneDigits.toString().trim()
         if (phone.length < 11) {
             statusText.text = "সঠিক ফোন নাম্বার দিন"
@@ -268,9 +348,33 @@ class LoginActivity : AppCompatActivity() {
         currentPhone = phone
         setLoading(true)
         lifecycleScope.launch {
+            val result = SupabaseClient.findPatientByPhone(phone)
+            setLoading(false)
+            result.onSuccess { patient ->
+                if (patient != null) {
+                    currentPatient = patient
+                    val hasPassword = patient.optString("password_hash").isNotEmpty() &&
+                        patient.optString("password_salt").isNotEmpty()
+                    // আগে থেকে রেজিস্টার্ড কিন্তু কোনো কারণে পাসওয়ার্ড সেট নেই এমন (পুরাতন) অ্যাকাউন্টকে
+                    // প্রথমবার একটা পাসওয়ার্ড সেট করতে বলা হয়, তারপর সরাসরি লগইন হয়ে যায়।
+                    showPasswordSection(if (hasPassword) PasswordMode.LOGIN else PasswordMode.SETUP_EXISTING)
+                } else {
+                    startOtpFlow(phone)
+                }
+            }.onFailure {
+                statusText.text = it.message ?: "সমস্যা হয়েছে, আবার চেষ্টা করুন"
+            }
+        }
+    }
+
+    /** নতুন (অ-রেজিস্টার্ড) নাম্বারের জন্য OTP পাঠায়; ভেরিফাই হলে প্রোফাইল তৈরির (সাইনআপ) পেইজে যায়, যেখানে পাসওয়ার্ডও সেট করতে হবে। */
+    private fun startOtpFlow(phone: String) {
+        setLoading(true)
+        lifecycleScope.launch {
             val result = SupabaseClient.requestOtp(phone)
             setLoading(false)
             result.onSuccess { code ->
+                sendOtpBtn.visibility = View.GONE
                 otpSection.visibility = View.VISIBLE
                 otpDigits.clear()
                 refreshFields()
@@ -299,31 +403,146 @@ class LoginActivity : AppCompatActivity() {
                     statusText.text = "দয়া করে সঠিক ওটিপি লিখুন"
                     return@onSuccess
                 }
-                val patientResult = SupabaseClient.findPatientByPhone(currentPhone)
                 setLoading(false)
-                patientResult.onSuccess { patient ->
-                    if (patient != null) {
-                        SupabaseClient.saveSession(
-                            this@LoginActivity,
-                            patient.getString("id"),
-                            currentPhone,
-                            patient.getString("full_name")
-                        )
-                        startActivity(Intent(this@LoginActivity, HomeActivity::class.java))
-                        finish()
-                    } else {
-                        val intent = Intent(this@LoginActivity, SignupActivity::class.java)
-                        intent.putExtra("phone", currentPhone)
-                        startActivity(intent)
-                        finish()
-                    }
-                }.onFailure {
-                    statusText.text = it.message ?: "সমস্যা হয়েছে"
-                }
+                // এই নাম্বারটা নতুন (findPatientByPhone আগেই null দিয়েছিল) — তাই এখনই এখানে পাসওয়ার্ড সেট করতে বলা হচ্ছে।
+                // এই পাসওয়ার্ডটাই একটু পর সাইনআপ ফর্মের সাথে পাঠিয়ে দেওয়া হবে এবং প্রোফাইল তৈরির সময় সেভ হবে।
+                showPasswordSection(PasswordMode.SETUP_NEW)
             }.onFailure {
                 setLoading(false)
                 statusText.text = "দয়া করে সঠিক ওটিপি লিখুন"
             }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // পাসওয়ার্ড সেকশন — লগইন (বিদ্যমান পাসওয়ার্ড দিয়ে) অথবা সেটআপ (প্রথমবার পাসওয়ার্ড তৈরি)
+    // ------------------------------------------------------------------
+    private fun showPasswordSection(mode: PasswordMode) {
+        passwordMode = mode
+        sendOtpBtn.visibility = View.GONE
+        otpSection.visibility = View.GONE
+        passwordSection.visibility = View.VISIBLE
+        passwordInput.text?.clear()
+        passwordConfirmInput.text?.clear()
+        statusText.text = ""
+
+        when (mode) {
+            PasswordMode.LOGIN -> {
+                passwordSectionLabel.text = "পাসওয়ার্ড দিন"
+                passwordConfirmInput.visibility = View.GONE
+                passwordActionBtn.text = "লগইন করুন"
+                forgotPasswordText.visibility = View.VISIBLE
+            }
+            PasswordMode.SETUP_EXISTING -> {
+                passwordSectionLabel.text = "আপনার অ্যাকাউন্টের জন্য একটি নতুন পাসওয়ার্ড সেট করুন"
+                passwordConfirmInput.visibility = View.VISIBLE
+                passwordActionBtn.text = "পাসওয়ার্ড সেট করুন"
+                forgotPasswordText.visibility = View.GONE
+            }
+            PasswordMode.SETUP_NEW -> {
+                passwordSectionLabel.text = "আপনার নতুন একাউন্টের জন্য একটি পাসওয়ার্ড সেট করুন"
+                passwordConfirmInput.visibility = View.VISIBLE
+                passwordActionBtn.text = "পরবর্তী ধাপ"
+                forgotPasswordText.visibility = View.GONE
+            }
+        }
+        passwordInput.requestFocus()
+    }
+
+    /** "অন্য নাম্বার ব্যবহার করবেন?" চাপলে পুরো ফর্ম রিসেট হয়ে আবার ফোন নাম্বার চাওয়া হয় */
+    private fun resetToPhoneEntry() {
+        passwordSection.visibility = View.GONE
+        otpSection.visibility = View.GONE
+        sendOtpBtn.visibility = View.VISIBLE
+        phoneDigits.clear()
+        otpDigits.clear()
+        refreshFields()
+        currentPatient = null
+        passwordMode = PasswordMode.LOGIN
+        statusText.text = ""
+        setActiveField(Field.PHONE)
+    }
+
+    private fun onPasswordAction() {
+        val pwd = passwordInput.text?.toString().orEmpty()
+        if (pwd.length < 4) {
+            statusText.text = "কমপক্ষে ৪ ক্যারেক্টারের পাসওয়ার্ড দিন"
+            return
+        }
+
+        when (passwordMode) {
+            PasswordMode.LOGIN -> {
+                val patient = currentPatient ?: return
+                setLoading(true)
+                lifecycleScope.launch {
+                    val result = SupabaseClient.verifyPatientPassword(patient, pwd)
+                    setLoading(false)
+                    result.onSuccess { matched ->
+                        if (matched) {
+                            SupabaseClient.saveSession(
+                                this@LoginActivity, patient.getString("id"), currentPhone, patient.getString("full_name")
+                            )
+                            startActivity(Intent(this@LoginActivity, HomeActivity::class.java))
+                            finish()
+                        } else {
+                            statusText.text = "পাসওয়ার্ড সঠিক নয়"
+                        }
+                    }.onFailure {
+                        statusText.text = it.message ?: "সমস্যা হয়েছে"
+                    }
+                }
+            }
+
+            PasswordMode.SETUP_EXISTING -> {
+                val confirm = passwordConfirmInput.text?.toString().orEmpty()
+                if (pwd != confirm) {
+                    statusText.text = "দুটি পাসওয়ার্ড মিলছে না"
+                    return
+                }
+                val patient = currentPatient ?: return
+                setLoading(true)
+                lifecycleScope.launch {
+                    val result = SupabaseClient.setPatientPassword(patient.getString("id"), pwd)
+                    setLoading(false)
+                    result.onSuccess {
+                        SupabaseClient.saveSession(
+                            this@LoginActivity, patient.getString("id"), currentPhone, patient.getString("full_name")
+                        )
+                        startActivity(Intent(this@LoginActivity, HomeActivity::class.java))
+                        finish()
+                    }.onFailure {
+                        statusText.text = it.message ?: "পাসওয়ার্ড সেট করা যায়নি"
+                    }
+                }
+            }
+
+            PasswordMode.SETUP_NEW -> {
+                val confirm = passwordConfirmInput.text?.toString().orEmpty()
+                if (pwd != confirm) {
+                    statusText.text = "দুটি পাসওয়ার্ড মিলছে না"
+                    return
+                }
+                // এই ফোন নাম্বারের patient row এখনো তৈরি হয়নি (id নেই), তাই এখান থেকে সরাসরি
+                // Supabase-এ পাসওয়ার্ড সেভ করা সম্ভব না। পাসওয়ার্ডটা সাইনআপ ফর্মের সাথে পাঠিয়ে দেওয়া
+                // হচ্ছে — প্রোফাইল সাবমিট করার সময় SignupActivity, SupabaseClient.registerPatient()-কে
+                // এই পাসওয়ার্ডসহ কল করবে, তখনই hash হয়ে সেভ হবে।
+                val intent = Intent(this@LoginActivity, SignupActivity::class.java)
+                intent.putExtra("phone", currentPhone)
+                intent.putExtra("password", pwd)
+                startActivity(intent)
+                finish()
+            }
+        }
+    }
+
+    /** পাসওয়ার্ড ভুলে গেলে সরাসরি অ্যাডমিনের WhatsApp নাম্বারে চ্যাট ওপেন করে, ফোন নাম্বারসহ একটা রেডি মেসেজ বসিয়ে দেয় */
+    private fun openForgotPasswordOnWhatsApp() {
+        val message = "আসসালামু আলাইকুম, আমি SunnyCare অ্যাপে আমার পাসওয়ার্ড ভুলে গিয়েছি। আমার ফোন নাম্বার: $currentPhone । দয়া করে সাহায্য করুন।"
+        val url = "https://wa.me/$ADMIN_WHATSAPP_NUMBER?text=" + Uri.encode(message)
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Exception) {
+            statusText.text = "WhatsApp খুলতে সমস্যা হয়েছে, সরাসরি $ADMIN_WHATSAPP_NUMBER নাম্বারে যোগাযোগ করুন"
         }
     }
 
@@ -333,6 +552,9 @@ class LoginActivity : AppCompatActivity() {
         verifyBtn.isEnabled = !loading
         keypad.isEnabled = !loading
         keypad.alpha = if (loading) 0.5f else 1f
+        passwordInput.isEnabled = !loading
+        passwordConfirmInput.isEnabled = !loading
+        passwordActionBtn.isEnabled = !loading
     }
 
     // ------------------------------------------------------------------
@@ -422,6 +644,23 @@ class LoginActivity : AppCompatActivity() {
 
     private fun space(h: Int): View = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, h) }
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    /** স্ট্যান্ডার্ড সিস্টেম কীবোর্ড ব্যবহার করে এমন পাসওয়ার্ড ফিল্ড (অক্ষর + সংখ্যা দুটোই সাপোর্ট করে) */
+    private fun passwordField(hintText: String): EditText = EditText(this).apply {
+        hint = hintText
+        setHintTextColor(colorTextMuted)
+        setTextColor(colorDark)
+        textSize = 15.5f
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        isSingleLine = true
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(14).toFloat()
+            setColor(colorFieldBg)
+            setStroke(dp(2), colorFieldBorder)
+        }
+        setPadding(dp(16), dp(10), dp(16), dp(10))
+    }
 
     private fun roundedBg(color: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
