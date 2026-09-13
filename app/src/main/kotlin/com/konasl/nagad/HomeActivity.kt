@@ -42,10 +42,10 @@ class HomeActivity : AppCompatActivity() {
 
     // ডাক্তারের তথ্য
     private val doctorPhoneForCall = "+8801632336631" // TODO: বসান
+    private val consultationFee = "৮০০ টাকা"
 
     private lateinit var appointmentsContainer: LinearLayout
     private lateinit var greetingText: TextView
-    private lateinit var actionsGrid: GridLayout
 
     // ---------------- ন্যাভিগেশন ----------------
     private enum class Tab { HOME, APPOINTMENTS, PROFILE }
@@ -150,30 +150,27 @@ class HomeActivity : AppCompatActivity() {
         // ---------------- DOCTOR CARD (গ্রেডিয়েন্ট বর্ডার সহ) ----------------
         val doctorCard = buildDoctorCard()
 
-        // ---------------- QUICK ACTIONS ----------------
-        actionsGrid = GridLayout(this).apply {
-            columnCount = 2
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(dp(14), dp(20), dp(14), 0)
-            }
-        }
-        actionsGrid.addView(actionCard(VectorIconDrawable.IconType.CALENDAR, "অ্যাপয়েন্টমেন্ট বুক", colorPrimary) {
-            startActivity(Intent(this, BookAppointmentActivity::class.java))
-        })
-        actionsGrid.addView(actionCard(VectorIconDrawable.IconType.PHONE, "ডাক্তারকে কল করুন", Color.parseColor("#2563EB")) { callDoctor() })
-        actionsGrid.addView(actionCard(VectorIconDrawable.IconType.PILL, "প্রেসক্রিপশন", Color.parseColor("#7C3AED")) { showComingSoon("প্রেসক্রিপশন হিস্ট্রি") })
-        actionsGrid.addView(actionCard(VectorIconDrawable.IconType.PERSON, "আমার প্রোফাইল", Color.parseColor("#DB2777")) { switchTab(Tab.PROFILE) })
-
-        // ---------------- ADMIN-ONLY: পেমেন্ট ভেরিফিকেশন ----------------
-        if (SupabaseClient.isAdmin(this)) {
-            actionsGrid.addView(actionCard(VectorIconDrawable.IconType.SHIELD, "পেমেন্ট ভেরিফিকেশন", Color.parseColor("#059669")) {
-                startActivity(Intent(this, AdminPaymentVerificationActivity::class.java))
-            })
-        }
+        // ---------------- QUICK ACTIONS (নতুন ডিজাইন: বুক অ্যাপয়েন্টমেন্ট হিরো কার্ড + দুটি সাইড কার্ড) ----------------
+        val quickActionsSection = buildQuickActionsSection()
 
         homeContent.addView(headerContainer)
         homeContent.addView(doctorCard)
-        homeContent.addView(actionsGrid)
+        homeContent.addView(quickActionsSection)
+
+        // ---------------- ADMIN-ONLY: পেমেন্ট ভেরিফিকেশন ----------------
+        if (SupabaseClient.isAdmin(this)) {
+            val adminRow = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(dp(14), dp(10), dp(14), 0)
+                }
+            }
+            adminRow.addView(adminActionCard(VectorIconDrawable.IconType.SHIELD, "পেমেন্ট ভেরিফিকেশন", Color.parseColor("#059669")) {
+                startActivity(Intent(this, AdminPaymentVerificationActivity::class.java))
+            })
+            homeContent.addView(adminRow)
+        }
+
         homeScroll.addView(homeContent)
         homePanel = homeScroll
 
@@ -487,6 +484,168 @@ class HomeActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
+    // কুইক অ্যাকশন সেকশন - নতুন ডিজাইন:
+    // বাম পাশে বড় "অ্যাপয়েন্টমেন্ট বুক করুন" হিরো কার্ড (ফি সহ),
+    // ডান পাশে দুটি ছোট কার্ড: "আমার অ্যাপয়েন্টমেন্ট" ও "জরুরি যোগাযোগ"
+    // ------------------------------------------------------------------
+    private fun buildQuickActionsSection(): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(14), dp(18), dp(14), 0)
+            }
+        }
+
+        row.addView(buildBookAppointmentHeroCard())
+        row.addView(space(dp(12)).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(12), ViewGroup.LayoutParams.MATCH_PARENT)
+        })
+        row.addView(buildSideActionsColumn())
+
+        return row
+    }
+
+    /** বড় হিরো কার্ড: "অ্যাপয়েন্টমেন্ট বুক করুন" + ফি */
+    private fun buildBookAppointmentHeroCard(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(colorPrimaryLight, colorPrimary, colorPrimaryDark)
+            ).apply { cornerRadius = dp(20).toFloat() }
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+            elevation = dp(6).toFloat()
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(20).toFloat())
+                }
+            }
+            clipToOutline = true
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { startActivity(Intent(this@HomeActivity, BookAppointmentActivity::class.java)) }
+
+            addView(ImageView(this@HomeActivity).apply {
+                setImageDrawable(VectorIconDrawable(VectorIconDrawable.IconType.CALENDAR, Color.WHITE, dp(22)))
+                background = roundedBg(Color.argb(46, 255, 255, 255), 14f)
+                layoutParams = LinearLayout.LayoutParams(dp(42), dp(42))
+                setPadding(dp(9), dp(9), dp(9), dp(9))
+            })
+
+            addView(text("অ্যাপয়েন্টমেন্ট বুক\nকরুন", 15f, Typeface.BOLD, Color.WHITE, Gravity.START).apply {
+                setPadding(0, dp(16), 0, 0)
+                setLineSpacing(dp(2).toFloat(), 1f)
+            })
+
+            addView(text("ফি $consultationFee", 12f, Typeface.NORMAL, Color.argb(215, 255, 255, 255), Gravity.START).apply {
+                setPadding(0, dp(8), 0, 0)
+            })
+        }
+    }
+
+    /** ডান পাশের কলাম: দুটি ছোট কার্ড */
+    private fun buildSideActionsColumn(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+
+            addView(sideActionCard(
+                VectorIconDrawable.IconType.DOCUMENT,
+                "আমার\nঅ্যাপয়েন্টমেন্ট",
+                Color.parseColor("#2563EB")
+            ) { switchTab(Tab.APPOINTMENTS) }.apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            })
+
+            addView(space(dp(10)))
+
+            addView(sideActionCard(
+                VectorIconDrawable.IconType.PHONE,
+                "জরুরি\nযোগাযোগ",
+                Color.parseColor("#DB2777")
+            ) { callDoctor() }.apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            })
+        }
+    }
+
+    private fun sideActionCard(iconType: VectorIconDrawable.IconType, label: String, accentColor: Int, onClick: () -> Unit): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedBg(colorCard, 16f)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            elevation = dp(3).toFloat()
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(16).toFloat())
+                }
+            }
+            clipToOutline = true
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+
+            addView(ImageView(this@HomeActivity).apply {
+                setImageDrawable(VectorIconDrawable(iconType, accentColor, dp(16)))
+                background = roundedBg(Color.argb(28, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor)), 10f)
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+                setPadding(dp(9), dp(9), dp(9), dp(9))
+            })
+
+            addView(text(label, 11.5f, Typeface.BOLD, colorDark, Gravity.START).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) }
+                setLineSpacing(dp(1).toFloat(), 1f)
+            })
+        }
+    }
+
+    /** অ্যাডমিন-অনলি পূর্ণ-প্রস্থ অ্যাকশন কার্ড */
+    private fun adminActionCard(iconType: VectorIconDrawable.IconType, label: String, color: Int, onClick: () -> Unit): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.WHITE, Color.argb(20, Color.red(color), Color.green(color), Color.blue(color)))
+            ).apply { cornerRadius = dp(18).toFloat() }
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            elevation = dp(4).toFloat()
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(18).toFloat())
+                }
+            }
+            clipToOutline = true
+            setOnClickListener { onClick() }
+
+            addView(ImageView(this@HomeActivity).apply {
+                setImageDrawable(VectorIconDrawable(iconType, Color.WHITE, dp(22)))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setGradientType(GradientDrawable.RADIAL_GRADIENT)
+                    setColors(intArrayOf(lighten(color, 0.28f), darken(color, 0.08f)))
+                    setGradientRadius(dp(30).toFloat())
+                    setGradientCenter(0.3f, 0.3f)
+                }
+                layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+            })
+
+            addView(text(label, 13f, Typeface.BOLD, colorDark, Gravity.START).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(14) }
+            })
+
+            addView(ImageView(this@HomeActivity).apply {
+                setImageDrawable(VectorIconDrawable(VectorIconDrawable.IconType.ARROW_RIGHT, colorTextMuted, dp(18)))
+                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18))
+            })
+        }
+    }
+
+    // ------------------------------------------------------------------
     // প্রোফাইল প্যানেল - এই একটিভিটির মধ্যেই সম্পূর্ণ প্রোফাইল দেখা যায়
     // ------------------------------------------------------------------
     private fun buildProfilePanel(): LinearLayout {
@@ -700,52 +859,6 @@ class HomeActivity : AppCompatActivity() {
     // ------------------------------------------------------------------
     // UI helpers
     // ------------------------------------------------------------------
-    private fun actionCard(iconType: VectorIconDrawable.IconType, label: String, color: Int, onClick: () -> Unit): LinearLayout {
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                intArrayOf(Color.WHITE, Color.argb(20, Color.red(color), Color.green(color), Color.blue(color)))
-            ).apply { cornerRadius = dp(18).toFloat() }
-            setPadding(dp(14), dp(20), dp(14), dp(20))
-            layoutParams = GridLayout.LayoutParams(
-                GridLayout.spec(GridLayout.UNDEFINED, 1f),
-                GridLayout.spec(GridLayout.UNDEFINED, 1f)
-            ).apply {
-                width = 0
-                setMargins(dp(6), dp(6), dp(6), dp(6))
-            }
-            elevation = dp(4).toFloat()
-            outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, dp(18).toFloat())
-                }
-            }
-            clipToOutline = true
-            setOnClickListener { onClick() }
-        }
-        val iconCircle = ImageView(this).apply {
-            setImageDrawable(VectorIconDrawable(iconType, Color.WHITE, dp(26)))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setGradientType(GradientDrawable.RADIAL_GRADIENT)
-                setColors(intArrayOf(lighten(color, 0.28f), darken(color, 0.08f)))
-                setGradientRadius(dp(34).toFloat())
-                setGradientCenter(0.3f, 0.3f)
-            }
-            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
-            setPadding(dp(15), dp(15), dp(15), dp(15))
-            elevation = dp(3).toFloat()
-        }
-        val labelView = text(label, 12f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
-            setPadding(0, dp(10), 0, 0)
-        }
-        card.addView(iconCircle)
-        card.addView(labelView)
-        return card
-    }
-
     private fun text(t: String, sizeSp: Float, style: Int, color: Int, gravity: Int): TextView = TextView(this).apply {
         text = t; textSize = sizeSp; setTypeface(null, style); setTextColor(color); this.gravity = gravity
     }
@@ -783,7 +896,7 @@ class HomeActivity : AppCompatActivity() {
         private val sizePx: Int = 96
     ) : Drawable() {
 
-        enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT }
+        enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT, DOCUMENT }
 
         private var iconColor: Int = initialColor
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = iconColor }
@@ -828,6 +941,7 @@ class HomeActivity : AppCompatActivity() {
                 IconType.DOT -> drawDot(canvas, s)
                 IconType.SHIELD -> drawShield(canvas, s)
                 IconType.ARROW_RIGHT -> drawArrowRight(canvas, s)
+                IconType.DOCUMENT -> drawDocument(canvas, s)
             }
             canvas.restore()
         }
@@ -987,6 +1101,14 @@ class HomeActivity : AppCompatActivity() {
             arrow.lineTo(s * 0.85f, s * 0.5f)
             arrow.lineTo(s * 0.55f, s * 0.75f)
             canvas.drawPath(arrow, strokePaint)
+        }
+
+        /** নথি/লিস্ট আইকন - "আমার অ্যাপয়েন্টমেন্ট" এর জন্য */
+        private fun drawDocument(canvas: Canvas, s: Float) {
+            canvas.drawRoundRect(s * 0.08f, 0f, s * 0.92f, s, s * 0.10f, s * 0.10f, strokePaint)
+            canvas.drawLine(s * 0.24f, s * 0.30f, s * 0.76f, s * 0.30f, strokePaint)
+            canvas.drawLine(s * 0.24f, s * 0.52f, s * 0.76f, s * 0.52f, strokePaint)
+            canvas.drawLine(s * 0.24f, s * 0.74f, s * 0.58f, s * 0.74f, strokePaint)
         }
     }
 
