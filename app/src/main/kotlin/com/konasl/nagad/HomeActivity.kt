@@ -43,6 +43,7 @@ class HomeActivity : AppCompatActivity() {
 
     // ডাক্তারের তথ্য
     private val doctorPhoneForCall = "+8801632336631" // TODO: বসান
+    private val doctorSerialPhone = "01660029028" // সিরিয়ালের জন্য
 
     private lateinit var appointmentsContainer: LinearLayout
     private lateinit var greetingText: TextView
@@ -398,8 +399,12 @@ class HomeActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(14) }
         }
         doctorTextCol.addView(text("ডা. মাসুম বিল্লাহ সানি", 16.5f, Typeface.BOLD, colorDark, Gravity.START))
-        doctorTextCol.addView(text("মেডিসিন, শিশু ও ডায়াবেটিস বিশেষজ্ঞ", 12f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+        doctorTextCol.addView(text("মেডিসিন, শিশু, ডায়াবেটিস ও চর্ম-যৌনরোগ বিশেষজ্ঞ", 12f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
             setPadding(0, dp(2), 0, 0)
+        })
+        doctorTextCol.addView(text("প্রাক্তন মেডিকেল অফিসার: পার্কভিউ মেডিকেল কলেজ হাসপাতাল, সিলেট", 10.5f, Typeface.NORMAL, colorPrimaryDark, Gravity.START).apply {
+            setPadding(0, dp(4), 0, 0)
+            setLineSpacing(dp(1).toFloat(), 1f)
         })
         topRow.addView(avatarWrap)
         topRow.addView(doctorTextCol)
@@ -425,14 +430,17 @@ class HomeActivity : AppCompatActivity() {
         // ডিগ্রি
         inner.addView(
             text(
-                "এম.বি.বি.এস (সি.ইউ), ডি.এম.ইউ (আল্ট্রা), পিজিটি,\nএম.সি.জি.পি (মেডিসিন ও শিশু), সি.সি.ডি (ডায়াবেটিস- বারডেম, ঢাকা)",
+                "এম.বি.বি.এস (সিইউ), ডি.এম.ইউ (আল্ট্রা), পিজিটি (পিএমসি),\nএম.সি.জি.পি (মেডিসিন ও শিশু), সি.সি.ডি (ডায়াবেটিস-বারডেম, ঢাকা)",
                 11f, Typeface.NORMAL, colorTextMuted, Gravity.START
-            ).apply { setPadding(0, dp(12), 0, 0) }
+            ).apply {
+                setPadding(0, dp(12), 0, 0)
+                setLineSpacing(dp(2).toFloat(), 1f)
+            }
         )
 
         // ভেরিফাইড ব্যাজ (ক্যানভাস চেক আইকন)
         inner.addView(
-            text("বি.এম.ডি.সি এ-১৭৬৩০ • Verified", 10.5f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
+            text("বি.এম.ডি.সি নং – এ-১৭৪৬৩ • Verified", 10.5f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
                 background = roundedBg(Color.parseColor("#E4F3F1"), 30f)
                 setPadding(dp(12), dp(6), dp(12), dp(6))
                 compoundDrawablePadding = dp(6)
@@ -452,7 +460,7 @@ class HomeActivity : AppCompatActivity() {
         })
 
         // বিশেষজ্ঞতা - স্ক্রলযোগ্য চিপস
-        val expertise = listOf("নাক-কান-গলা", "এলার্জি", "শ্বাসকষ্ট", "চর্মরোগ", "উচ্চ রক্তচাপ", "বাত ব্যাথা")
+        val expertise = listOf("মেডিসিন-শিশু", "ডায়াবেটিস", "উচ্চ রক্তচাপ", "নাক-কান-গলা", "বাত ব্যাথা", "এলার্জি", "শ্বাসকষ্ট", "চর্ম ও যৌনরোগ")
         val chipsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         expertise.forEach { item ->
             chipsRow.addView(text(item, 11f, Typeface.BOLD, colorPrimaryDark, Gravity.CENTER).apply {
@@ -472,8 +480,94 @@ class HomeActivity : AppCompatActivity() {
         }
         inner.addView(chipsScroll)
 
+        // পাতলা বিভাজক
+        inner.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(16) }
+            setBackgroundColor(colorFieldBorder)
+        })
+
+        // চেম্বার, সিরিয়াল ও সময়সূচি তথ্য বক্স
+        inner.addView(buildChamberInfoBox())
+
         borderWrap.addView(inner)
         return borderWrap
+    }
+
+    /** চেম্বারের ঠিকানা, সিরিয়াল নাম্বার ও রোগী দেখার সময় - প্রিমিয়াম ইনফো বক্স */
+    private fun buildChamberInfoBox(): LinearLayout {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(Color.parseColor("#F8FBFA"), 16f)
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(14)
+            }
+        }
+        box.addView(chamberInfoRow(
+            VectorIconDrawable.IconType.LOCATION,
+            "চেম্বার",
+            "ঢাকা ডায়গনস্টিক সেন্টার, মাধবপুর পশ্চিম বাজার (সোনালী ব্যাংকের নিচ তলা), কাজী আক্তার ম্যানশন, মাধবপুর, হবিগঞ্জ"
+        ))
+        box.addView(rowDivider())
+        box.addView(chamberInfoRow(
+            VectorIconDrawable.IconType.CLOCK,
+            "রোগী দেখার সময়",
+            "প্রতিদিন সকাল ১০টা থেকে রাত ৮টা পর্যন্ত"
+        ))
+        box.addView(rowDivider())
+        box.addView(chamberInfoRow(
+            iconType = VectorIconDrawable.IconType.PHONE,
+            label = "সিরিয়ালের জন্য কল করুন",
+            value = doctorSerialPhone,
+            clickable = true
+        ) { callForSerial() })
+        return box
+    }
+
+    private fun rowDivider(): View = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+        setBackgroundColor(colorFieldBorder)
+    }
+
+    private fun chamberInfoRow(
+        iconType: VectorIconDrawable.IconType,
+        label: String,
+        value: String,
+        clickable: Boolean = false,
+        onClick: (() -> Unit)? = null
+    ): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(10), 0, dp(10))
+            if (clickable) {
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { onClick?.invoke() }
+            }
+            addView(ImageView(this@HomeActivity).apply {
+                setImageDrawable(VectorIconDrawable(iconType, colorPrimary, dp(14)))
+                background = roundedBg(Color.parseColor("#E4F3F1"), 10f)
+                layoutParams = LinearLayout.LayoutParams(dp(30), dp(30))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+            })
+            val col = LinearLayout(this@HomeActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) }
+            }
+            col.addView(text(label, 10f, Typeface.BOLD, colorTextMuted, Gravity.START))
+            col.addView(text(value, 11.5f, Typeface.NORMAL, colorDark, Gravity.START).apply {
+                setPadding(0, dp(2), 0, 0)
+                setLineSpacing(dp(2).toFloat(), 1f)
+            })
+            addView(col)
+            if (clickable) {
+                addView(ImageView(this@HomeActivity).apply {
+                    setImageDrawable(VectorIconDrawable(VectorIconDrawable.IconType.ARROW_RIGHT, colorTextMuted, dp(14)))
+                    layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginStart = dp(6) }
+                })
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -840,6 +934,11 @@ class HomeActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
+    private fun callForSerial() {
+        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$doctorSerialPhone"))
+        startActivity(intent)
+    }
+
     private fun showComingSoon(feature: String) {
         Toast.makeText(this, "$feature শীঘ্রই আসছে", Toast.LENGTH_SHORT).show()
     }
@@ -1056,7 +1155,7 @@ class HomeActivity : AppCompatActivity() {
         private val sizePx: Int = 96
     ) : Drawable() {
 
-        enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT, DOCUMENT, TRASH }
+        enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT, DOCUMENT, TRASH, LOCATION, CLOCK }
 
         private var iconColor: Int = initialColor
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = iconColor }
@@ -1103,6 +1202,8 @@ class HomeActivity : AppCompatActivity() {
                 IconType.ARROW_RIGHT -> drawArrowRight(canvas, s)
                 IconType.DOCUMENT -> drawDocument(canvas, s)
                 IconType.TRASH -> drawTrash(canvas, s)
+                IconType.LOCATION -> drawLocation(canvas, s)
+                IconType.CLOCK -> drawClock(canvas, s)
             }
             canvas.restore()
         }
@@ -1284,6 +1385,26 @@ class HomeActivity : AppCompatActivity() {
             // ভেতরের দাগ
             canvas.drawLine(s * 0.40f, s * 0.36f, s * 0.40f, s * 0.82f, strokePaint)
             canvas.drawLine(s * 0.60f, s * 0.36f, s * 0.60f, s * 0.82f, strokePaint)
+        }
+
+        /** লোকেশন/পিন আইকন - "চেম্বার" ঠিকানার জন্য */
+        private fun drawLocation(canvas: Canvas, s: Float) {
+            val path = Path()
+            path.moveTo(s * 0.5f, s * 0.98f)
+            path.cubicTo(s * 0.15f, s * 0.62f, s * 0.08f, s * 0.42f, s * 0.08f, s * 0.34f)
+            path.cubicTo(s * 0.08f, s * 0.12f, s * 0.27f, 0f, s * 0.5f, 0f)
+            path.cubicTo(s * 0.73f, 0f, s * 0.92f, s * 0.12f, s * 0.92f, s * 0.34f)
+            path.cubicTo(s * 0.92f, s * 0.42f, s * 0.85f, s * 0.62f, s * 0.5f, s * 0.98f)
+            path.close()
+            canvas.drawPath(path, strokePaint)
+            canvas.drawCircle(s * 0.5f, s * 0.34f, s * 0.12f, fillPaint)
+        }
+
+        /** ঘড়ি আইকন - "রোগী দেখার সময়" এর জন্য */
+        private fun drawClock(canvas: Canvas, s: Float) {
+            canvas.drawCircle(s / 2, s / 2, s / 2 - strokePaint.strokeWidth / 2, strokePaint)
+            canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.5f, s * 0.22f, strokePaint)
+            canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.70f, s * 0.58f, strokePaint)
         }
     }
 
