@@ -1,6 +1,6 @@
 package com.konasl.nagad
 
-import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
@@ -14,6 +14,7 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -42,7 +43,6 @@ class HomeActivity : AppCompatActivity() {
 
     // ডাক্তারের তথ্য
     private val doctorPhoneForCall = "+8801632336631" // TODO: বসান
-    private val consultationFee = "৮০০ টাকা"
 
     private lateinit var appointmentsContainer: LinearLayout
     private lateinit var greetingText: TextView
@@ -123,7 +123,7 @@ class HomeActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         greetingText = text("স্বাগতম, ${SupabaseClient.getName(this) ?: "রোগী"}", 18f, Typeface.BOLD, Color.WHITE, Gravity.START)
-        val appTitle = text("SunnyCare Doctor", 12f, Typeface.NORMAL, Color.argb(210, 255, 255, 255), Gravity.START).apply {
+        val appTitle = text("SunnyCare", 12f, Typeface.NORMAL, Color.argb(210, 255, 255, 255), Gravity.START).apply {
             compoundDrawablePadding = dp(5)
             setCompoundDrawablesWithIntrinsicBounds(
                 VectorIconDrawable(VectorIconDrawable.IconType.SUN, Color.argb(230, 255, 255, 255), dp(13)), null, null, null
@@ -261,7 +261,7 @@ class HomeActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             background = roundedBg(Color.WHITE, 24f)
             setPadding(dp(6), dp(10), dp(6), dp(10))
-            elevation = dp(16).toFloat()
+            elevation = dp(8).toFloat()
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
                     outline.setRoundRect(0, 0, view.width, view.height, dp(24).toFloat())
@@ -357,7 +357,7 @@ class HomeActivity : AppCompatActivity() {
                 setMargins(dp(18), dp(-22), dp(18), 0)
             }
             setPadding(dp(2), dp(2), dp(2), dp(2))
-            elevation = dp(14).toFloat()
+            elevation = dp(6).toFloat()
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
                     outline.setRoundRect(0, 0, view.width, view.height, dp(24).toFloat())
@@ -515,7 +515,7 @@ class HomeActivity : AppCompatActivity() {
             ).apply { cornerRadius = dp(20).toFloat() }
             setPadding(dp(18), dp(18), dp(18), dp(18))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-            elevation = dp(6).toFloat()
+            elevation = dp(2).toFloat()
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
                     outline.setRoundRect(0, 0, view.width, view.height, dp(20).toFloat())
@@ -536,10 +536,6 @@ class HomeActivity : AppCompatActivity() {
             addView(text("অ্যাপয়েন্টমেন্ট বুক\nকরুন", 15f, Typeface.BOLD, Color.WHITE, Gravity.START).apply {
                 setPadding(0, dp(16), 0, 0)
                 setLineSpacing(dp(2).toFloat(), 1f)
-            })
-
-            addView(text("ফি $consultationFee", 12f, Typeface.NORMAL, Color.argb(215, 255, 255, 255), Gravity.START).apply {
-                setPadding(0, dp(8), 0, 0)
             })
         }
     }
@@ -576,7 +572,7 @@ class HomeActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             background = roundedBg(colorCard, 16f)
             setPadding(dp(12), dp(12), dp(12), dp(12))
-            elevation = dp(3).toFloat()
+            elevation = 1.5f * resources.displayMetrics.density
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
                     outline.setRoundRect(0, 0, view.width, view.height, dp(16).toFloat())
@@ -612,7 +608,7 @@ class HomeActivity : AppCompatActivity() {
             ).apply { cornerRadius = dp(18).toFloat() }
             setPadding(dp(16), dp(16), dp(16), dp(16))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            elevation = dp(4).toFloat()
+            elevation = dp(2).toFloat()
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
                     outline.setRoundRect(0, 0, view.width, view.height, dp(18).toFloat())
@@ -665,7 +661,7 @@ class HomeActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_HORIZONTAL
             background = roundedBg(colorCard, 22f)
             setPadding(dp(20), dp(24), dp(20), dp(24))
-            elevation = dp(8).toFloat()
+            elevation = dp(3).toFloat()
         }
         profileAvatar = PatientAvatarView(this).apply {
             layoutParams = LinearLayout.LayoutParams(dp(84), dp(84)).apply { gravity = Gravity.CENTER_HORIZONTAL }
@@ -689,28 +685,40 @@ class HomeActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(16)
             }
-            elevation = dp(6).toFloat()
+            elevation = dp(2).toFloat()
         }
         body.addView(profileDetailsContainer)
 
-        val logoutFromProfile = TextView(this).apply {
-            text = "লগ আউট করুন"
-            setTextColor(Color.parseColor("#DC2626"))
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            background = roundedBg(Color.parseColor("#FEE2E2"), 14f)
-            setPadding(0, dp(14), 0, dp(14))
-            compoundDrawablePadding = dp(8)
-            setCompoundDrawablesWithIntrinsicBounds(
-                VectorIconDrawable(VectorIconDrawable.IconType.LOGOUT, Color.parseColor("#DC2626"), dp(16)), null, null, null
-            )
+        val accountActionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(20)
             }
-            setOnClickListener { onLogout() }
         }
-        body.addView(logoutFromProfile)
+
+        val logoutFromProfile = profileActionButton(
+            label = "লগ আউট",
+            iconType = VectorIconDrawable.IconType.LOGOUT,
+            color = Color.parseColor("#DC2626"),
+            bgColor = Color.parseColor("#FEE2E2")
+        ) { onLogout() }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val deleteProfileBtn = profileActionButton(
+            label = "ডিলিট প্রোফাইল",
+            iconType = VectorIconDrawable.IconType.TRASH,
+            color = Color.WHITE,
+            bgColor = Color.parseColor("#DC2626")
+        ) { onDeleteProfile() }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(12)
+            }
+        }
+
+        accountActionsRow.addView(logoutFromProfile)
+        accountActionsRow.addView(deleteProfileBtn)
+        body.addView(accountActionsRow)
 
         panel.addView(body)
         return panel
@@ -805,7 +813,7 @@ class HomeActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             background = roundedBg(colorCard, 16f)
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            elevation = dp(2).toFloat()
+            elevation = dp(1).toFloat()
         }
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -844,16 +852,153 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun onLogout() {
-        AlertDialog.Builder(this)
-            .setTitle("লগ আউট")
-            .setMessage("আপনি কি লগ আউট করতে চান?")
-            .setPositiveButton("হ্যাঁ") { _, _ ->
-                SupabaseClient.logout(this)
-                startActivity(Intent(this, LoginActivity::class.java))
-                finish()
+        showCustomConfirmDialog(
+            iconType = VectorIconDrawable.IconType.LOGOUT,
+            iconBgColor = Color.parseColor("#DC2626"),
+            title = "লগ আউট",
+            message = "আপনি কি লগ আউট করতে চান?",
+            positiveText = "হ্যাঁ, লগ আউট",
+            positiveColor = Color.parseColor("#DC2626"),
+            negativeText = "না"
+        ) {
+            SupabaseClient.logout(this)
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+        }
+    }
+
+    private fun onDeleteProfile() {
+        showCustomConfirmDialog(
+            iconType = VectorIconDrawable.IconType.TRASH,
+            iconBgColor = Color.parseColor("#DC2626"),
+            title = "প্রোফাইল ডিলিট করুন",
+            message = "আপনি কি নিশ্চিতভাবে আপনার প্রোফাইল স্থায়ীভাবে মুছে ফেলতে চান? এই কাজটি ফিরিয়ে আনা যাবে না।",
+            positiveText = "হ্যাঁ, ডিলিট করুন",
+            positiveColor = Color.parseColor("#DC2626"),
+            negativeText = "বাতিল"
+        ) {
+            // TODO: SupabaseClient-এ একটি deleteAccount() ফাংশন যুক্ত করে এখানে কল করুন
+            Toast.makeText(this, "আপনার প্রোফাইল ডিলিট করার অনুরোধ গ্রহণ করা হয়েছে", Toast.LENGTH_SHORT).show()
+            SupabaseClient.logout(this)
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+        }
+    }
+
+    /**
+     * অ্যাপের নিজস্ব ডিজাইন-ভাষায় তৈরি কাস্টম কনফার্মেশন ডায়ালগ (সিস্টেম ডিফল্ট AlertDialog নয়)।
+     * এই একটিভিটির সব কনফার্মেশন-ডায়ালগ এই একটি ফাংশন দিয়েই বানানো হয়।
+     */
+    private fun showCustomConfirmDialog(
+        iconType: VectorIconDrawable.IconType,
+        iconBgColor: Int,
+        title: String,
+        message: String,
+        positiveText: String,
+        positiveColor: Int,
+        negativeText: String = "বাতিল",
+        onPositive: () -> Unit
+    ) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.setCancelable(true)
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = roundedBg(Color.WHITE, 22f)
+            setPadding(dp(24), dp(26), dp(24), dp(20))
+            elevation = dp(6).toFloat()
+        }
+
+        card.addView(ImageView(this).apply {
+            setImageDrawable(VectorIconDrawable(iconType, Color.WHITE, dp(24)))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(iconBgColor)
             }
-            .setNegativeButton("না", null)
-            .show()
+            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+            setPadding(dp(15), dp(15), dp(15), dp(15))
+        })
+
+        card.addView(text(title, 16f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
+            setPadding(0, dp(16), 0, 0)
+        })
+
+        card.addView(text(message, 12.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER).apply {
+            setPadding(0, dp(8), 0, 0)
+            setLineSpacing(dp(2).toFloat(), 1f)
+        })
+
+        val buttonsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(22)
+            }
+        }
+
+        val negativeBtn = text(negativeText, 13.5f, Typeface.BOLD, colorTextMuted, Gravity.CENTER).apply {
+            background = roundedBg(Color.parseColor("#F1F3F2"), 14f)
+            setPadding(0, dp(13), 0, dp(13))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { dialog.dismiss() }
+        }
+
+        val positiveBtn = text(positiveText, 13.5f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+            background = roundedBg(positiveColor, 14f)
+            setPadding(0, dp(13), 0, dp(13))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(12)
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                dialog.dismiss()
+                onPositive()
+            }
+        }
+
+        buttonsRow.addView(negativeBtn)
+        buttonsRow.addView(positiveBtn)
+        card.addView(buttonsRow)
+
+        dialog.setContentView(card)
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.86).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        dialog.show()
+    }
+
+    /** প্রোফাইল প্যানেলের অ্যাকশন বাটন (লগ আউট / ডিলিট প্রোফাইল) - ভেক্টর আইকন সহ */
+    private fun profileActionButton(
+        label: String,
+        iconType: VectorIconDrawable.IconType,
+        color: Int,
+        bgColor: Int,
+        onClick: () -> Unit
+    ): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = roundedBg(bgColor, 14f)
+            setPadding(dp(10), dp(14), dp(10), dp(14))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+
+            addView(ImageView(this@HomeActivity).apply {
+                setImageDrawable(VectorIconDrawable(iconType, color, dp(16)))
+                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
+            })
+
+            addView(text(label, 13.5f, Typeface.BOLD, color, Gravity.CENTER).apply {
+                setPadding(dp(8), 0, 0, 0)
+            })
+        }
     }
 
     // ------------------------------------------------------------------
@@ -896,7 +1041,7 @@ class HomeActivity : AppCompatActivity() {
         private val sizePx: Int = 96
     ) : Drawable() {
 
-        enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT, DOCUMENT }
+        enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT, DOCUMENT, TRASH }
 
         private var iconColor: Int = initialColor
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = iconColor }
@@ -942,6 +1087,7 @@ class HomeActivity : AppCompatActivity() {
                 IconType.SHIELD -> drawShield(canvas, s)
                 IconType.ARROW_RIGHT -> drawArrowRight(canvas, s)
                 IconType.DOCUMENT -> drawDocument(canvas, s)
+                IconType.TRASH -> drawTrash(canvas, s)
             }
             canvas.restore()
         }
@@ -1109,6 +1255,20 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawLine(s * 0.24f, s * 0.30f, s * 0.76f, s * 0.30f, strokePaint)
             canvas.drawLine(s * 0.24f, s * 0.52f, s * 0.76f, s * 0.52f, strokePaint)
             canvas.drawLine(s * 0.24f, s * 0.74f, s * 0.58f, s * 0.74f, strokePaint)
+        }
+
+        /** ট্র্যাশ/ডিলিট আইকন - "ডিলিট প্রোফাইল" এর জন্য */
+        private fun drawTrash(canvas: Canvas, s: Float) {
+            // ঢাকনা
+            canvas.drawLine(s * 0.16f, s * 0.22f, s * 0.84f, s * 0.22f, strokePaint)
+            canvas.drawLine(s * 0.38f, s * 0.22f, s * 0.42f, s * 0.06f, strokePaint)
+            canvas.drawLine(s * 0.42f, s * 0.06f, s * 0.58f, s * 0.06f, strokePaint)
+            canvas.drawLine(s * 0.58f, s * 0.06f, s * 0.62f, s * 0.22f, strokePaint)
+            // বডি
+            canvas.drawRoundRect(s * 0.22f, s * 0.22f, s * 0.78f, s * 0.96f, s * 0.05f, s * 0.05f, strokePaint)
+            // ভেতরের দাগ
+            canvas.drawLine(s * 0.40f, s * 0.36f, s * 0.40f, s * 0.82f, strokePaint)
+            canvas.drawLine(s * 0.60f, s * 0.36f, s * 0.60f, s * 0.82f, strokePaint)
         }
     }
 
