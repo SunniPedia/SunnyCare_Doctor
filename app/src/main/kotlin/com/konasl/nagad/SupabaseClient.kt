@@ -178,6 +178,20 @@ object SupabaseClient {
         }
     }
 
+    /** DELETE — Supabase PostgREST-এ row মুছে ফেলার জন্য। শর্ত (filter) path-এর কুয়েরি-স্ট্রিং এ দিতে হয়,
+     *  যেমন: delete("appointments?patient_id=eq.$patientId") */
+    private suspend fun delete(path: String): Unit = withContext(Dispatchers.IO) {
+        val req = baseRequest(path)
+            .delete()
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val body = resp.body?.string().orEmpty()
+                throw IOException("DELETE $path failed: ${resp.code} $body")
+            }
+        }
+    }
+
     // ---------------------------------------------------------------------
     // PASSWORD HASHING
     // ---------------------------------------------------------------------
@@ -336,6 +350,24 @@ object SupabaseClient {
         } else {
             Result.success(hashPassword(enteredPassword, salt) == hash)
         }
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * ব্যবহারকারীর অ্যাকাউন্ট স্থায়ীভাবে ডিলিট করে — প্রথমে তার সব appointments মুছে,
+     * তারপর patients টেবিল থেকে তার নিজের row মুছে ফেলে (foreign key constraint এড়াতে এই ক্রমটা জরুরি,
+     * যেহেতু appointments.patient_id, patients(id) কে রেফার করে)।
+     *
+     * NOTE: এই প্রজেক্টে যেহেতু RLS বন্ধ আর anon key দিয়েই সব রিড/রাইট হচ্ছে (getAppointments,
+     * createAppointment ইত্যাদির মতোই), তাই এখানেও একই মডেল অনুসরণ করা হলো — patientId
+     * ক্লায়েন্টের SharedPreferences থেকেই আসে। প্রকৃত প্রোডাকশন অ্যাপে RLS চালু করে বা
+     * সার্ভার-সাইড ভেরিফিকেশন যোগ করে এটা আরও সুরক্ষিত করার পরামর্শ থাকলো।
+     */
+    suspend fun deleteAccount(patientId: String): Result<Unit> = try {
+        delete("appointments?patient_id=eq.$patientId")
+        delete("patients?id=eq.$patientId")
+        Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
     }
