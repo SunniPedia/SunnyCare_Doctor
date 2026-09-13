@@ -401,13 +401,6 @@ class HomeActivity : AppCompatActivity() {
         doctorTextCol.addView(text("মেডিসিন, শিশু ও ডায়াবেটিস বিশেষজ্ঞ", 12f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
             setPadding(0, dp(2), 0, 0)
         })
-        doctorTextCol.addView(text("এখন অনলাইনে উপলব্ধ", 11f, Typeface.BOLD, Color.parseColor("#16A34A"), Gravity.START).apply {
-            setPadding(0, dp(6), 0, 0)
-            compoundDrawablePadding = dp(6)
-            setCompoundDrawablesWithIntrinsicBounds(
-                VectorIconDrawable(VectorIconDrawable.IconType.DOT, Color.parseColor("#22C55E"), dp(9)), null, null, null
-            )
-        })
         topRow.addView(avatarWrap)
         topRow.addView(doctorTextCol)
         inner.addView(topRow)
@@ -426,7 +419,7 @@ class HomeActivity : AppCompatActivity() {
             })
         }
         ratingRow.addView(starsRow)
-        ratingRow.addView(text(" ৪.৮  •  ৫০০+ রোগী দেখেছেন", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START))
+        ratingRow.addView(text(" ৪.৮", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START))
         inner.addView(ratingRow)
 
         // ডিগ্রি
@@ -877,11 +870,33 @@ class HomeActivity : AppCompatActivity() {
             positiveColor = Color.parseColor("#DC2626"),
             negativeText = "বাতিল"
         ) {
-            // TODO: SupabaseClient-এ একটি deleteAccount() ফাংশন যুক্ত করে এখানে কল করুন
-            Toast.makeText(this, "আপনার প্রোফাইল ডিলিট করার অনুরোধ গ্রহণ করা হয়েছে", Toast.LENGTH_SHORT).show()
-            SupabaseClient.logout(this)
-            startActivity(Intent(this, LoginActivity::class.java))
-            finish()
+            performAccountDeletion()
+        }
+    }
+
+    /**
+     * প্রকৃতপক্ষে Supabase-এ কল করে অ্যাকাউন্ট ডিলিট করে।
+     * NOTE: SupabaseClient.kt-এ একটি deleteAccount(patientId: String): Result<Unit>
+     * ফাংশন যুক্ত করতে হবে — এখনো এটি নেই বলেই আগে ডিলিট আসলে হচ্ছিল না,
+     * শুধু টোস্ট দেখিয়ে লগ আউট করে দিচ্ছিল।
+     */
+    private fun performAccountDeletion() {
+        val patientId = SupabaseClient.getPatientId(this)
+        if (patientId == null) {
+            Toast.makeText(this, "প্রোফাইল খুঁজে পাওয়া যায়নি, আবার লগইন করুন", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(this, "প্রোফাইল ডিলিট করা হচ্ছে...", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val result = SupabaseClient.deleteAccount(patientId)
+            result.onSuccess {
+                Toast.makeText(this@HomeActivity, "আপনার প্রোফাইল ডিলিট করা হয়েছে", Toast.LENGTH_SHORT).show()
+                SupabaseClient.logout(this@HomeActivity)
+                startActivity(Intent(this@HomeActivity, LoginActivity::class.java))
+                finish()
+            }.onFailure {
+                Toast.makeText(this@HomeActivity, "প্রোফাইল ডিলিট করা যায়নি, আবার চেষ্টা করুন", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
