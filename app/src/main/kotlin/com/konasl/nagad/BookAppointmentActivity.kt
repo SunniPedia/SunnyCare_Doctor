@@ -4,15 +4,22 @@ import android.app.TimePickerDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.text.InputType
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -54,6 +61,12 @@ class BookAppointmentActivity : AppCompatActivity() {
     data class DateOption(val label: String, val dayNum: Int, val month: String, val isoDate: String)
     data class TimeSlot(val label: String, val value24: String)
     data class PaymentOption(val label: String, val subtitle: String, val logoUrl: String, val brandColor: Int, val merchantNumber: String)
+    private data class PaymentRowRefs(
+        val row: LinearLayout,
+        val option: PaymentOption,
+        val check: HomeActivity.VectorIconDrawable,
+        val logo: CircularImageView
+    )
 
     private var selectedDate: DateOption? = null
     private var selectedTime24: String? = null
@@ -66,23 +79,23 @@ class BookAppointmentActivity : AppCompatActivity() {
     private lateinit var manualPayCard: LinearLayout
     private lateinit var manualPayNumberText: TextView
     private lateinit var manualPayInstructionText: TextView
-    private lateinit var manualPayLogoWrap: FrameLayout
-    private lateinit var manualPayLogoImg: ImageView
+    private lateinit var manualPayLogoView: CircularImageView
     private lateinit var trxIdInput: EditText
     private lateinit var reasonInput: EditText
-    private lateinit var reportPickRow: LinearLayout
-    private lateinit var reportPickText: TextView
-    private lateinit var reportPickSubtext: TextView
-    private lateinit var reportClearBtn: ImageView
-    private lateinit var reportPickLauncher: ActivityResultLauncher<Array<String>>
-    private var selectedReportUri: Uri? = null
-    private var selectedReportName: String = ""
     private lateinit var nameInput: EditText
     private lateinit var phoneInput: EditText
     private lateinit var confirmBtn: LinearLayout
     private lateinit var totalFeeText: TextView
 
-    private val paymentRowViews = mutableListOf<Triple<LinearLayout, PaymentOption, HomeActivity.VectorIconDrawable>>()
+    // ---------------- একাধিক টেস্ট রিপোর্ট আপলোড ----------------
+    private lateinit var reportPickRow: LinearLayout
+    private lateinit var reportPickText: TextView
+    private lateinit var reportPickSubtext: TextView
+    private lateinit var reportListContainer: LinearLayout
+    private lateinit var reportPickLauncher: ActivityResultLauncher<Array<String>>
+    private val selectedReports = mutableListOf<Pair<Uri, String>>()
+
+    private val paymentRowViews = mutableListOf<PaymentRowRefs>()
 
     private val dateOptions = mutableListOf<DateOption>()
 
@@ -103,13 +116,18 @@ class BookAppointmentActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        reportPickLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) {
-                try {
-                    contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                } catch (e: Exception) { /* কিছু ডকুমেন্ট প্রোভাইডার persistable permission সাপোর্ট করে না, সমস্যা নেই */ }
-                selectedReportUri = uri
-                selectedReportName = queryDisplayName(uri) ?: "রিপোর্ট ফাইল"
+        // একাধিক ডকুমেন্ট (ছবি/PDF) একসাথে সিলেক্ট করার লঞ্চার
+        reportPickLauncher = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNotEmpty()) {
+                uris.forEach { uri ->
+                    try {
+                        contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    } catch (e: Exception) { /* কিছু ডকুমেন্ট প্রোভাইডার persistable permission সাপোর্ট করে না, সমস্যা নেই */ }
+                    if (selectedReports.none { it.first == uri }) {
+                        val name = queryDisplayName(uri) ?: "ডকুমেন্ট ${selectedReports.size + 1}"
+                        selectedReports.add(uri to name)
+                    }
+                }
                 updateReportPickUi()
             }
         }
@@ -271,8 +289,8 @@ class BookAppointmentActivity : AppCompatActivity() {
         infoCard.addView(fieldLabel("সমস্যার বিবরণ"))
         infoCard.addView(reasonInput)
         infoCard.addView(space(dp(14)))
-        infoCard.addView(fieldLabel("আগের টেস্ট রিপোর্ট (ঐচ্ছিক)"))
-        infoCard.addView(buildReportPickRow())
+        infoCard.addView(fieldLabel("আগের টেস্ট রিপোর্ট (ঐচ্ছিক, একাধিক ফাইল যোগ করা যাবে)"))
+        infoCard.addView(buildReportPickSection())
 
         // ---------------- SECTION: PAYMENT ----------------
         val paymentSection = sectionTitle(HomeActivity.VectorIconDrawable.IconType.SHIELD, "পেমেন্ট পদ্ধতি")
@@ -298,18 +316,13 @@ class BookAppointmentActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        manualPayLogoWrap = FrameLayout(this).apply {
-            background = circleBg(Color.WHITE)
+        manualPayLogoView = CircularImageView(this).apply {
             layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
-            outlineProvider = circleOutline()
-            clipToOutline = true
+            circleBackgroundColor = Color.WHITE
+            borderColor = Color.parseColor("#FBE3B8")
+            borderWidthDp = 1f
             elevation = dp(1).toFloat()
         }
-        manualPayLogoImg = ImageView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(dp(26), dp(26)).apply { gravity = Gravity.CENTER }
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }
-        manualPayLogoWrap.addView(manualPayLogoImg)
         manualPayInstructionText = text(
             "নিচের নাম্বারে Send Money করে Transaction ID টি নিচে লিখুন",
             11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START
@@ -317,7 +330,7 @@ class BookAppointmentActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
             setLineSpacing(dp(2).toFloat(), 1f)
         }
-        manualHeadRow.addView(manualPayLogoWrap)
+        manualHeadRow.addView(manualPayLogoView)
         manualHeadRow.addView(manualPayInstructionText)
 
         val numberRow = LinearLayout(this).apply {
@@ -530,107 +543,13 @@ class BookAppointmentActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    private fun buildPaymentOptions() {
-        paymentRow.removeAllViews()
-        paymentRowViews.clear()
-
-        paymentOptions.forEach { option ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                background = roundedBgStroke(colorCard, colorFieldBorder, 16f, 1)
-                setPadding(dp(14), dp(14), dp(14), dp(14))
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    setMargins(0, dp(6), 0, dp(6))
-                }
-                elevation = dp(1).toFloat()
-                outlineProvider = roundOutline(16)
-                clipToOutline = true
-                tag = option.label
-            }
-
-            val logoWrap = FrameLayout(this).apply {
-                background = circleBg(Color.WHITE)
-                layoutParams = LinearLayout.LayoutParams(dp(52), dp(52))
-                outlineProvider = circleOutline()
-                clipToOutline = true
-                elevation = dp(1).toFloat()
-            }
-            val logoImg = ImageView(this).apply {
-                layoutParams = FrameLayout.LayoutParams(dp(38), dp(38)).apply { gravity = Gravity.CENTER }
-                scaleType = ImageView.ScaleType.FIT_CENTER
-            }
-            logoWrap.addView(logoImg)
-            loadNetworkImage(option.logoUrl, logoImg)
-
-            val col = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(14) }
-            }
-            col.addView(text(option.label, 14f, Typeface.BOLD, colorDark, Gravity.START))
-            col.addView(text(option.subtitle, 10.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
-                setPadding(0, dp(2), 0, 0)
-            })
-
-            val checkDrawable = HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.CHECK, Color.parseColor("#D1D5DB"), dp(20))
-            val checkIcon = ImageView(this).apply {
-                setImageDrawable(checkDrawable)
-                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22))
-            }
-
-            row.addView(logoWrap)
-            row.addView(col)
-            row.addView(checkIcon)
-
-            row.setOnClickListener {
-                selectedPayment = option.label
-                paymentRowViews.forEach { (r, opt, check) ->
-                    val selected = opt.label == option.label
-                    r.background = if (selected)
-                        roundedBgStroke(Color.argb(20, Color.red(opt.brandColor), Color.green(opt.brandColor), Color.blue(opt.brandColor)), opt.brandColor, 16f, 2)
-                    else
-                        roundedBgStroke(colorCard, colorFieldBorder, 16f, 1)
-                    check.updateTint(if (selected) opt.brandColor else Color.parseColor("#D1D5DB"))
-                }
-                updateManualPayCard(option)
-            }
-            paymentRow.addView(row)
-            paymentRowViews.add(Triple(row, option, checkDrawable))
-        }
-    }
-
-    /** bKash/Nagad যেটাই সিলেক্ট করা হোক, মার্চেন্ট নাম্বার + লোগো + TrxID ইনপুট দেখায় */
-    private fun updateManualPayCard(option: PaymentOption) {
-        manualPayNumberText.text = option.merchantNumber
-        manualPayInstructionText.text =
-            "${option.label}-এ (Send Money) ৳$appointmentFee পাঠিয়ে Transaction ID টি নিচে লিখুন"
-        loadNetworkImage(option.logoUrl, manualPayLogoImg)
-        manualPayCard.visibility = View.VISIBLE
-    }
-
-    /** নেটওয়ার্ক থেকে বিকাশ/নগদ লোগো ইমেজ লোড করে ImageView-তে বসায় (কোনো তৃতীয়-পক্ষ ইমেজ লাইব্রেরি ছাড়াই) */
-    private fun loadNetworkImage(url: String, target: ImageView) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val connection = URL(url).openConnection()
-                connection.connectTimeout = 8000
-                connection.readTimeout = 8000
-                connection.doInput = true
-                connection.connect()
-                val bitmap = BitmapFactory.decodeStream(connection.getInputStream())
-                withContext(Dispatchers.Main) {
-                    if (bitmap != null) target.setImageBitmap(bitmap)
-                }
-            } catch (e: Exception) {
-                // ইন্টারনেট না থাকলে বা লোড ব্যর্থ হলে চুপচাপ স্কিপ করা হয়, লেবেল টেক্সট দিয়েই বোঝা যাবে কোনটা কী
-            }
-        }
-    }
-
+    // টেস্ট রিপোর্ট আপলোড (ঐচ্ছিক, একাধিক ফাইল) — ছবি বা PDF, Supabase Storage-এ যায়
     // ------------------------------------------------------------------
-    // টেস্ট রিপোর্ট আপলোড (ঐচ্ছিক) — ছবি বা PDF, Supabase Storage-এ যায়
-    // ------------------------------------------------------------------
-    private fun buildReportPickRow(): LinearLayout {
+    private fun buildReportPickSection(): LinearLayout {
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
         reportPickRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -651,45 +570,83 @@ class BookAppointmentActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
         }
         reportPickText = text("রিপোর্ট আপলোড করুন", 12.5f, Typeface.BOLD, colorDark, Gravity.START)
-        reportPickSubtext = text("ছবি বা PDF সিলেক্ট করুন (ঐচ্ছিক)", 10.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+        reportPickSubtext = text("এক বা একাধিক ছবি/PDF সিলেক্ট করুন (ঐচ্ছিক)", 10.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
             setPadding(0, dp(2), 0, 0)
         }
         textCol.addView(reportPickText)
         textCol.addView(reportPickSubtext)
 
-        reportClearBtn = ImageView(this).apply {
-            setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.TRASH, Color.parseColor("#DC2626"), dp(14)))
-            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28))
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            visibility = View.GONE
-            isClickable = true
-            isFocusable = true
-            setOnClickListener {
-                selectedReportUri = null
-                selectedReportName = ""
-                updateReportPickUi()
-            }
+        val addIcon = ImageView(this).apply {
+            setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.ARROW_RIGHT, colorPrimary, dp(14)))
+            layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
         }
 
         reportPickRow.addView(iconWrap)
         reportPickRow.addView(textCol)
-        reportPickRow.addView(reportClearBtn)
-        return reportPickRow
+        reportPickRow.addView(addIcon)
+
+        reportListContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(8)
+            }
+        }
+
+        wrap.addView(reportPickRow)
+        wrap.addView(reportListContainer)
+        return wrap
     }
 
     private fun updateReportPickUi() {
-        if (selectedReportUri != null) {
-            reportPickText.text = selectedReportName
-            reportPickSubtext.text = "ফাইল সিলেক্ট করা হয়েছে — বদলাতে ট্যাপ করুন"
-            reportPickSubtext.setTextColor(colorPrimary)
-            reportPickRow.background = roundedBgStroke(Color.parseColor("#E4F3F1"), colorPrimary, 12f, 1)
-            reportClearBtn.visibility = View.VISIBLE
-        } else {
+        if (selectedReports.isEmpty()) {
             reportPickText.text = "রিপোর্ট আপলোড করুন"
-            reportPickSubtext.text = "ছবি বা PDF সিলেক্ট করুন (ঐচ্ছিক)"
+            reportPickSubtext.text = "এক বা একাধিক ছবি/PDF সিলেক্ট করুন (ঐচ্ছিক)"
             reportPickSubtext.setTextColor(colorTextMuted)
             reportPickRow.background = roundedBgStroke(Color.parseColor("#F8FBFA"), colorFieldBorder, 12f, 1)
-            reportClearBtn.visibility = View.GONE
+        } else {
+            reportPickText.text = "আরও ডকুমেন্ট যোগ করুন"
+            reportPickSubtext.text = "${selectedReports.size}টি ফাইল সিলেক্ট করা হয়েছে"
+            reportPickSubtext.setTextColor(colorPrimary)
+            reportPickRow.background = roundedBgStroke(Color.parseColor("#E4F3F1"), colorPrimary, 12f, 1)
+        }
+
+        reportListContainer.removeAllViews()
+        selectedReports.forEachIndexed { index, pair ->
+            reportListContainer.addView(reportFileRow(pair.second, index))
+            if (index != selectedReports.lastIndex) reportListContainer.addView(space(dp(6)))
+        }
+    }
+
+    private fun reportFileRow(name: String, index: Int): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedBgStroke(colorCard, colorFieldBorder, 10f, 1)
+            setPadding(dp(10), dp(9), dp(10), dp(9))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
+            addView(ImageView(this@BookAppointmentActivity).apply {
+                setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.DOCUMENT, colorPrimary, dp(13)))
+                background = roundedBg(Color.parseColor("#E4F3F1"), 7f)
+                layoutParams = LinearLayout.LayoutParams(dp(26), dp(26))
+                setPadding(dp(6), dp(6), dp(6), dp(6))
+            })
+            addView(text(name, 11.5f, Typeface.NORMAL, colorDark, Gravity.START).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            })
+            addView(ImageView(this@BookAppointmentActivity).apply {
+                setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.TRASH, Color.parseColor("#DC2626"), dp(13)))
+                layoutParams = LinearLayout.LayoutParams(dp(26), dp(26))
+                setPadding(dp(6), dp(6), dp(6), dp(6))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    if (index < selectedReports.size) selectedReports.removeAt(index)
+                    updateReportPickUi()
+                }
+            })
         }
     }
 
@@ -702,7 +659,7 @@ class BookAppointmentActivity : AppCompatActivity() {
         null
     }
 
-    /** সিলেক্ট করা রিপোর্ট ফাইলটা পড়ে Supabase Storage-এ আপলোড করে, পাবলিক URL রিটার্ন করে */
+    /** সিলেক্ট করা একটা ফাইল পড়ে Supabase Storage-এ আপলোড করে, পাবলিক URL রিটার্ন করে */
     private suspend fun uploadSelectedReport(uri: Uri, name: String): Result<String> = withContext(Dispatchers.IO) {
         try {
             val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -711,6 +668,103 @@ class BookAppointmentActivity : AppCompatActivity() {
             SupabaseClient.uploadReportFile(name.ifEmpty { "report" }, mime, bytes)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    private fun buildPaymentOptions() {
+        paymentRow.removeAllViews()
+        paymentRowViews.clear()
+
+        paymentOptions.forEach { option ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = roundedBgStroke(colorCard, colorFieldBorder, 16f, 1)
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(0, dp(6), 0, dp(6))
+                }
+                elevation = dp(1).toFloat()
+                outlineProvider = roundOutline(16)
+                clipToOutline = true
+                tag = option.label
+            }
+
+            // bKash/Nagad লোগো — CircularImageView দিয়ে, সবসময় নিখুঁত গোলাকার (প্লেসহোল্ডার অবস্থায়ও, লোড হওয়ার পরও)
+            val logoView = CircularImageView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(52), dp(52))
+                circleBackgroundColor = Color.WHITE
+                borderColor = Color.parseColor("#E7ECEA")
+                borderWidthDp = 1f
+                elevation = dp(1).toFloat()
+            }
+            loadNetworkImage(option.logoUrl, logoView)
+
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(14) }
+            }
+            col.addView(text(option.label, 14f, Typeface.BOLD, colorDark, Gravity.START))
+            col.addView(text(option.subtitle, 10.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+                setPadding(0, dp(2), 0, 0)
+            })
+
+            val checkDrawable = HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.CHECK, Color.parseColor("#D1D5DB"), dp(20))
+            val checkIcon = ImageView(this).apply {
+                setImageDrawable(checkDrawable)
+                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22))
+            }
+
+            row.addView(logoView)
+            row.addView(col)
+            row.addView(checkIcon)
+
+            row.setOnClickListener {
+                selectedPayment = option.label
+                paymentRowViews.forEach { refs ->
+                    val selected = refs.option.label == option.label
+                    refs.row.background = if (selected)
+                        roundedBgStroke(Color.argb(20, Color.red(refs.option.brandColor), Color.green(refs.option.brandColor), Color.blue(refs.option.brandColor)), refs.option.brandColor, 16f, 2)
+                    else
+                        roundedBgStroke(colorCard, colorFieldBorder, 16f, 1)
+                    refs.check.updateTint(if (selected) refs.option.brandColor else Color.parseColor("#D1D5DB"))
+                    refs.logo.borderColor = if (selected) refs.option.brandColor else Color.parseColor("#E7ECEA")
+                    refs.logo.borderWidthDp = if (selected) 2f else 1f
+                }
+                updateManualPayCard(option)
+            }
+            paymentRow.addView(row)
+            paymentRowViews.add(PaymentRowRefs(row, option, checkDrawable, logoView))
+        }
+    }
+
+    /** bKash/Nagad যেটাই সিলেক্ট করা হোক, মার্চেন্ট নাম্বার + লোগো + TrxID ইনপুট দেখায় */
+    private fun updateManualPayCard(option: PaymentOption) {
+        manualPayNumberText.text = option.merchantNumber
+        manualPayInstructionText.text =
+            "${option.label}-এ (Send Money) ৳$appointmentFee পাঠিয়ে Transaction ID টি নিচে লিখুন"
+        manualPayLogoView.borderColor = option.brandColor
+        loadNetworkImage(option.logoUrl, manualPayLogoView)
+        manualPayCard.visibility = View.VISIBLE
+    }
+
+    /** নেটওয়ার্ক থেকে বিকাশ/নগদ লোগো ইমেজ লোড করে CircularImageView-তে বসায় (কোনো তৃতীয়-পক্ষ ইমেজ লাইব্রেরি ছাড়াই) */
+    private fun loadNetworkImage(url: String, target: CircularImageView) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val connection = URL(url).openConnection()
+                connection.connectTimeout = 8000
+                connection.readTimeout = 8000
+                connection.doInput = true
+                connection.connect()
+                val bitmap = BitmapFactory.decodeStream(connection.getInputStream())
+                withContext(Dispatchers.Main) {
+                    if (bitmap != null) target.setImageBitmap(bitmap)
+                }
+            } catch (e: Exception) {
+                // ইন্টারনেট না থাকলে বা লোড ব্যর্থ হলে চুপচাপ স্কিপ করা হয়, লেবেল টেক্সট দিয়েই বোঝা যাবে কোনটা কী
+            }
         }
     }
 
@@ -734,26 +788,26 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
 
         confirmBtn.isEnabled = false
-        val reportUri = selectedReportUri
-        val reportName = selectedReportName
-        if (reportUri != null) {
-            Toast.makeText(this, "রিপোর্ট আপলোড হচ্ছে...", Toast.LENGTH_SHORT).show()
+        val reportsToUpload = selectedReports.toList()
+        if (reportsToUpload.isNotEmpty()) {
+            Toast.makeText(this, "রিপোর্ট আপলোড হচ্ছে (${reportsToUpload.size}টি ফাইল)...", Toast.LENGTH_SHORT).show()
         }
         lifecycleScope.launch {
-            var reportUrl = ""
-            if (reportUri != null) {
-                val uploadResult = uploadSelectedReport(reportUri, reportName)
+            val uploadedUrls = mutableListOf<String>()
+            for ((uri, fileName) in reportsToUpload) {
+                val uploadResult = uploadSelectedReport(uri, fileName)
                 if (uploadResult.isFailure) {
                     confirmBtn.isEnabled = true
                     Toast.makeText(
                         this@BookAppointmentActivity,
-                        "রিপোর্ট আপলোড ব্যর্থ: ${uploadResult.exceptionOrNull()?.message ?: "আবার চেষ্টা করুন"}",
+                        "\"$fileName\" আপলোড ব্যর্থ: ${uploadResult.exceptionOrNull()?.message ?: "আবার চেষ্টা করুন"}",
                         Toast.LENGTH_SHORT
                     ).show()
                     return@launch
                 }
-                reportUrl = uploadResult.getOrNull() ?: ""
+                uploadResult.getOrNull()?.let { uploadedUrls.add(it) }
             }
+
             val result = SupabaseClient.createAppointment(
                 patientId = patientId,
                 patientName = name,
@@ -765,7 +819,7 @@ class BookAppointmentActivity : AppCompatActivity() {
                 fee = appointmentFee,
                 transactionId = trxId,
                 paymentStatus = "pending_verification",
-                reportUrl = reportUrl
+                reportUrl = uploadedUrls.joinToString(",")
             )
             result.onSuccess {
                 Toast.makeText(
@@ -841,19 +895,6 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
     }
 
-    /** সম্পূর্ণ গোলাকার (circle) outline — bKash/Nagad লোগো ব্যাজের জন্য */
-    private fun circleOutline(): ViewOutlineProvider = object : ViewOutlineProvider() {
-        override fun getOutline(view: View, outline: Outline) {
-            outline.setOval(0, 0, view.width, view.height)
-        }
-    }
-
-    /** সম্পূর্ণ গোলাকার (circle) background drawable */
-    private fun circleBg(color: Int): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
-        setColor(color)
-    }
-
     private fun roundedBg(color: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = radiusDp * resources.displayMetrics.density
@@ -865,5 +906,78 @@ class BookAppointmentActivity : AppCompatActivity() {
         cornerRadius = radiusDp * resources.displayMetrics.density
         setColor(fillColor)
         setStroke(dp(strokeWidthDp), strokeColor)
+    }
+
+    // ------------------------------------------------------------------
+    // CircularImageView — bKash/Nagad লোগোর জন্য সবসময় নিখুঁত গোলাকার ইমেজ আঁকে
+    // (BitmapShader দিয়ে ক্যানভাসে সরাসরি বৃত্তে ক্লিপ করা হয়, তাই placeholder সাদা
+    // বৃত্ত এবং নেটওয়ার্ক থেকে লোড হওয়া আসল লোগো — দুই অবস্থাতেই শেইপ গোল থাকে)
+    // ------------------------------------------------------------------
+    class CircularImageView(context: Context) : View(context) {
+
+        private var sourceBitmap: Bitmap? = null
+        private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+
+        var circleBackgroundColor: Int = Color.WHITE
+            set(value) { field = value; invalidate() }
+
+        var borderColor: Int = Color.TRANSPARENT
+            set(value) { field = value; invalidate() }
+
+        var borderWidthDp: Float = 0f
+            set(value) { field = value; invalidate() }
+
+        init {
+            setLayerType(LAYER_TYPE_SOFTWARE, null)
+        }
+
+        fun setImageBitmap(bitmap: Bitmap?) {
+            sourceBitmap = bitmap
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+
+            val borderW = borderWidthDp * resources.displayMetrics.density
+            val radius = (minOf(w, h) - borderW) / 2f
+            val cx = w / 2f
+            val cy = h / 2f
+
+            bgPaint.color = circleBackgroundColor
+            canvas.drawCircle(cx, cy, radius, bgPaint)
+
+            val bmp = sourceBitmap
+            if (bmp != null && bmp.width > 0 && bmp.height > 0) {
+                val shader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                val matrix = Matrix()
+                val scale: Float
+                var dx = 0f
+                var dy = 0f
+                if (bmp.width.toFloat() * (radius * 2f) > (radius * 2f) * bmp.height.toFloat()) {
+                    scale = (radius * 2f) / bmp.height.toFloat()
+                    dx = ((radius * 2f) - bmp.width.toFloat() * scale) * 0.5f
+                } else {
+                    scale = (radius * 2f) / bmp.width.toFloat()
+                    dy = ((radius * 2f) - bmp.height.toFloat() * scale) * 0.5f
+                }
+                matrix.setScale(scale, scale)
+                matrix.postTranslate(dx + cx - radius, dy + cy - radius)
+                shader.setLocalMatrix(matrix)
+                imagePaint.shader = shader
+                canvas.drawCircle(cx, cy, radius, imagePaint)
+            }
+
+            if (borderW > 0f && borderColor != Color.TRANSPARENT) {
+                borderPaint.color = borderColor
+                borderPaint.strokeWidth = borderW
+                canvas.drawCircle(cx, cy, radius - borderW / 2f, borderPaint)
+            }
+        }
     }
 }
