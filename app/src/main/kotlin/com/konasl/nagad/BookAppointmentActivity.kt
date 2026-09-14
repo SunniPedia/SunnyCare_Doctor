@@ -252,9 +252,13 @@ class BookAppointmentActivity : AppCompatActivity() {
             }
             addView(dateRow)
         }
-        buildDateOptions()
 
         // ---------------- SECTION: TIME ----------------
+        // FIX: timeGrid/timeLoadingText/customTimeBtn এখন buildDateOptions() কল করার
+        // *আগে* initialize করা হচ্ছে, কারণ buildDateOptions() প্রথম ডেট চিপ অটো-সিলেক্ট
+        // (performClick) করে, যেটা fetchBookedTimesAndRefresh -> highlightSelectedTime
+        // এর মাধ্যমে সরাসরি timeGrid অ্যাক্সেস করে। আগে এই অর্ডারটা উল্টো থাকায়
+        // timeGrid lateinit-uninitialized অবস্থায় অ্যাক্সেস হয়ে ক্র্যাশ করত।
         val timeSection = sectionTitle(HomeActivity.VectorIconDrawable.IconType.CLOCK, "সময় নির্বাচন করুন")
         timeLoadingText = text("তারিখের জন্য খালি সময় যাচাই করা হচ্ছে...", 11f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -278,6 +282,10 @@ class BookAppointmentActivity : AppCompatActivity() {
             }
             setOnClickListener { pickCustomTime() }
         }
+
+        // timeGrid প্রস্তুত হওয়ার পরই এখন buildDateOptions() কল হচ্ছে, যাতে প্রথম
+        // তারিখ অটো-সিলেক্ট হওয়ার সময় (chip.performClick()) কোনো ক্র্যাশ না হয়।
+        buildDateOptions()
 
         // ---------------- SECTION: PATIENT INFO ----------------
         val infoSection = sectionTitle(HomeActivity.VectorIconDrawable.IconType.PERSON, "রোগীর তথ্য")
