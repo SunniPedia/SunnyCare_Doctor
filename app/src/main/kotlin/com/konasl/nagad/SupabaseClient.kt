@@ -78,6 +78,10 @@ import java.util.concurrent.TimeUnit
  * -- যদি appointments টেবিল আগে থেকেই থাকে, শুধু এই লাইনটা চালান:
  * -- alter table appointments add column if not exists report_url text;
  *
+ * -- নির্দিষ্ট তারিখে বুক হওয়া সময়গুলো দ্রুত খুঁজে বের করার জন্য (BookAppointmentActivity-এ
+ * -- ইতিমধ্যে বুক করা স্লট হাইড করতে ব্যবহৃত হয়) — ঐচ্ছিক কিন্তু বড় ডেটায় পারফরম্যান্সের জন্য ভালো:
+ * -- create index if not exists idx_appointments_date on appointments (preferred_date);
+ *
  * alter table otp_codes disable row level security;
  * alter table patients disable row level security;
  * alter table appointments disable row level security;
@@ -481,6 +485,24 @@ object SupabaseClient {
     suspend fun getAppointments(patientId: String): Result<JSONArray> = try {
         val rows = get("appointments?patient_id=eq.$patientId&order=created_at.desc")
         Result.success(rows)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * নির্দিষ্ট একটা তারিখে (yyyy-MM-dd) ইতিমধ্যে বুক হয়ে থাকা সময়গুলোর (preferred_time) তালিকা আনে।
+     * 'cancelled' স্ট্যাটাসের অ্যাপয়েন্টমেন্ট বাদ দেওয়া হয় (বাতিল হয়ে গেলে সেই স্লট আবার খালি হয়ে যায়),
+     * বাকি সব (pending/confirmed/completed) স্ট্যাটাসের সময়গুলো বুক করা ধরা হয়।
+     * BookAppointmentActivity এই তালিকা ব্যবহার করে টাইম-স্লট গ্রিড থেকে বুক করা সময়গুলো হাইড করে।
+     */
+    suspend fun getBookedTimes(date: String): Result<List<String>> = try {
+        val rows = get("appointments?preferred_date=eq.$date&status=neq.cancelled&select=preferred_time")
+        val times = mutableListOf<String>()
+        for (i in 0 until rows.length()) {
+            val t = rows.getJSONObject(i).optString("preferred_time", "")
+            if (t.isNotEmpty()) times.add(t)
+        }
+        Result.success(times)
     } catch (e: Exception) {
         Result.failure(e)
     }
