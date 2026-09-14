@@ -69,7 +69,9 @@ import java.util.concurrent.TimeUnit
  *   fee integer default 800,
  *   transaction_id text,
  *   payment_status text default 'not_applicable', -- not_applicable / pending_verification / verified / rejected
- *   report_url text, -- রোগীর আপলোড করা আগের টেস্ট রিপোর্টের Supabase Storage পাবলিক URL (ঐচ্ছিক)
+ *   report_url text, -- রোগীর আপলোড করা আগের টেস্ট রিপোর্টের Supabase Storage পাবলিক URL(গুলো)।
+ *                    -- একাধিক ফাইল আপলোড করলে কমা (,) দিয়ে একাধিক URL এই একই কলামে জমা হয়
+ *                    -- (ফাঁকা রাখলে বুঝতে হবে রোগী কোনো রিপোর্ট আপলোড করেননি)
  *   created_at timestamptz default now()
  * );
  *
