@@ -20,6 +20,7 @@ class MyApp : Application() {
     }
 
     override fun onCreate() {
+        CrashHandler.install(this)
         super.onCreate()
         loadFont()
 
