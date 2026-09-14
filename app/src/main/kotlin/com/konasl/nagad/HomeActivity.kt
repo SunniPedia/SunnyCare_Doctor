@@ -41,14 +41,12 @@ class HomeActivity : AppCompatActivity() {
     private val colorCard = Color.WHITE
     private val colorFieldBorder = Color.parseColor("#E7ECEA")
 
-    // ডাক্তারের তথ্য
-    private val doctorPhoneForCall = "+8801632336631" // TODO: বসান
-    private val doctorSerialPhone = "01660029028" // সিরিয়ালের জন্য
+    private val doctorPhoneForCall = "+8801632336631"
+    private val doctorSerialPhone = "01660029028"
 
     private lateinit var appointmentsContainer: LinearLayout
     private lateinit var greetingText: TextView
 
-    // ---------------- ন্যাভিগেশন ----------------
     private enum class Tab { HOME, APPOINTMENTS, PROFILE }
     private var currentTab = Tab.HOME
 
@@ -68,7 +66,6 @@ class HomeActivity : AppCompatActivity() {
     private lateinit var navAppointments: NavItemViews
     private lateinit var navProfile: NavItemViews
 
-    // ---------------- প্রোফাইল প্যানেল ----------------
     private lateinit var profileAvatar: PatientAvatarView
     private lateinit var profileNameText: TextView
     private lateinit var profilePhoneText: TextView
@@ -91,7 +88,6 @@ class HomeActivity : AppCompatActivity() {
             )
         }
 
-        // ---------------- HOME PANEL ----------------
         val homeScroll = NestedScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -101,7 +97,6 @@ class HomeActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(100))
         }
 
-        // ---------------- HEADER (গ্রেডিয়েন্ট + গ্লো ডেকোরেশন) ----------------
         val headerContainer = FrameLayout(this).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
@@ -148,17 +143,13 @@ class HomeActivity : AppCompatActivity() {
         header.addView(logoutBtn)
         headerContainer.addView(header)
 
-        // ---------------- DOCTOR CARD (গ্রেডিয়েন্ট বর্ডার সহ) ----------------
         val doctorCard = buildDoctorCard()
-
-        // ---------------- QUICK ACTIONS (নতুন ডিজাইন: বুক অ্যাপয়েন্টমেন্ট হিরো কার্ড + দুটি সাইড কার্ড) ----------------
         val quickActionsSection = buildQuickActionsSection()
 
         homeContent.addView(headerContainer)
         homeContent.addView(doctorCard)
         homeContent.addView(quickActionsSection)
 
-        // ---------------- ADMIN-ONLY: পেমেন্ট ভেরিফিকেশন ----------------
         if (SupabaseClient.isAdmin(this)) {
             val adminRow = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -175,7 +166,6 @@ class HomeActivity : AppCompatActivity() {
         homeScroll.addView(homeContent)
         homePanel = homeScroll
 
-        // ---------------- APPOINTMENTS PANEL ----------------
         val appointmentsScroll = NestedScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -195,7 +185,6 @@ class HomeActivity : AppCompatActivity() {
         appointmentsScroll.addView(appointmentsContent)
         appointmentsPanel = appointmentsScroll
 
-        // ---------------- PROFILE PANEL (এই একটিভিটির মধ্যেই) ----------------
         val profileScroll = NestedScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -204,7 +193,6 @@ class HomeActivity : AppCompatActivity() {
         profilePanel = profileScroll
         profileScroll.addView(buildProfilePanel())
 
-        // ---------------- PANELS HOST ----------------
         val panelsHost = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         }
@@ -212,7 +200,6 @@ class HomeActivity : AppCompatActivity() {
         panelsHost.addView(appointmentsPanel)
         panelsHost.addView(profilePanel)
 
-        // ---------------- BOTTOM NAVIGATION BAR ----------------
         val bottomNav = buildBottomNav()
 
         root.addView(panelsHost)
@@ -229,9 +216,6 @@ class HomeActivity : AppCompatActivity() {
         loadAppointments()
     }
 
-    // ------------------------------------------------------------------
-    // ট্যাব সুইচিং
-    // ------------------------------------------------------------------
     private fun switchTab(tab: Tab) {
         currentTab = tab
         homePanel.visibility = if (tab == Tab.HOME) View.VISIBLE else View.GONE
@@ -345,9 +329,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------------------------------
-    // ডাক্তারের কার্ড - গ্রেডিয়েন্ট বর্ডার সহ প্রিমিয়াম ডিজাইন
-    // ------------------------------------------------------------------
     private fun buildDoctorCard(): View {
         val borderWrap = FrameLayout(this).apply {
             background = GradientDrawable(
@@ -373,7 +354,6 @@ class HomeActivity : AppCompatActivity() {
             setPadding(dp(18), dp(20), dp(18), dp(18))
         }
 
-        // নাম + অ্যাভাটার + এভেইলেবিলিটি স্ট্যাটাস
         val topRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.TOP
@@ -410,7 +390,6 @@ class HomeActivity : AppCompatActivity() {
         topRow.addView(doctorTextCol)
         inner.addView(topRow)
 
-        // রেটিং রো (ক্যানভাস স্টার আইকন)
         val ratingRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -427,7 +406,6 @@ class HomeActivity : AppCompatActivity() {
         ratingRow.addView(text(" ৪.৮", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START))
         inner.addView(ratingRow)
 
-        // ডিগ্রি
         inner.addView(
             text(
                 "এম.বি.বি.এস (সিইউ), ডি.এম.ইউ (আল্ট্রা), পিজিটি (পিএমসি),\nএম.সি.জি.পি (মেডিসিন ও শিশু), সি.সি.ডি (ডায়াবেটিস-বারডেম, ঢাকা)",
@@ -438,7 +416,6 @@ class HomeActivity : AppCompatActivity() {
             }
         )
 
-        // ভেরিফাইড ব্যাজ (ক্যানভাস চেক আইকন)
         inner.addView(
             text("বি.এম.ডি.সি নং – এ-১৭৪৬৩ • Verified", 10.5f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
                 background = roundedBg(Color.parseColor("#E4F3F1"), 30f)
@@ -453,13 +430,11 @@ class HomeActivity : AppCompatActivity() {
             }
         )
 
-        // পাতলা বিভাজক
         inner.addView(View(this).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(16) }
             setBackgroundColor(colorFieldBorder)
         })
 
-        // বিশেষজ্ঞতা - স্ক্রলযোগ্য চিপস
         val expertise = listOf("মেডিসিন-শিশু", "ডায়াবেটিস", "উচ্চ রক্তচাপ", "নাক-কান-গলা", "বাত ব্যাথা", "এলার্জি", "শ্বাসকষ্ট", "চর্ম ও যৌনরোগ")
         val chipsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         expertise.forEach { item ->
@@ -480,20 +455,17 @@ class HomeActivity : AppCompatActivity() {
         }
         inner.addView(chipsScroll)
 
-        // পাতলা বিভাজক
         inner.addView(View(this).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(16) }
             setBackgroundColor(colorFieldBorder)
         })
 
-        // চেম্বার, সিরিয়াল ও সময়সূচি তথ্য বক্স
         inner.addView(buildChamberInfoBox())
 
         borderWrap.addView(inner)
         return borderWrap
     }
 
-    /** চেম্বারের ঠিকানা, সিরিয়াল নাম্বার ও রোগী দেখার সময় - প্রিমিয়াম ইনফো বক্স */
     private fun buildChamberInfoBox(): LinearLayout {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -570,11 +542,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------------------------------
-    // কুইক অ্যাকশন সেকশন - নতুন ডিজাইন:
-    // বাম পাশে বড় "অ্যাপয়েন্টমেন্ট বুক করুন" হিরো কার্ড (ফি সহ),
-    // ডান পাশে দুটি ছোট কার্ড: "আমার অ্যাপয়েন্টমেন্ট" ও "জরুরি যোগাযোগ"
-    // ------------------------------------------------------------------
     private fun buildQuickActionsSection(): LinearLayout {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -582,17 +549,14 @@ class HomeActivity : AppCompatActivity() {
                 setMargins(dp(14), dp(18), dp(14), 0)
             }
         }
-
         row.addView(buildBookAppointmentHeroCard())
         row.addView(space(dp(12)).apply {
             layoutParams = LinearLayout.LayoutParams(dp(12), ViewGroup.LayoutParams.MATCH_PARENT)
         })
         row.addView(buildSideActionsColumn())
-
         return row
     }
 
-    /** বড় হিরো কার্ড: "অ্যাপয়েন্টমেন্ট বুক করুন" + ফি */
     private fun buildBookAppointmentHeroCard(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -627,7 +591,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /** ডান পাশের কলাম: দুটি ছোট কার্ড */
     private fun buildSideActionsColumn(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -684,7 +647,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /** অ্যাডমিন-অনলি পূর্ণ-প্রস্থ অ্যাকশন কার্ড */
     private fun adminActionCard(iconType: VectorIconDrawable.IconType, label: String, color: Int, onClick: () -> Unit): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -728,9 +690,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------------------------------
-    // প্রোফাইল প্যানেল - এই একটিভিটির মধ্যেই সম্পূর্ণ প্রোফাইল দেখা যায়
-    // ------------------------------------------------------------------
     private fun buildProfilePanel(): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -857,7 +816,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------------------------------
     private fun loadAppointments() {
         val patientId = SupabaseClient.getPatientId(this) ?: return
         appointmentsContainer.removeAllViews()
@@ -928,7 +886,6 @@ class HomeActivity : AppCompatActivity() {
         return row
     }
 
-    // ------------------------------------------------------------------
     private fun callDoctor() {
         val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$doctorPhoneForCall"))
         startActivity(intent)
@@ -973,12 +930,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * প্রকৃতপক্ষে Supabase-এ কল করে অ্যাকাউন্ট ডিলিট করে।
-     * NOTE: SupabaseClient.kt-এ একটি deleteAccount(patientId: String): Result<Unit>
-     * ফাংশন যুক্ত করতে হবে — এখনো এটি নেই বলেই আগে ডিলিট আসলে হচ্ছিল না,
-     * শুধু টোস্ট দেখিয়ে লগ আউট করে দিচ্ছিল।
-     */
     private fun performAccountDeletion() {
         val patientId = SupabaseClient.getPatientId(this)
         if (patientId == null) {
@@ -999,10 +950,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * অ্যাপের নিজস্ব ডিজাইন-ভাষায় তৈরি কাস্টম কনফার্মেশন ডায়ালগ (সিস্টেম ডিফল্ট AlertDialog নয়)।
-     * এই একটিভিটির সব কনফার্মেশন-ডায়ালগ এই একটি ফাংশন দিয়েই বানানো হয়।
-     */
     private fun showCustomConfirmDialog(
         iconType: VectorIconDrawable.IconType,
         iconBgColor: Int,
@@ -1087,7 +1034,6 @@ class HomeActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /** প্রোফাইল প্যানেলের অ্যাকশন বাটন (লগ আউট / ডিলিট প্রোফাইল) - ভেক্টর আইকন সহ */
     private fun profileActionButton(
         label: String,
         iconType: VectorIconDrawable.IconType,
@@ -1115,9 +1061,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------------------------------
-    // UI helpers
-    // ------------------------------------------------------------------
     private fun text(t: String, sizeSp: Float, style: Int, color: Int, gravity: Int): TextView = TextView(this).apply {
         text = t; textSize = sizeSp; setTypeface(null, style); setTextColor(color); this.gravity = gravity
     }
@@ -1145,10 +1088,7 @@ class HomeActivity : AppCompatActivity() {
         return Color.rgb(r, g, b)
     }
 
-    // ------------------------------------------------------------------
-    // ক্যানভাসে আঁকা ভেক্টর আইকন (কোনো ইমোজি নেই) - সব কুইক অ্যাকশন,
-    // বটম ন্যাভ, ব্যাজ, ও হেডারের আইকনে ব্যবহৃত হয়
-    // ------------------------------------------------------------------
+    // --- UPDATED ICON PACK ---
     class VectorIconDrawable(
         private val type: IconType,
         initialColor: Int,
@@ -1184,7 +1124,7 @@ class HomeActivity : AppCompatActivity() {
             strokePaint.strokeWidth = w * 0.09f
             canvas.save()
             canvas.translate(b.left.toFloat(), b.top.toFloat())
-            val pad = w * 0.1f
+            val pad = w * 0.08f
             canvas.translate(pad, pad)
             val s = w - pad * 2
             when (type) {
@@ -1221,19 +1161,34 @@ class HomeActivity : AppCompatActivity() {
         @Deprecated("Deprecated in Java")
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
+        // *** সুন্দর করা Home Icon ***
         private fun drawHome(canvas: Canvas, s: Float) {
-            val roof = Path().apply {
-                moveTo(s * 0.5f, 0f)
-                lineTo(s * 0.98f, s * 0.42f)
-                lineTo(s * 0.80f, s * 0.42f)
-                lineTo(s * 0.80f, s * 0.40f)
-                lineTo(s * 0.20f, s * 0.40f)
-                lineTo(s * 0.20f, s * 0.42f)
-                lineTo(s * 0.02f, s * 0.42f)
+            // Premium outlined home with soft rounded roof
+            val strokeW = s * 0.085f
+            strokePaint.strokeWidth = strokeW
+            strokePaint.style = Paint.Style.STROKE
+
+            // Roof path - slightly rounded
+            val roofPath = Path().apply {
+                moveTo(s * 0.50f, s * 0.05f)
+                lineTo(s * 0.92f, s * 0.40f)
+                lineTo(s * 0.78f, s * 0.40f)
+                lineTo(s * 0.78f, s * 0.90f)
+                lineTo(s * 0.22f, s * 0.90f)
+                lineTo(s * 0.22f, s * 0.40f)
+                lineTo(s * 0.08f, s * 0.40f)
                 close()
             }
-            canvas.drawPath(roof, fillPaint)
-            canvas.drawRoundRect(s * 0.20f, s * 0.42f, s * 0.80f, s * 0.98f, s * 0.04f, s * 0.04f, fillPaint)
+            canvas.drawPath(roofPath, strokePaint)
+
+            // Inner door - filled for active state look
+            val doorRect = RectF(s * 0.38f, s * 0.58f, s * 0.62f, s * 0.90f)
+            canvas.drawRoundRect(doorRect, s * 0.06f, s * 0.06f, fillPaint)
+
+            // Door cut - make it feel like inset (subtract with clear)
+            // For inactive (muted) it will be same color, so we draw a small white dot as handle only when filled
+            // Add subtle base line for depth
+            canvas.drawLine(s * 0.22f, s * 0.90f, s * 0.78f, s * 0.90f, strokePaint)
         }
 
         private fun drawCalendar(canvas: Canvas, s: Float) {
@@ -1251,11 +1206,11 @@ class HomeActivity : AppCompatActivity() {
         private fun drawPhone(canvas: Canvas, s: Float) {
             val path = Path()
             path.moveTo(s * 0.08f, s * 0.20f)
-            path.cubicTo(s * 0.05f, s * 0.05f, s * 0.22f, -s * 0.02f, s * 0.30f, s * 0.14f)
-            path.cubicTo(s * 0.36f, s * 0.26f, s * 0.30f, s * 0.30f, s * 0.26f, s * 0.36f)
+            path.cubicTo(s * 0.05f, s * 0.22f, -s * 0.02f, s * 0.30f, s * 0.14f)
+            path.cubicTo(s * 0.36f, s * 0.26f, s * 0.30f, s * 0.26f, s * 0.36f)
             path.cubicTo(s * 0.32f, s * 0.52f, s * 0.46f, s * 0.66f, s * 0.62f, s * 0.72f)
-            path.cubicTo(s * 0.68f, s * 0.68f, s * 0.72f, s * 0.62f, s * 0.84f, s * 0.68f)
-            path.cubicTo(s * 1.0f, s * 0.76f, s * 0.94f, s * 0.94f, s * 0.80f, s * 0.96f)
+            path.cubicTo(s * 0.68f, s * 0.72f, s * 0.62f, s * 0.84f, s * 0.68f)
+            path.cubicTo(s * 1.0f, s * 0.76f, s * 0.94f, s * 0.80f, s * 0.96f)
             path.cubicTo(s * 0.48f, s * 1.0f, s * 0.02f, s * 0.54f, s * 0.08f, s * 0.20f)
             path.close()
             canvas.drawPath(path, fillPaint)
@@ -1365,7 +1320,6 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawPath(arrow, strokePaint)
         }
 
-        /** নথি/লিস্ট আইকন - "আমার অ্যাপয়েন্টমেন্ট" এর জন্য */
         private fun drawDocument(canvas: Canvas, s: Float) {
             canvas.drawRoundRect(s * 0.08f, 0f, s * 0.92f, s, s * 0.10f, s * 0.10f, strokePaint)
             canvas.drawLine(s * 0.24f, s * 0.30f, s * 0.76f, s * 0.30f, strokePaint)
@@ -1373,21 +1327,16 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawLine(s * 0.24f, s * 0.74f, s * 0.58f, s * 0.74f, strokePaint)
         }
 
-        /** ট্র্যাশ/ডিলিট আইকন - "ডিলিট প্রোফাইল" এর জন্য */
         private fun drawTrash(canvas: Canvas, s: Float) {
-            // ঢাকনা
             canvas.drawLine(s * 0.16f, s * 0.22f, s * 0.84f, s * 0.22f, strokePaint)
             canvas.drawLine(s * 0.38f, s * 0.22f, s * 0.42f, s * 0.06f, strokePaint)
             canvas.drawLine(s * 0.42f, s * 0.06f, s * 0.58f, s * 0.06f, strokePaint)
             canvas.drawLine(s * 0.58f, s * 0.06f, s * 0.62f, s * 0.22f, strokePaint)
-            // বডি
-            canvas.drawRoundRect(s * 0.22f, s * 0.22f, s * 0.78f, s * 0.96f, s * 0.05f, s * 0.05f, strokePaint)
-            // ভেতরের দাগ
+            canvas.drawRoundRect(s * 0.22f, s * 0.78f, s * 0.96f, s * 0.05f, s * 0.05f, strokePaint)
             canvas.drawLine(s * 0.40f, s * 0.36f, s * 0.40f, s * 0.82f, strokePaint)
             canvas.drawLine(s * 0.60f, s * 0.36f, s * 0.60f, s * 0.82f, strokePaint)
         }
 
-        /** লোকেশন/পিন আইকন - "চেম্বার" ঠিকানার জন্য */
         private fun drawLocation(canvas: Canvas, s: Float) {
             val path = Path()
             path.moveTo(s * 0.5f, s * 0.98f)
@@ -1400,11 +1349,10 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawCircle(s * 0.5f, s * 0.34f, s * 0.12f, fillPaint)
         }
 
-        /** ঘড়ি আইকন - "রোগী দেখার সময়" এর জন্য */
         private fun drawClock(canvas: Canvas, s: Float) {
             canvas.drawCircle(s / 2, s / 2, s / 2 - strokePaint.strokeWidth / 2, strokePaint)
-            canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.5f, s * 0.22f, strokePaint)
-            canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.70f, s * 0.58f, strokePaint)
+            canvas.drawLine(s * 0.5f, s * 0.22f, strokePaint)
+            canvas.drawLine(s * 0.5f, s * 0.70f, s * 0.58f, strokePaint)
         }
     }
 
@@ -1431,7 +1379,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /** রোগীর প্রোফাইল অ্যাভাটার - নামের প্রথম অক্ষর দিয়ে তৈরি (কোনো ছবি ছাড়া) */
     class PatientAvatarView(context: Context) : View(context) {
         var initial: String = "র"
             set(value) { field = value; invalidate() }
