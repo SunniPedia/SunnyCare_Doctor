@@ -11,6 +11,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -171,6 +172,17 @@ object SupabaseClient {
     // ---------------------------------------------------------------------
     // LOW LEVEL REST HELPERS
     // ---------------------------------------------------------------------
+
+    /**
+     * PostgREST-এ কুয়েরি-স্ট্রিং ভ্যালু হিসেবে বসানোর আগে যেকোনো ইউজার-ইনপুট (phone, code,
+     * date, id ইত্যাদি) এখান দিয়ে পাস করানো হয়। কারণ, ফোন নাম্বারের মতো ভ্যালুতে থাকা "+"
+     * চিহ্ন এনকোড না করে সরাসরি URL-এ বসালে অনেক HTTP লাইব্রেরি/সার্ভার সেটাকে স্পেস হিসেবে
+     * ডিকোড করে ফেলতে পারে (application/x-www-form-urlencoded কনভেনশন অনুযায়ী), ফলে
+     * "+8801..." ধরনের নাম্বার দিয়ে OTP verify বা patient lookup ইন্টারমিটেন্টলি ফেইল করতে
+     * পারে। URLEncoder ব্যবহার করলে "+" ঠিকভাবে "%2B" এ এনকোড হয়, তাই এই সমস্যাটা হয় না।
+     */
+    private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
+
     private fun baseRequest(path: String): Request.Builder {
         return Request.Builder()
             .url("$SUPABASE_URL/rest/v1/$path")
@@ -296,7 +308,7 @@ object SupabaseClient {
     /** ইউজারের দেওয়া কোড এই ফোন নাম্বারের সাথে assigned অবস্থায় ও মেয়াদের মধ্যে মিলছে কিনা চেক করে */
     suspend fun verifyOtp(phone: String, code: String): Result<Boolean> = try {
         val rows = get(
-            "otp_codes?phone=eq.$phone&code=eq.$code&status=eq.assigned&order=id.desc&limit=1"
+            "otp_codes?phone=eq.${enc(phone)}&code=eq.${enc(code)}&status=eq.assigned&order=id.desc&limit=1"
         )
         if (rows.length() == 0) {
             Result.success(false)
@@ -323,7 +335,7 @@ object SupabaseClient {
 
     /** ফোন নাম্বার আগে থেকে রেজিস্টার্ড কিনা চেক করে; থাকলে patient JSONObject রিটার্ন করে */
     suspend fun findPatientByPhone(phone: String): Result<JSONObject?> = try {
-        val rows = get("patients?phone=eq.$phone&limit=1")
+        val rows = get("patients?phone=eq.${enc(phone)}&limit=1")
         Result.success(if (rows.length() > 0) rows.getJSONObject(0) else null)
     } catch (e: Exception) {
         Result.failure(e)
@@ -370,7 +382,7 @@ object SupabaseClient {
             put("password_salt", salt)
             put("password_hash", hash)
         }
-        patch("patients?id=eq.$patientId", json)
+        patch("patients?id=eq.${enc(patientId)}", json)
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
@@ -400,8 +412,8 @@ object SupabaseClient {
      * সার্ভার-সাইড ভেরিফিকেশন যোগ করে এটা আরও সুরক্ষিত করার পরামর্শ থাকলো।
      */
     suspend fun deleteAccount(patientId: String): Result<Unit> = try {
-        delete("appointments?patient_id=eq.$patientId")
-        delete("patients?id=eq.$patientId")
+        delete("appointments?patient_id=eq.${enc(patientId)}")
+        delete("patients?id=eq.${enc(patientId)}")
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
@@ -483,7 +495,7 @@ object SupabaseClient {
     }
 
     suspend fun getAppointments(patientId: String): Result<JSONArray> = try {
-        val rows = get("appointments?patient_id=eq.$patientId&order=created_at.desc")
+        val rows = get("appointments?patient_id=eq.${enc(patientId)}&order=created_at.desc")
         Result.success(rows)
     } catch (e: Exception) {
         Result.failure(e)
@@ -494,9 +506,14 @@ object SupabaseClient {
      * 'cancelled' স্ট্যাটাসের অ্যাপয়েন্টমেন্ট বাদ দেওয়া হয় (বাতিল হয়ে গেলে সেই স্লট আবার খালি হয়ে যায়),
      * বাকি সব (pending/confirmed/completed) স্ট্যাটাসের সময়গুলো বুক করা ধরা হয়।
      * BookAppointmentActivity এই তালিকা ব্যবহার করে টাইম-স্লট গ্রিড থেকে বুক করা সময়গুলো হাইড করে।
+     *
+     * NOTE: এখানে preferred_date-এর exact match (eq.) ফিল্টার ব্যবহার করা হয়, তাই একটা তারিখের
+     * বুকিং অন্য কোনো তারিখের স্লট হাইড করার কারণ হওয়ার কথা না — এই ফাংশনটা সবসময়ই সঠিকভাবে
+     * তারিখ-স্কোপড ছিল। ক্লায়েন্ট সাইডে (BookAppointmentActivity) রেস-কন্ডিশন এড়াতে আলাদা
+     * request-id গার্ড যোগ করা হয়েছে, যা এই কোয়েরির ফলাফল ভুল তারিখে বসে যাওয়া থেকে রক্ষা করে।
      */
     suspend fun getBookedTimes(date: String): Result<List<String>> = try {
-        val rows = get("appointments?preferred_date=eq.$date&status=neq.cancelled&select=preferred_time")
+        val rows = get("appointments?preferred_date=eq.${enc(date)}&status=neq.cancelled&select=preferred_time")
         val times = mutableListOf<String>()
         for (i in 0 until rows.length()) {
             val t = rows.getJSONObject(i).optString("preferred_time", "")
@@ -525,7 +542,7 @@ object SupabaseClient {
             put("payment_status", "verified")
             put("status", "confirmed")
         }
-        patch("appointments?id=eq.$appointmentId", json)
+        patch("appointments?id=eq.${enc(appointmentId)}", json)
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
@@ -537,7 +554,7 @@ object SupabaseClient {
             put("payment_status", "rejected")
             put("status", "cancelled")
         }
-        patch("appointments?id=eq.$appointmentId", json)
+        patch("appointments?id=eq.${enc(appointmentId)}", json)
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
