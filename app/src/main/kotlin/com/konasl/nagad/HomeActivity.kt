@@ -425,7 +425,7 @@ class HomeActivity : AppCompatActivity() {
             })
         }
         ratingRow.addView(starsRow)
-        ratingRow.addView(text(" ৪.৮", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START))
+        ratingRow.addView(text(" ৫.০", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START))
         inner.addView(ratingRow)
 
         // ডিগ্রি
