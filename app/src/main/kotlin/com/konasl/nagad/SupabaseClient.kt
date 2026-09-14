@@ -3,6 +3,7 @@ package com.konasl.nagad
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -68,12 +69,36 @@ import java.util.concurrent.TimeUnit
  *   fee integer default 800,
  *   transaction_id text,
  *   payment_status text default 'not_applicable', -- not_applicable / pending_verification / verified / rejected
+ *   report_url text, -- রোগীর আপলোড করা আগের টেস্ট রিপোর্টের Supabase Storage পাবলিক URL (ঐচ্ছিক)
  *   created_at timestamptz default now()
  * );
+ *
+ * -- যদি appointments টেবিল আগে থেকেই থাকে, শুধু এই লাইনটা চালান:
+ * -- alter table appointments add column if not exists report_url text;
  *
  * alter table otp_codes disable row level security;
  * alter table patients disable row level security;
  * alter table appointments disable row level security;
+ *
+ * ----------------------------------------------------------------------------
+ * TEST REPORT আপলোডের জন্য Storage bucket (একবারই সেটআপ করতে হবে):
+ * ----------------------------------------------------------------------------
+ * -- ১) বাকেট তৈরি (public = true রাখা হয়েছে যাতে রিপোর্টের লিংক সরাসরি খোলা যায়;
+ * --    প্রয়োজনে ভবিষ্যতে signed URL / private bucket এ পরিবর্তন করা যায়)
+ * insert into storage.buckets (id, name, public)
+ * values ('test-reports', 'test-reports', true)
+ * on conflict (id) do nothing;
+ *
+ * -- ২) anon key দিয়ে আপলোড/রিড করার অনুমতি (storage.objects এ RLS ডিফল্ট চালু থাকে)
+ * create policy "Allow anon uploads to test-reports"
+ * on storage.objects for insert
+ * to anon
+ * with check (bucket_id = 'test-reports');
+ *
+ * create policy "Allow public read of test-reports"
+ * on storage.objects for select
+ * to anon
+ * using (bucket_id = 'test-reports');
  * ============================================================================
  */
 object SupabaseClient {
@@ -81,6 +106,9 @@ object SupabaseClient {
     // TODO: নিজের Supabase প্রজেক্ট থেকে বসান (Project Settings > API)
     private const val SUPABASE_URL = "https://azbleibkgerzaqbrrydl.supabase.co/"
     private const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6YmxlaWJrZ2VyemFxYnJyeWRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzExNjYsImV4cCI6MjEwNDc0NzE2Nn0.6Q6PMcRJHXFIRPUZZf9lOjoTmq77_wbCoKc8tGkVF2o"
+
+    // Storage bucket যেখানে রোগীদের টেস্ট রিপোর্ট (ছবি/PDF) জমা হয়
+    private const val REPORTS_BUCKET = "test-reports"
 
     private const val PREFS = "sunnycare_prefs"
     private const val KEY_LOGGED_IN = "is_logged_in"
@@ -94,6 +122,7 @@ object SupabaseClient {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     private val JSON = "application/json".toMediaType()
@@ -373,6 +402,44 @@ object SupabaseClient {
     }
 
     // ---------------------------------------------------------------------
+    // STORAGE — রোগীর আগের টেস্ট রিপোর্ট (ছবি/PDF) আপলোড
+    // ---------------------------------------------------------------------
+
+    /**
+     * রোগীর টেস্ট রিপোর্ট ফাইল Supabase Storage-এর `test-reports` বাকেটে আপলোড করে এবং
+     * সফল হলে ফাইলটার পাবলিক URL রিটার্ন করে (যেটা appointments.report_url কলামে সেভ করা হবে)।
+     * bucket public = true থাকায় এই URL সরাসরি ব্রাউজার/ImageView-তে খোলা যাবে।
+     */
+    suspend fun uploadReportFile(fileName: String, mimeType: String, bytes: ByteArray): Result<String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val safeName = "${System.currentTimeMillis()}_${fileName.replace(Regex("[^A-Za-z0-9._-]"), "_")}"
+                val objectPath = "reports/$safeName"
+                val mediaType = mimeType.toMediaTypeOrNull() ?: "application/octet-stream".toMediaType()
+
+                val req = Request.Builder()
+                    .url("$SUPABASE_URL/storage/v1/object/$REPORTS_BUCKET/$objectPath")
+                    .addHeader("apikey", SUPABASE_ANON_KEY)
+                    .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
+                    .addHeader("x-upsert", "true")
+                    .post(bytes.toRequestBody(mediaType))
+                    .build()
+
+                client.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) {
+                        return@withContext Result.failure<String>(IOException("রিপোর্ট আপলোড ব্যর্থ: ${resp.code} $body"))
+                    }
+                }
+
+                val publicUrl = "$SUPABASE_URL/storage/v1/object/public/$REPORTS_BUCKET/$objectPath"
+                Result.success(publicUrl)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
+    // ---------------------------------------------------------------------
     // APPOINTMENTS
     // ---------------------------------------------------------------------
 
@@ -386,7 +453,8 @@ object SupabaseClient {
         paymentMethod: String = "",
         fee: Int = 800,
         transactionId: String = "",
-        paymentStatus: String = "not_applicable"
+        paymentStatus: String = "not_applicable",
+        reportUrl: String = ""
     ): Result<JSONObject> = try {
         val json = JSONObject().apply {
             put("patient_id", patientId)
@@ -400,6 +468,7 @@ object SupabaseClient {
             put("fee", fee)
             put("transaction_id", transactionId)
             put("payment_status", paymentStatus)
+            if (reportUrl.isNotEmpty()) put("report_url", reportUrl)
         }
         val rows = post("appointments", json)
         Result.success(rows.getJSONObject(0))
