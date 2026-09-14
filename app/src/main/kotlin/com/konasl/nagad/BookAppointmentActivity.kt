@@ -9,13 +9,17 @@ import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.*
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
@@ -66,6 +70,13 @@ class BookAppointmentActivity : AppCompatActivity() {
     private lateinit var manualPayLogoImg: ImageView
     private lateinit var trxIdInput: EditText
     private lateinit var reasonInput: EditText
+    private lateinit var reportPickRow: LinearLayout
+    private lateinit var reportPickText: TextView
+    private lateinit var reportPickSubtext: TextView
+    private lateinit var reportClearBtn: ImageView
+    private lateinit var reportPickLauncher: ActivityResultLauncher<Array<String>>
+    private var selectedReportUri: Uri? = null
+    private var selectedReportName: String = ""
     private lateinit var nameInput: EditText
     private lateinit var phoneInput: EditText
     private lateinit var confirmBtn: LinearLayout
@@ -91,6 +102,17 @@ class BookAppointmentActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        reportPickLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (e: Exception) { /* কিছু ডকুমেন্ট প্রোভাইডার persistable permission সাপোর্ট করে না, সমস্যা নেই */ }
+                selectedReportUri = uri
+                selectedReportName = queryDisplayName(uri) ?: "রিপোর্ট ফাইল"
+                updateReportPickUi()
+            }
+        }
 
         val root = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -248,6 +270,9 @@ class BookAppointmentActivity : AppCompatActivity() {
         infoCard.addView(space(dp(14)))
         infoCard.addView(fieldLabel("সমস্যার বিবরণ"))
         infoCard.addView(reasonInput)
+        infoCard.addView(space(dp(14)))
+        infoCard.addView(fieldLabel("আগের টেস্ট রিপোর্ট (ঐচ্ছিক)"))
+        infoCard.addView(buildReportPickRow())
 
         // ---------------- SECTION: PAYMENT ----------------
         val paymentSection = sectionTitle(HomeActivity.VectorIconDrawable.IconType.SHIELD, "পেমেন্ট পদ্ধতি")
@@ -274,9 +299,9 @@ class BookAppointmentActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         manualPayLogoWrap = FrameLayout(this).apply {
-            background = roundedBg(Color.WHITE, 12f)
+            background = circleBg(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
-            outlineProvider = roundOutline(12)
+            outlineProvider = circleOutline()
             clipToOutline = true
             elevation = dp(1).toFloat()
         }
@@ -525,9 +550,9 @@ class BookAppointmentActivity : AppCompatActivity() {
             }
 
             val logoWrap = FrameLayout(this).apply {
-                background = roundedBg(Color.WHITE, 14f)
+                background = circleBg(Color.WHITE)
                 layoutParams = LinearLayout.LayoutParams(dp(52), dp(52))
-                outlineProvider = roundOutline(14)
+                outlineProvider = circleOutline()
                 clipToOutline = true
                 elevation = dp(1).toFloat()
             }
@@ -603,6 +628,93 @@ class BookAppointmentActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
+    // টেস্ট রিপোর্ট আপলোড (ঐচ্ছিক) — ছবি বা PDF, Supabase Storage-এ যায়
+    // ------------------------------------------------------------------
+    private fun buildReportPickRow(): LinearLayout {
+        reportPickRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedBgStroke(Color.parseColor("#F8FBFA"), colorFieldBorder, 12f, 1)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { reportPickLauncher.launch(arrayOf("image/*", "application/pdf")) }
+        }
+        val iconWrap = ImageView(this).apply {
+            setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.DOCUMENT, colorPrimary, dp(15)))
+            background = roundedBg(Color.parseColor("#E4F3F1"), 10f)
+            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        val textCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
+        }
+        reportPickText = text("রিপোর্ট আপলোড করুন", 12.5f, Typeface.BOLD, colorDark, Gravity.START)
+        reportPickSubtext = text("ছবি বা PDF সিলেক্ট করুন (ঐচ্ছিক)", 10.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+            setPadding(0, dp(2), 0, 0)
+        }
+        textCol.addView(reportPickText)
+        textCol.addView(reportPickSubtext)
+
+        reportClearBtn = ImageView(this).apply {
+            setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.TRASH, Color.parseColor("#DC2626"), dp(14)))
+            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28))
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            visibility = View.GONE
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                selectedReportUri = null
+                selectedReportName = ""
+                updateReportPickUi()
+            }
+        }
+
+        reportPickRow.addView(iconWrap)
+        reportPickRow.addView(textCol)
+        reportPickRow.addView(reportClearBtn)
+        return reportPickRow
+    }
+
+    private fun updateReportPickUi() {
+        if (selectedReportUri != null) {
+            reportPickText.text = selectedReportName
+            reportPickSubtext.text = "ফাইল সিলেক্ট করা হয়েছে — বদলাতে ট্যাপ করুন"
+            reportPickSubtext.setTextColor(colorPrimary)
+            reportPickRow.background = roundedBgStroke(Color.parseColor("#E4F3F1"), colorPrimary, 12f, 1)
+            reportClearBtn.visibility = View.VISIBLE
+        } else {
+            reportPickText.text = "রিপোর্ট আপলোড করুন"
+            reportPickSubtext.text = "ছবি বা PDF সিলেক্ট করুন (ঐচ্ছিক)"
+            reportPickSubtext.setTextColor(colorTextMuted)
+            reportPickRow.background = roundedBgStroke(Color.parseColor("#F8FBFA"), colorFieldBorder, 12f, 1)
+            reportClearBtn.visibility = View.GONE
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String? = try {
+        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** সিলেক্ট করা রিপোর্ট ফাইলটা পড়ে Supabase Storage-এ আপলোড করে, পাবলিক URL রিটার্ন করে */
+    private suspend fun uploadSelectedReport(uri: Uri, name: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return@withContext Result.failure(Exception("ফাইল পড়া যায়নি"))
+            val mime = contentResolver.getType(uri) ?: "application/octet-stream"
+            SupabaseClient.uploadReportFile(name.ifEmpty { "report" }, mime, bytes)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // ------------------------------------------------------------------
     private fun onConfirmClicked() {
         val name = nameInput.text.toString().trim()
         val phone = phoneInput.text.toString().trim()
@@ -622,7 +734,26 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
 
         confirmBtn.isEnabled = false
+        val reportUri = selectedReportUri
+        val reportName = selectedReportName
+        if (reportUri != null) {
+            Toast.makeText(this, "রিপোর্ট আপলোড হচ্ছে...", Toast.LENGTH_SHORT).show()
+        }
         lifecycleScope.launch {
+            var reportUrl = ""
+            if (reportUri != null) {
+                val uploadResult = uploadSelectedReport(reportUri, reportName)
+                if (uploadResult.isFailure) {
+                    confirmBtn.isEnabled = true
+                    Toast.makeText(
+                        this@BookAppointmentActivity,
+                        "রিপোর্ট আপলোড ব্যর্থ: ${uploadResult.exceptionOrNull()?.message ?: "আবার চেষ্টা করুন"}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@launch
+                }
+                reportUrl = uploadResult.getOrNull() ?: ""
+            }
             val result = SupabaseClient.createAppointment(
                 patientId = patientId,
                 patientName = name,
@@ -633,7 +764,8 @@ class BookAppointmentActivity : AppCompatActivity() {
                 paymentMethod = selectedPayment!!,
                 fee = appointmentFee,
                 transactionId = trxId,
-                paymentStatus = "pending_verification"
+                paymentStatus = "pending_verification",
+                reportUrl = reportUrl
             )
             result.onSuccess {
                 Toast.makeText(
@@ -707,6 +839,19 @@ class BookAppointmentActivity : AppCompatActivity() {
         override fun getOutline(view: View, outline: Outline) {
             outline.setRoundRect(0, 0, view.width, view.height, dp(radiusDp).toFloat())
         }
+    }
+
+    /** সম্পূর্ণ গোলাকার (circle) outline — bKash/Nagad লোগো ব্যাজের জন্য */
+    private fun circleOutline(): ViewOutlineProvider = object : ViewOutlineProvider() {
+        override fun getOutline(view: View, outline: Outline) {
+            outline.setOval(0, 0, view.width, view.height)
+        }
+    }
+
+    /** সম্পূর্ণ গোলাকার (circle) background drawable */
+    private fun circleBg(color: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
     }
 
     private fun roundedBg(color: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
