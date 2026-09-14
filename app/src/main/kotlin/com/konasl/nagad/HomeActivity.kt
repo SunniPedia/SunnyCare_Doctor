@@ -896,10 +896,6 @@ class HomeActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-    private fun showComingSoon(feature: String) {
-        Toast.makeText(this, "$feature শীঘ্রই আসছে", Toast.LENGTH_SHORT).show()
-    }
-
     private fun onLogout() {
         showCustomConfirmDialog(
             iconType = VectorIconDrawable.IconType.LOGOUT,
@@ -1088,7 +1084,6 @@ class HomeActivity : AppCompatActivity() {
         return Color.rgb(r, g, b)
     }
 
-    // --- UPDATED ICON PACK ---
     class VectorIconDrawable(
         private val type: IconType,
         initialColor: Int,
@@ -1161,14 +1156,10 @@ class HomeActivity : AppCompatActivity() {
         @Deprecated("Deprecated in Java")
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
-        // *** সুন্দর করা Home Icon ***
         private fun drawHome(canvas: Canvas, s: Float) {
-            // Premium outlined home with soft rounded roof
             val strokeW = s * 0.085f
             strokePaint.strokeWidth = strokeW
             strokePaint.style = Paint.Style.STROKE
-
-            // Roof path - slightly rounded
             val roofPath = Path().apply {
                 moveTo(s * 0.50f, s * 0.05f)
                 lineTo(s * 0.92f, s * 0.40f)
@@ -1180,15 +1171,8 @@ class HomeActivity : AppCompatActivity() {
                 close()
             }
             canvas.drawPath(roofPath, strokePaint)
-
-            // Inner door - filled for active state look
             val doorRect = RectF(s * 0.38f, s * 0.58f, s * 0.62f, s * 0.90f)
             canvas.drawRoundRect(doorRect, s * 0.06f, s * 0.06f, fillPaint)
-
-            // Door cut - make it feel like inset (subtract with clear)
-            // For inactive (muted) it will be same color, so we draw a small white dot as handle only when filled
-            // Add subtle base line for depth
-            canvas.drawLine(s * 0.22f, s * 0.90f, s * 0.78f, s * 0.90f, strokePaint)
         }
 
         private fun drawCalendar(canvas: Canvas, s: Float) {
@@ -1205,13 +1189,13 @@ class HomeActivity : AppCompatActivity() {
 
         private fun drawPhone(canvas: Canvas, s: Float) {
             val path = Path()
-            path.moveTo(s * 0.08f, s * 0.20f)
-            path.cubicTo(s * 0.05f, s * 0.22f, -s * 0.02f, s * 0.30f, s * 0.14f)
-            path.cubicTo(s * 0.36f, s * 0.26f, s * 0.30f, s * 0.26f, s * 0.36f)
-            path.cubicTo(s * 0.32f, s * 0.52f, s * 0.46f, s * 0.66f, s * 0.62f, s * 0.72f)
-            path.cubicTo(s * 0.68f, s * 0.72f, s * 0.62f, s * 0.84f, s * 0.68f)
-            path.cubicTo(s * 1.0f, s * 0.76f, s * 0.94f, s * 0.80f, s * 0.96f)
-            path.cubicTo(s * 0.48f, s * 1.0f, s * 0.02f, s * 0.54f, s * 0.08f, s * 0.20f)
+            path.moveTo(s * 0.18f, s * 0.12f)
+            path.cubicTo(s * 0.08f, s * 0.12f, s * 0.02f, s * 0.20f, s * 0.12f, s * 0.30f)
+            path.lineTo(s * 0.26f, s * 0.42f)
+            path.cubicTo(s * 0.32f, s * 0.52f, s * 0.48f, s * 0.68f, s * 0.58f, s * 0.74f)
+            path.lineTo(s * 0.70f, s * 0.88f)
+            path.cubicTo(s * 0.80f, s * 0.98f, s * 0.88f, s * 0.92f, s * 0.88f, s * 0.82f)
+            path.cubicTo(s * 0.88f, s * 0.52f, s * 0.48f, s * 0.08f, s * 0.18f, s * 0.12f)
             path.close()
             canvas.drawPath(path, fillPaint)
         }
@@ -1350,9 +1334,9 @@ class HomeActivity : AppCompatActivity() {
         }
 
         private fun drawClock(canvas: Canvas, s: Float) {
-            canvas.drawCircle(s / 2, s / 2, s / 2 - strokePaint.strokeWidth / 2, strokePaint)
-            canvas.drawLine(s * 0.5f, s * 0.22f, strokePaint)
-            canvas.drawLine(s * 0.5f, s * 0.70f, s * 0.58f, strokePaint)
+            canvas.drawCircle(s / 2, s / 2, s * 0.42f, strokePaint)
+            canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.28f, strokePaint)
+            canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.70f, s * 0.60f, strokePaint)
         }
     }
 
