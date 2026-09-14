@@ -9,11 +9,14 @@ import android.graphics.BitmapFactory
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
 import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
+import android.graphics.PixelFormat
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -31,6 +34,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URL
@@ -72,8 +76,13 @@ class BookAppointmentActivity : AppCompatActivity() {
     private var selectedTime24: String? = null
     private var selectedPayment: String? = null
 
+    // নির্বাচিত তারিখে Supabase-এ ইতিমধ্যে বুক হয়ে থাকা সময়গুলোর সেট — এগুলো UI থেকে হাইড করা হয়
+    private var bookedTimesForDate: MutableSet<String> = mutableSetOf()
+    private var bookingFetchJob: Job? = null
+
     private lateinit var dateRow: LinearLayout
     private lateinit var timeGrid: GridLayout
+    private lateinit var timeLoadingText: TextView
     private lateinit var customTimeBtn: TextView
     private lateinit var paymentRow: LinearLayout
     private lateinit var manualPayCard: LinearLayout
@@ -99,6 +108,7 @@ class BookAppointmentActivity : AppCompatActivity() {
 
     private val dateOptions = mutableListOf<DateOption>()
 
+    // ১০ দিনের জন্য যথেষ্ট সংখ্যক টাইম স্লট
     private val timeSlots = listOf(
         TimeSlot("সকাল ১০:০০", "10:00"),
         TimeSlot("সকাল ১১:৩০", "11:30"),
@@ -169,14 +179,16 @@ class BookAppointmentActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val backBtn = TextView(this).apply {
-            text = "←"
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
+        // ইমুজি/টেক্সট অ্যারো নয় — সম্পূর্ণ ভেক্টর-আঁকা (Canvas দিয়ে) ব্যাক আইকন, তাই যেকোনো সাইজে ঝকঝকে দেখাবে
+        val backBtn = ImageView(this).apply {
+            setImageDrawable(BackArrowDrawable(Color.WHITE, dp(2).toFloat()))
             background = roundedBg(Color.argb(46, 255, 255, 255), 30f)
             layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+            val pad = dp(9)
+            setPadding(pad, pad, pad, pad)
+            isClickable = true
+            isFocusable = true
+            contentDescription = "পেছনে যান"
             setOnClickListener { finish() }
         }
         val headerTitle = text("অ্যাপয়েন্টমেন্ট বুক করুন", 18f, Typeface.BOLD, Color.WHITE, Gravity.START).apply {
@@ -244,6 +256,12 @@ class BookAppointmentActivity : AppCompatActivity() {
 
         // ---------------- SECTION: TIME ----------------
         val timeSection = sectionTitle(HomeActivity.VectorIconDrawable.IconType.CLOCK, "সময় নির্বাচন করুন")
+        timeLoadingText = text("তারিখের জন্য খালি সময় যাচাই করা হচ্ছে...", 11f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(18), dp(10), dp(18), 0)
+            }
+            visibility = View.GONE
+        }
         timeGrid = GridLayout(this).apply {
             columnCount = 2
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -410,6 +428,7 @@ class BookAppointmentActivity : AppCompatActivity() {
         page.addView(dateSection)
         page.addView(dateScroll)
         page.addView(timeSection)
+        page.addView(timeLoadingText)
         page.addView(timeGrid)
         page.addView(customTimeBtn)
         page.addView(infoSection)
@@ -435,16 +454,22 @@ class BookAppointmentActivity : AppCompatActivity() {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 background = roundedBgStroke(colorCard, colorFieldBorder, 16f, 1)
-                setPadding(dp(18), dp(14), dp(18), dp(14))
-                layoutParams = LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                layoutParams = LinearLayout.LayoutParams(dp(72), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     marginEnd = dp(10)
                 }
+                elevation = dp(1).toFloat()
+                outlineProvider = roundOutline(16)
+                clipToOutline = true
                 tag = option.isoDate
             }
-            chip.addView(text(option.label, 11f, Typeface.BOLD, colorTextMuted, Gravity.CENTER))
+            chip.addView(text(option.label, 10.5f, Typeface.BOLD, colorTextMuted, Gravity.CENTER).apply {
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            })
             chip.addView(
-                text("${option.dayNum}", 18f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
-                    setPadding(0, dp(4), 0, 0)
+                text(toBnDigits(option.dayNum), 18f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
+                    setPadding(0, dp(5), 0, dp(1))
                 }
             )
             chip.addView(text(option.month, 10.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER))
@@ -458,25 +483,28 @@ class BookAppointmentActivity : AppCompatActivity() {
                         GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(colorPrimaryLight, colorPrimaryDark)).apply { cornerRadius = dp(16).toFloat() }
                     else
                         roundedBgStroke(colorCard, colorFieldBorder, 16f, 1)
+                    c.elevation = if (selected) dp(3).toFloat() else dp(1).toFloat()
                     for (j in 0 until c.childCount) {
                         (c.getChildAt(j) as? TextView)?.setTextColor(
                             if (selected) Color.WHITE else if (j == 1) colorDark else colorTextMuted
                         )
                     }
                 }
+                // এই তারিখে Supabase-এ ইতিমধ্যে বুক থাকা সময়গুলো যাচাই করে সেগুলো হাইড করে
+                fetchBookedTimesAndRefresh(option.isoDate)
             }
             if (index == 0) chip.performClick()
             dateRow.addView(chip)
         }
     }
 
-    /** আজ / আগামীকাল / পরের ২ দিনের তারিখ — প্রতিবার Activity খুললে Calendar থেকে ফ্রেশ জেনারেট হয়, তাই সবসময় আপডেটেড থাকে */
+    /** আজ থেকে শুরু করে পরবর্তী ১০ দিনের তারিখ — প্রতিবার Activity খুললে Calendar থেকে ফ্রেশ জেনারেট হয়, তাই সবসময় আপডেটেড থাকে */
     private fun generateDateOptions(): List<DateOption> {
         val quickLabels = arrayOf("আজ", "আগামীকাল")
         val weekDays = arrayOf("রবি", "সোম", "মঙ্গল", "বুধ", "বৃহঃ", "শুক্র", "শনি")
         val months = arrayOf("জানু", "ফেব্রু", "মার্চ", "এপ্রিল", "মে", "জুন", "জুলাই", "আগস্ট", "সেপ্ট", "অক্টো", "নভে", "ডিসে")
         val result = mutableListOf<DateOption>()
-        for (i in 0..3) {
+        for (i in 0..9) {
             val cal = Calendar.getInstance()
             cal.add(Calendar.DAY_OF_YEAR, i)
             val label = if (i < quickLabels.size) quickLabels[i] else weekDays[cal.get(Calendar.DAY_OF_WEEK) - 1]
@@ -486,6 +514,12 @@ class BookAppointmentActivity : AppCompatActivity() {
             result.add(DateOption(label, dayNum, month, iso))
         }
         return result
+    }
+
+    /** ইংরেজি সংখ্যাকে বাংলা সংখ্যায় রূপান্তর করে, যাতে তারিখের UI বাকি অ্যাপের সাথে সামঞ্জস্যপূর্ণ ও প্রফেশনাল দেখায় */
+    private fun toBnDigits(n: Int): String {
+        val bn = charArrayOf('০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯')
+        return n.toString().map { c -> if (c.isDigit()) bn[c - '0'] else c }.joinToString("")
     }
 
     // ------------------------------------------------------------------
@@ -530,7 +564,12 @@ class BookAppointmentActivity : AppCompatActivity() {
     private fun pickCustomTime() {
         val cal = Calendar.getInstance()
         TimePickerDialog(this, { _, h, min ->
-            selectedTime24 = "%02d:%02d".format(h, min)
+            val chosen = "%02d:%02d".format(h, min)
+            if (bookedTimesForDate.contains(chosen)) {
+                Toast.makeText(this, "এই সময়ে ইতিমধ্যে অ্যাপয়েন্টমেন্ট বুক করা আছে, অন্য একটা সময় বেছে নিন", Toast.LENGTH_SHORT).show()
+                return@TimePickerDialog
+            }
+            selectedTime24 = chosen
             for (i in 0 until timeGrid.childCount) {
                 val c = timeGrid.getChildAt(i) as TextView
                 c.background = roundedBgStroke(colorCard, colorFieldBorder, 14f, 1)
@@ -540,6 +579,45 @@ class BookAppointmentActivity : AppCompatActivity() {
             customTimeBtn.setTextColor(Color.WHITE)
             customTimeBtn.text = "নির্বাচিত সময়: $selectedTime24"
         }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), false).show()
+    }
+
+    // ------------------------------------------------------------------
+    // নির্বাচিত তারিখের জন্য Supabase থেকে ইতিমধ্যে বুক থাকা সময়গুলো আনা ও UI আপডেট করা
+    // ------------------------------------------------------------------
+    private fun fetchBookedTimesAndRefresh(isoDate: String) {
+        bookingFetchJob?.cancel()
+
+        // তারিখ পরিবর্তন হলে আগের সময় নির্বাচন বাতিল করে দেওয়া হয়, কারণ প্রতিটা তারিখের খালি সময় ভিন্ন হতে পারে
+        selectedTime24 = null
+        highlightSelectedTime(null)
+
+        // ডেটা আসা পর্যন্ত সবগুলো স্লট দৃশ্যমান রাখা হয় এবং একটা হালকা লোডিং হিন্ট দেখানো হয়
+        for (i in 0 until timeGrid.childCount) {
+            timeGrid.getChildAt(i).visibility = View.VISIBLE
+        }
+        timeLoadingText.visibility = View.VISIBLE
+
+        bookingFetchJob = lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { SupabaseClient.getBookedTimes(isoDate) }
+            timeLoadingText.visibility = View.GONE
+            result.onSuccess { booked ->
+                bookedTimesForDate = booked.toMutableSet()
+                applyBookedTimesFilter()
+            }.onFailure {
+                // ইন্টারনেট/সার্ভার সমস্যায় চুপচাপ সব স্লট খোলা রাখা হয়, যেন ইউজার আটকে না যায়
+                bookedTimesForDate = mutableSetOf()
+                applyBookedTimesFilter()
+            }
+        }
+    }
+
+    /** নির্দিষ্ট তারিখে Supabase-এ যেসব সময় ইতিমধ্যে বুক হয়ে আছে সেগুলোর চিপ টাইম-গ্রিড থেকে হাইড (gone) করে দেয় */
+    private fun applyBookedTimesFilter() {
+        for (i in 0 until timeGrid.childCount) {
+            val c = timeGrid.getChildAt(i) as TextView
+            val value = c.tag as? String ?: continue
+            c.visibility = if (bookedTimesForDate.contains(value)) View.GONE else View.VISIBLE
+        }
     }
 
     // ------------------------------------------------------------------
@@ -777,6 +855,10 @@ class BookAppointmentActivity : AppCompatActivity() {
 
         if (selectedDate == null) { Toast.makeText(this, "তারিখ নির্বাচন করুন", Toast.LENGTH_SHORT).show(); return }
         if (selectedTime24 == null) { Toast.makeText(this, "সময় নির্বাচন করুন", Toast.LENGTH_SHORT).show(); return }
+        if (bookedTimesForDate.contains(selectedTime24)) {
+            Toast.makeText(this, "এই সময়ে ইতিমধ্যে অ্যাপয়েন্টমেন্ট বুক হয়ে গেছে, অন্য একটা সময় বেছে নিন", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (name.isEmpty() || phone.isEmpty()) { Toast.makeText(this, "নাম ও ফোন নাম্বার দিন", Toast.LENGTH_SHORT).show(); return }
         if (reason.isEmpty()) { Toast.makeText(this, "সমস্যার বিবরণ দিন", Toast.LENGTH_SHORT).show(); return }
         if (selectedPayment == null) { Toast.makeText(this, "পেমেন্ট পদ্ধতি নির্বাচন করুন", Toast.LENGTH_SHORT).show(); return }
@@ -793,6 +875,17 @@ class BookAppointmentActivity : AppCompatActivity() {
             Toast.makeText(this, "রিপোর্ট আপলোড হচ্ছে (${reportsToUpload.size}টি ফাইল)...", Toast.LENGTH_SHORT).show()
         }
         lifecycleScope.launch {
+            // শেষ মুহূর্তে আরেকজন একই সময় বুক করে ফেলেছে কিনা তা নিশ্চিত করার জন্য একবার আবার যাচাই করা হয়
+            val recheck = SupabaseClient.getBookedTimes(selectedDate!!.isoDate)
+            val nowBooked = recheck.getOrNull()?.toSet() ?: emptySet()
+            if (nowBooked.contains(selectedTime24)) {
+                confirmBtn.isEnabled = true
+                bookedTimesForDate = nowBooked.toMutableSet()
+                applyBookedTimesFilter()
+                Toast.makeText(this@BookAppointmentActivity, "দুঃখিত, এই সময়টা এইমাত্র বুক হয়ে গেছে। অন্য একটা সময় বেছে নিন", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
             val uploadedUrls = mutableListOf<String>()
             for ((uri, fileName) in reportsToUpload) {
                 val uploadResult = uploadSelectedReport(uri, fileName)
@@ -906,6 +999,49 @@ class BookAppointmentActivity : AppCompatActivity() {
         cornerRadius = radiusDp * resources.displayMetrics.density
         setColor(fillColor)
         setStroke(dp(strokeWidthDp), strokeColor)
+    }
+
+    // ------------------------------------------------------------------
+    // BackArrowDrawable — ব্যাক বাটনের জন্য সম্পূর্ণ ভেক্টর-আঁকা (Canvas/Paint দিয়ে) অ্যারো আইকন।
+    // কোনো ইমুজি বা ফন্ট-ক্যারেক্টার নয়, তাই সব ডিভাইস/ফন্টে একইরকম নিখুঁত ও প্রফেশনাল দেখায়।
+    // ------------------------------------------------------------------
+    private class BackArrowDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = strokeWidthPx
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+
+            val left = b.left + w * 0.22f
+            val right = b.left + w * 0.78f
+            val cy = b.top + h / 2f
+            val armLen = w * 0.26f
+
+            // মূল অনুভূমিক রেখা
+            canvas.drawLine(left, cy, right, cy, paint)
+            // চেভরন হেড (বাম দিকে নির্দেশক)
+            canvas.drawLine(left, cy, left + armLen, cy - armLen, paint)
+            canvas.drawLine(left, cy, left + armLen, cy + armLen, paint)
+        }
+
+        override fun setAlpha(alpha: Int) {
+            paint.alpha = alpha
+        }
+
+        override fun setColorFilter(colorFilter: ColorFilter?) {
+            paint.colorFilter = colorFilter
+        }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
     // ------------------------------------------------------------------
