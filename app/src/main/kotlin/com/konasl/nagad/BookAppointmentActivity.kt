@@ -80,6 +80,12 @@ class BookAppointmentActivity : AppCompatActivity() {
     private var bookedTimesForDate: MutableSet<String> = mutableSetOf()
     private var bookingFetchJob: Job? = null
 
+    // প্রতিটা booked-times ফেচ রিকোয়েস্টের নিজস্ব id থাকে। কোনো পুরনো (আগের তারিখের)
+    // রিকোয়েস্ট দেরিতে ফলাফল ফিরিয়ে বর্তমান তারিখের ডেটা ওভাররাইট করে ফেলতে না পারে,
+    // সেজন্য শুধু সর্বশেষ রিকোয়েস্টের ফলাফলই গ্রহণ করা হয় — এটাই "আজ ১০টা বুক করলে
+    // কালকের ১০টাও গায়েব দেখানো"-র মতো cross-date leak ঠেকানোর মূল সুরক্ষা।
+    private var bookingFetchRequestId: Long = 0L
+
     private lateinit var dateRow: LinearLayout
     private lateinit var timeGrid: GridLayout
     private lateinit var timeLoadingText: TextView
@@ -108,15 +114,9 @@ class BookAppointmentActivity : AppCompatActivity() {
 
     private val dateOptions = mutableListOf<DateOption>()
 
-    // ১০ দিনের জন্য যথেষ্ট সংখ্যক টাইম স্লট
-    private val timeSlots = listOf(
-        TimeSlot("সকাল ১০:০০", "10:00"),
-        TimeSlot("সকাল ১১:৩০", "11:30"),
-        TimeSlot("দুপুর ০১:০০", "13:00"),
-        TimeSlot("বিকাল ০৪:০০", "16:00"),
-        TimeSlot("সন্ধ্যা ০৬:৩০", "18:30"),
-        TimeSlot("রাত ০৮:০০", "20:00")
-    )
+    // সকাল ১০:০০ থেকে রাত ৮:০০ পর্যন্ত প্রতি ৩০ মিনিট অন্তর টাইম স্লট (মোট ২১টি স্লট),
+    // generateTimeSlots() ফাংশন দিয়ে স্বয়ংক্রিয়ভাবে তৈরি হয়
+    private val timeSlots = generateTimeSlots()
 
     private val paymentOptions = listOf(
         PaymentOption("বিকাশ", "সেন্ড মানি করে বুক করুন", bkashLogoUrl, Color.parseColor("#E2136E"), bkashMerchantNumber),
@@ -530,6 +530,69 @@ class BookAppointmentActivity : AppCompatActivity() {
         return n.toString().map { c -> if (c.isDigit()) bn[c - '0'] else c }.joinToString("")
     }
 
+    /** টাইম-স্লট লেবেলের মতো স্ট্রিং (যেমন "04:30")-এর ভেতরের সংখ্যাগুলোকে বাংলা সংখ্যায় রূপান্তর করে */
+    private fun toBnDigits(s: String): String {
+        val bn = charArrayOf('০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯')
+        return s.map { c -> if (c.isDigit()) bn[c - '0'] else c }.joinToString("")
+    }
+
+    /**
+     * সকাল ১০:০০ থেকে রাত ৮:০০ (20:00) পর্যন্ত প্রতি ৩০ মিনিট অন্তর একটা করে TimeSlot তৈরি করে।
+     * প্রতিটা স্লটের value24 ("HH:mm", ২৪-ঘণ্টা ফরম্যাট) Supabase-এ বুকিং তুলনার জন্য ব্যবহৃত হয়,
+     * আর label বাংলা AM/PM প্রিফিক্স ও বাংলা সংখ্যাসহ ইউজারকে দেখানো হয়।
+     */
+    private fun generateTimeSlots(): List<TimeSlot> {
+        val result = mutableListOf<TimeSlot>()
+        val startMinutes = 10 * 60   // সকাল ১০:০০
+        val endMinutes = 20 * 60     // রাত ৮:০০ (20:00)
+        var totalMinutes = startMinutes
+        while (totalMinutes <= endMinutes) {
+            val hour = totalMinutes / 60
+            val minute = totalMinutes % 60
+            val period = when {
+                hour in 10..11 -> "সকাল"
+                hour in 12..14 -> "দুপুর"
+                hour in 15..17 -> "বিকাল"
+                hour == 18 -> "সন্ধ্যা"
+                else -> "রাত" // 19, 20
+            }
+            val displayHour = if (hour > 12) hour - 12 else hour
+            val displayTime = "%02d:%02d".format(displayHour, minute)
+            val value24 = "%02d:%02d".format(hour, minute)
+            result.add(TimeSlot("$period ${toBnDigits(displayTime)}", value24))
+            totalMinutes += 30
+        }
+        return result
+    }
+
+    /** আজকের তারিখ "yyyy-MM-dd" ফরম্যাটে — DateOption.isoDate-এর সাথে মেলানোর জন্য */
+    private fun todayIsoDate(): String {
+        val cal = Calendar.getInstance()
+        return "%04d-%02d-%02d".format(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH))
+    }
+
+    /**
+     * নির্বাচিত তারিখ আজকের হলে এবং দেওয়া value24 (HH:mm) সময়টা বর্তমান সময়ের আগে হলে true রিটার্ন করে,
+     * অর্থাৎ এই স্লটটা এখন আর বুক করা সম্ভব না বলে গণ্য হবে। আজকের বাইরের অন্য যেকোনো তারিখের জন্য
+     * সবসময় false — ভবিষ্যতের তারিখের কোনো স্লট কখনো "অতীত" হিসেবে হাইড হবে না।
+     */
+    private fun isPastTimeSlot(value24: String): Boolean {
+        val date = selectedDate ?: return false
+        if (date.isoDate != todayIsoDate()) return false
+        val parts = value24.split(":")
+        if (parts.size != 2) return false
+        val slotHour = parts[0].toIntOrNull() ?: return false
+        val slotMinute = parts[1].toIntOrNull() ?: return false
+        val now = Calendar.getInstance()
+        val slotCal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, slotHour)
+            set(Calendar.MINUTE, slotMinute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return slotCal.before(now)
+    }
+
     // ------------------------------------------------------------------
     private fun buildTimeSlots() {
         timeGrid.removeAllViews()
@@ -577,6 +640,10 @@ class BookAppointmentActivity : AppCompatActivity() {
                 Toast.makeText(this, "এই সময়ে ইতিমধ্যে অ্যাপয়েন্টমেন্ট বুক করা আছে, অন্য একটা সময় বেছে নিন", Toast.LENGTH_SHORT).show()
                 return@TimePickerDialog
             }
+            if (isPastTimeSlot(chosen)) {
+                Toast.makeText(this, "এই সময়টা ইতিমধ্যে পার হয়ে গেছে, অন্য একটা সময় বেছে নিন", Toast.LENGTH_SHORT).show()
+                return@TimePickerDialog
+            }
             selectedTime24 = chosen
             for (i in 0 until timeGrid.childCount) {
                 val c = timeGrid.getChildAt(i) as TextView
@@ -595,36 +662,53 @@ class BookAppointmentActivity : AppCompatActivity() {
     private fun fetchBookedTimesAndRefresh(isoDate: String) {
         bookingFetchJob?.cancel()
 
+        // এই কলটার নিজস্ব id — নেটওয়ার্ক রেসপন্স ফিরে আসার সময় এটা মিলিয়ে দেখা হবে,
+        // যাতে ব্যবহারকারী ততক্ষণে অন্য তারিখে চলে গেলে পুরনো রিকোয়েস্টের ফলাফল আর প্রয়োগ না হয়
+        val requestId = ++bookingFetchRequestId
+
         // তারিখ পরিবর্তন হলে আগের সময় নির্বাচন বাতিল করে দেওয়া হয়, কারণ প্রতিটা তারিখের খালি সময় ভিন্ন হতে পারে
         selectedTime24 = null
         highlightSelectedTime(null)
 
-        // ডেটা আসা পর্যন্ত সবগুলো স্লট দৃশ্যমান রাখা হয় এবং একটা হালকা লোডিং হিন্ট দেখানো হয়
+        // ডেটা আসা পর্যন্ত বাকি সব স্লট দৃশ্যমান রাখা হয়, তবে যেসব স্লটের সময় ইতিমধ্যে পার হয়ে গেছে
+        // (শুধু আজকের তারিখের ক্ষেত্রে প্রযোজ্য) সেগুলো নেটওয়ার্ক রেসপন্সের অপেক্ষা না করেই সরাসরি হাইড করা হয়
         for (i in 0 until timeGrid.childCount) {
-            timeGrid.getChildAt(i).visibility = View.VISIBLE
+            val c = timeGrid.getChildAt(i)
+            val value = c.tag as? String
+            c.visibility = if (value != null && isPastTimeSlot(value)) View.GONE else View.VISIBLE
         }
         timeLoadingText.visibility = View.VISIBLE
 
         bookingFetchJob = lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) { SupabaseClient.getBookedTimes(isoDate) }
+
+            // এই সময়ের মধ্যে ইউজার অন্য কোনো তারিখ সিলেক্ট করে ফেললে requestId বেড়ে যায়,
+            // তখন এই পুরনো রেসপন্সটা চুপচাপ উপেক্ষা করা হয় — এটাই cross-date leak ঠেকানোর গার্ড
+            if (requestId != bookingFetchRequestId) return@launch
+
             timeLoadingText.visibility = View.GONE
             result.onSuccess { booked ->
                 bookedTimesForDate = booked.toMutableSet()
                 applyBookedTimesFilter()
             }.onFailure {
-                // ইন্টারনেট/সার্ভার সমস্যায় চুপচাপ সব স্লট খোলা রাখা হয়, যেন ইউজার আটকে না যায়
+                // ইন্টারনেট/সার্ভার সমস্যায় চুপচাপ সব (অতীত ছাড়া) স্লট খোলা রাখা হয়, যেন ইউজার আটকে না যায়
                 bookedTimesForDate = mutableSetOf()
                 applyBookedTimesFilter()
             }
         }
     }
 
-    /** নির্দিষ্ট তারিখে Supabase-এ যেসব সময় ইতিমধ্যে বুক হয়ে আছে সেগুলোর চিপ টাইম-গ্রিড থেকে হাইড (gone) করে দেয় */
+    /**
+     * নির্দিষ্ট তারিখে Supabase-এ যেসব সময় ইতিমধ্যে বুক হয়ে আছে, এবং (আজকের তারিখ হলে) যেসব সময়
+     * ইতিমধ্যে পার হয়ে গেছে — এই দুই ধরনের স্লট টাইম-গ্রিড থেকে হাইড (gone) করে দেয়
+     */
     private fun applyBookedTimesFilter() {
         for (i in 0 until timeGrid.childCount) {
             val c = timeGrid.getChildAt(i) as TextView
             val value = c.tag as? String ?: continue
-            c.visibility = if (bookedTimesForDate.contains(value)) View.GONE else View.VISIBLE
+            val hiddenByBooking = bookedTimesForDate.contains(value)
+            val hiddenByPastTime = isPastTimeSlot(value)
+            c.visibility = if (hiddenByBooking || hiddenByPastTime) View.GONE else View.VISIBLE
         }
     }
 
@@ -865,6 +949,10 @@ class BookAppointmentActivity : AppCompatActivity() {
         if (selectedTime24 == null) { Toast.makeText(this, "সময় নির্বাচন করুন", Toast.LENGTH_SHORT).show(); return }
         if (bookedTimesForDate.contains(selectedTime24)) {
             Toast.makeText(this, "এই সময়ে ইতিমধ্যে অ্যাপয়েন্টমেন্ট বুক হয়ে গেছে, অন্য একটা সময় বেছে নিন", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (selectedTime24?.let { isPastTimeSlot(it) } == true) {
+            Toast.makeText(this, "এই সময়টা ইতিমধ্যে পার হয়ে গেছে, অন্য একটা সময় বেছে নিন", Toast.LENGTH_SHORT).show()
             return
         }
         if (name.isEmpty() || phone.isEmpty()) { Toast.makeText(this, "নাম ও ফোন নাম্বার দিন", Toast.LENGTH_SHORT).show(); return }
