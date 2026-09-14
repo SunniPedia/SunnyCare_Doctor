@@ -26,7 +26,8 @@
         </activity>
         <activity android:name=".AdminPaymentVerificationActivity" android:exported="false" />
 		<activity android:name=".BookAppointmentActivity" android:exported="false" />
-        <activity
+        <activity android:name=".DebugActivity" android:exported="false" />
+		<activity
             android:name=".LoginActivity"
             android:exported="false" />
         <activity
