@@ -138,7 +138,7 @@ class LoginActivity : AppCompatActivity() {
             clipToOutline = true
         }
 
-        val phoneLabel = text("ফোন নাম্বার (BD ১১ ডিজিট / বিদেশি + সহ)", 12.5f, Typeface.BOLD, colorTextMuted).apply {
+        val phoneLabel = text("ফোন নাম্বার", 12.5f, Typeface.BOLD, colorTextMuted).apply {
             gravity = Gravity.START
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
