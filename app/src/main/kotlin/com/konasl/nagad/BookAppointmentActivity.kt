@@ -35,6 +35,7 @@ import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URL
@@ -82,9 +83,21 @@ class BookAppointmentActivity : AppCompatActivity() {
 
     // প্রতিটা booked-times ফেচ রিকোয়েস্টের নিজস্ব id থাকে। কোনো পুরনো (আগের তারিখের)
     // রিকোয়েস্ট দেরিতে ফলাফল ফিরিয়ে বর্তমান তারিখের ডেটা ওভাররাইট করে ফেলতে না পারে,
-    // সেজন্য শুধু সর্বশেষ রিকোয়েস্টের ফলাফলই গ্রহণ করা হয় — এটাই "আজ ১০টা বুক করলে
-    // কালকের ১০টাও গায়েব দেখানো"-র মতো cross-date leak ঠেকানোর মূল সুরক্ষা।
+    // সেজন্য শুধু সর্বশেষ রিকোয়েস্টের ফলাফলই গ্রহণ করা হয়। এছাড়া রেসপন্স অ্যাপ্লাই করার
+    // মুহূর্তে আবার selectedDate-এর সাথে মিলিয়ে দেখা হয় (ডাবল-গার্ড) — এই দুটো গার্ড মিলেই
+    // "আজ ১০টা বুক করলে কালকের ১০টাও গায়েব দেখানো"-র মতো cross-date leak সম্পূর্ণ বন্ধ করে।
     private var bookingFetchRequestId: Long = 0L
+
+    // এডমিন যেসব স্লট গ্লোবালি বন্ধ রেখেছে (slot_settings টেবিল) — key = value24 ("HH:mm"), value = enabled কিনা
+    private var disabledSlotsGlobal: Map<String, Boolean> = emptyMap()
+
+    // বর্তমানে সিলেক্টেড তারিখের জন্য নির্দিষ্ট override (slot_date_overrides টেবিল), যেটা global সেটিংসকে ছাপিয়ে যায়
+    private var currentDateOverrides: Map<String, Boolean> = emptyMap()
+
+    // প্রতি ১৫ সেকেন্ড পরপর জেগে উঠে "আজকের তারিখে" পার হয়ে যাওয়া স্লট গ্রিড থেকে সরানোর জন্য ব্যাকগ্রাউন্ড লুপ।
+    // lifecycleScope-এর সাথে বাঁধা থাকায় Activity destroy হলে এটা নিজে থেকেই বন্ধ হয়ে যায়, আলাদা cancel লাগে না।
+    private var slotExpiryTickerJob: Job? = null
+    private val SLOT_EXPIRY_CHECK_INTERVAL_MS = 15_000L
 
     private lateinit var dateRow: LinearLayout
     private lateinit var timeGrid: GridLayout
@@ -254,11 +267,9 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
 
         // ---------------- SECTION: TIME ----------------
-        // FIX: timeGrid/timeLoadingText/customTimeBtn এখন buildDateOptions() কল করার
-        // *আগে* initialize করা হচ্ছে, কারণ buildDateOptions() প্রথম ডেট চিপ অটো-সিলেক্ট
-        // (performClick) করে, যেটা fetchBookedTimesAndRefresh -> highlightSelectedTime
-        // এর মাধ্যমে সরাসরি timeGrid অ্যাক্সেস করে। আগে এই অর্ডারটা উল্টো থাকায়
-        // timeGrid lateinit-uninitialized অবস্থায় অ্যাক্সেস হয়ে ক্র্যাশ করত।
+        // timeGrid/timeLoadingText/customTimeBtn buildDateOptions() কল করার *আগে* initialize করা হচ্ছে,
+        // কারণ buildDateOptions() প্রথম ডেট চিপ অটো-সিলেক্ট (performClick) করে, যেটা
+        // fetchBookedTimesAndRefresh -> renderTimeSlotsForDate এর মাধ্যমে সরাসরি timeGrid অ্যাক্সেস করে।
         val timeSection = sectionTitle(HomeActivity.VectorIconDrawable.IconType.CLOCK, "সময় নির্বাচন করুন")
         timeLoadingText = text("তারিখের জন্য খালি সময় যাচাই করা হচ্ছে...", 11f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -272,7 +283,9 @@ class BookAppointmentActivity : AppCompatActivity() {
                 setMargins(dp(14), dp(10), dp(14), 0)
             }
         }
-        buildTimeSlots()
+        // NOTE: এখানে আগে buildTimeSlots() কল করে গ্রিড একবারে বানিয়ে GONE/VISIBLE টগল করা হতো —
+        // সেটাই cross-date leak-এর মূল কারণ ছিল। এখন গ্রিড খালি রেখে renderTimeSlotsForDate()
+        // প্রতিটা তারিখ বদলে (এবং প্রতিটা booked-times রেসপন্স আসার পর) সম্পূর্ণ নতুন করে বানায়।
 
         customTimeBtn = text("+ অন্য সময় বেছে নিন", 12.5f, Typeface.BOLD, colorPrimary, Gravity.CENTER).apply {
             background = roundedBg(Color.parseColor("#E4F3F1"), 14f)
@@ -449,6 +462,14 @@ class BookAppointmentActivity : AppCompatActivity() {
         scroll.addView(page)
         root.addView(scroll)
         setContentView(root)
+
+        // এডমিনের গ্লোবাল স্লট সেটিংস (slot_settings টেবিল) একবার লোড করে ক্যাশ করা হয়,
+        // যাতে প্রতি তারিখ বদলে বারবার এই টেবিলটা আলাদা করে ফেচ করতে না হয়।
+        loadGlobalSlotSettings()
+
+        // "আজকের" তারিখে বসে থাকা অবস্থায় সময় গড়িয়ে গেলে (কেউ কোনো অ্যাকশন না নিলেও)
+        // পার হয়ে যাওয়া স্লট স্বয়ংক্রিয়ভাবে গ্রিড থেকে সরে যাওয়ার জন্য ব্যাকগ্রাউন্ড টিকার চালু করা হলো।
+        startSlotExpiryTicker()
     }
 
     // ------------------------------------------------------------------
@@ -498,7 +519,7 @@ class BookAppointmentActivity : AppCompatActivity() {
                         )
                     }
                 }
-                // এই তারিখে Supabase-এ ইতিমধ্যে বুক থাকা সময়গুলো যাচাই করে সেগুলো হাইড করে
+                // এই তারিখে Supabase-এ ইতিমধ্যে বুক থাকা সময় ও এডমিনের date-override যাচাই করে গ্রিড নতুন করে বানানো হয়
                 fetchBookedTimesAndRefresh(option.isoDate)
             }
             if (index == 0) chip.performClick()
@@ -575,6 +596,9 @@ class BookAppointmentActivity : AppCompatActivity() {
      * নির্বাচিত তারিখ আজকের হলে এবং দেওয়া value24 (HH:mm) সময়টা বর্তমান সময়ের আগে হলে true রিটার্ন করে,
      * অর্থাৎ এই স্লটটা এখন আর বুক করা সম্ভব না বলে গণ্য হবে। আজকের বাইরের অন্য যেকোনো তারিখের জন্য
      * সবসময় false — ভবিষ্যতের তারিখের কোনো স্লট কখনো "অতীত" হিসেবে হাইড হবে না।
+     *
+     * এই ফাংশনটাই স্লট এখন অতীত কিনা তার একমাত্র উৎস — গ্রিড প্রথমবার বানানোর সময়ও এটাই ব্যবহার হয়,
+     * আর প্রতি ১৫ সেকেন্ডে চলা স্বয়ংক্রিয় টিকারও এটাই কল করে (দেখুন removeExpiredSlotsFromGrid নিচে)।
      */
     private fun isPastTimeSlot(value24: String): Boolean {
         val date = selectedDate ?: return false
@@ -593,33 +617,77 @@ class BookAppointmentActivity : AppCompatActivity() {
         return slotCal.before(now)
     }
 
+    /** নির্দিষ্ট একটা স্লট এই মুহূর্তে দেখানো উচিত কিনা: এডমিনের override/global সেটিং, বুকড, এবং অতীত — তিনটাই মিলিয়ে চেক করে */
+    private fun isSlotVisible(value24: String): Boolean {
+        val overrideEnabled = currentDateOverrides[value24]
+        val globalEnabled = disabledSlotsGlobal[value24] ?: true
+        val enabledByAdmin = overrideEnabled ?: globalEnabled
+        return enabledByAdmin &&
+            !bookedTimesForDate.contains(value24) &&
+            !isPastTimeSlot(value24)
+    }
+
     // ------------------------------------------------------------------
-    private fun buildTimeSlots() {
+    /**
+     * নির্দিষ্ট তারিখের জন্য টাইম-গ্রিড সম্পূর্ণ নতুন করে বানায় — আগের মতো একবার বানিয়ে
+     * GONE/VISIBLE টগল করার বদলে। শুধু "এডমিন-enabled + বুকড নয় + অতীত নয়" এমন স্লটগুলোই
+     * চিপ হিসেবে যোগ হয়, ফলে বাদ পড়া যেকোনো স্লটের জায়গা স্বয়ংক্রিয়ভাবেই পরের খালি স্লট
+     * নিয়ে নেয় (কারণ hidden স্লট আর গ্রিডেই যোগ হয় না)।
+     */
+    private fun renderTimeSlotsForDate(isoDate: String) {
+        // এই রেন্ডারটা এখনো বর্তমানে সিলেক্টেড তারিখের জন্যই কিনা শেষ মুহূর্তে আরেকবার যাচাই করা হয়
+        if (selectedDate?.isoDate != isoDate) return
+
         timeGrid.removeAllViews()
-        timeSlots.forEach { slot ->
-            val chip = text(slot.label, 12.5f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
-                background = roundedBgStroke(colorCard, colorFieldBorder, 14f, 1)
-                setPadding(dp(14), dp(14), dp(14), dp(14))
-                tag = slot.value24
-                layoutParams = GridLayout.LayoutParams(
-                    GridLayout.spec(GridLayout.UNDEFINED, 1f),
-                    GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                ).apply {
-                    width = 0
-                    setMargins(dp(4), dp(4), dp(4), dp(4))
-                }
-                setOnClickListener {
-                    selectedTime24 = slot.value24
-                    highlightSelectedTime(tag)
-                }
-            }
-            timeGrid.addView(chip)
+
+        val visibleSlots = timeSlots.filter { isSlotVisible(it.value24) }
+
+        if (visibleSlots.isEmpty()) {
+            addNoSlotsPlaceholder()
+            return
         }
+
+        visibleSlots.forEach { slot ->
+            timeGrid.addView(buildTimeChip(slot))
+        }
+
+        highlightSelectedTime(selectedTime24)
+    }
+
+    /** একটা সময়-স্লটের চিপ (TextView) তৈরি করে — নতুন গ্রিড রেন্ডার আর কাস্টম রিফ্রেশ দুই জায়গাতেই পুনঃব্যবহার হয় */
+    private fun buildTimeChip(slot: TimeSlot): TextView {
+        return text(slot.label, 12.5f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
+            background = roundedBgStroke(colorCard, colorFieldBorder, 14f, 1)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            tag = slot.value24
+            layoutParams = GridLayout.LayoutParams(
+                GridLayout.spec(GridLayout.UNDEFINED, 1f),
+                GridLayout.spec(GridLayout.UNDEFINED, 1f)
+            ).apply {
+                width = 0
+                setMargins(dp(4), dp(4), dp(4), dp(4))
+            }
+            setOnClickListener {
+                selectedTime24 = slot.value24
+                highlightSelectedTime(tag)
+            }
+        }
+    }
+
+    /** গ্রিডে দেখানোর মতো কোনো স্লট না থাকলে (সব বুকড/বন্ধ/অতীত) একটা informational টেক্সট দেখায় */
+    private fun addNoSlotsPlaceholder() {
+        timeGrid.addView(text("এই তারিখে কোনো খালি সময় নেই", 12f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER).apply {
+            layoutParams = GridLayout.LayoutParams(
+                GridLayout.spec(GridLayout.UNDEFINED, 2, 1f),
+                GridLayout.spec(0, 2)
+            )
+            setPadding(0, dp(12), 0, dp(12))
+        })
     }
 
     private fun highlightSelectedTime(selectedTag: Any?) {
         for (i in 0 until timeGrid.childCount) {
-            val c = timeGrid.getChildAt(i) as TextView
+            val c = timeGrid.getChildAt(i) as? TextView ?: continue
             val selected = c.tag == selectedTag
             c.background = if (selected)
                 GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(colorPrimaryLight, colorPrimaryDark)).apply { cornerRadius = dp(14).toFloat() }
@@ -646,7 +714,7 @@ class BookAppointmentActivity : AppCompatActivity() {
             }
             selectedTime24 = chosen
             for (i in 0 until timeGrid.childCount) {
-                val c = timeGrid.getChildAt(i) as TextView
+                val c = timeGrid.getChildAt(i) as? TextView ?: continue
                 c.background = roundedBgStroke(colorCard, colorFieldBorder, 14f, 1)
                 c.setTextColor(colorDark)
             }
@@ -657,7 +725,7 @@ class BookAppointmentActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // নির্বাচিত তারিখের জন্য Supabase থেকে ইতিমধ্যে বুক থাকা সময়গুলো আনা ও UI আপডেট করা
+    // নির্বাচিত তারিখের জন্য Supabase থেকে বুক থাকা সময় + এডমিনের enable/disable সেটিংস আনা ও UI আপডেট করা
     // ------------------------------------------------------------------
     private fun fetchBookedTimesAndRefresh(isoDate: String) {
         bookingFetchJob?.cancel()
@@ -668,47 +736,94 @@ class BookAppointmentActivity : AppCompatActivity() {
 
         // তারিখ পরিবর্তন হলে আগের সময় নির্বাচন বাতিল করে দেওয়া হয়, কারণ প্রতিটা তারিখের খালি সময় ভিন্ন হতে পারে
         selectedTime24 = null
-        highlightSelectedTime(null)
 
-        // ডেটা আসা পর্যন্ত বাকি সব স্লট দৃশ্যমান রাখা হয়, তবে যেসব স্লটের সময় ইতিমধ্যে পার হয়ে গেছে
-        // (শুধু আজকের তারিখের ক্ষেত্রে প্রযোজ্য) সেগুলো নেটওয়ার্ক রেসপন্সের অপেক্ষা না করেই সরাসরি হাইড করা হয়
-        for (i in 0 until timeGrid.childCount) {
-            val c = timeGrid.getChildAt(i)
-            val value = c.tag as? String
-            c.visibility = if (value != null && isPastTimeSlot(value)) View.GONE else View.VISIBLE
-        }
+        // ডেটা আসা পর্যন্ত গ্রিড খালি রেখে লোডিং টেক্সট দেখানো হয় (আগে বাকি স্লট দেখিয়ে GONE করা হতো,
+        // কিন্তু সেটাই ভুলভাবে ভিন্ন তারিখের ডেটা সাময়িকভাবে দেখানোর ঝুঁকি তৈরি করত)
+        timeGrid.removeAllViews()
         timeLoadingText.visibility = View.VISIBLE
 
         bookingFetchJob = lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { SupabaseClient.getBookedTimes(isoDate) }
+            val bookedResult = withContext(Dispatchers.IO) { SupabaseClient.getBookedTimes(isoDate) }
+            val overridesResult = withContext(Dispatchers.IO) { SupabaseClient.getSlotDateOverrides(isoDate) }
 
-            // এই সময়ের মধ্যে ইউজার অন্য কোনো তারিখ সিলেক্ট করে ফেললে requestId বেড়ে যায়,
-            // তখন এই পুরনো রেসপন্সটা চুপচাপ উপেক্ষা করা হয় — এটাই cross-date leak ঠেকানোর গার্ড
-            if (requestId != bookingFetchRequestId) return@launch
+            // এই সময়ের মধ্যে ইউজার অন্য কোনো তারিখ সিলেক্ট করে ফেললে requestId বেড়ে যায়, অথবা
+            // selectedDate ততক্ষণে বদলে যেতে পারে — দুটো শর্তের যেকোনো একটা সত্যি হলেই এই পুরনো
+            // রেসপন্স চুপচাপ উপেক্ষা করা হয়। এটাই cross-date leak ঠেকানোর মূল গার্ড।
+            if (requestId != bookingFetchRequestId || selectedDate?.isoDate != isoDate) return@launch
 
             timeLoadingText.visibility = View.GONE
-            result.onSuccess { booked ->
+
+            bookedResult.onSuccess { booked ->
                 bookedTimesForDate = booked.toMutableSet()
-                applyBookedTimesFilter()
             }.onFailure {
-                // ইন্টারনেট/সার্ভার সমস্যায় চুপচাপ সব (অতীত ছাড়া) স্লট খোলা রাখা হয়, যেন ইউজার আটকে না যায়
+                // ইন্টারনেট/সার্ভার সমস্যায় চুপচাপ সব (অতীত/বন্ধ ছাড়া) স্লট খোলা রাখা হয়, যেন ইউজার আটকে না যায়
                 bookedTimesForDate = mutableSetOf()
-                applyBookedTimesFilter()
+            }
+
+            currentDateOverrides = overridesResult.getOrNull() ?: emptyMap()
+
+            renderTimeSlotsForDate(isoDate)
+        }
+    }
+
+    /** এডমিনের গ্লোবাল slot_settings টেবিল একবার লোড করে ক্যাশ করে; ব্যর্থ হলে সব স্লট ডিফল্টভাবে চালু ধরা হয় */
+    private fun loadGlobalSlotSettings() {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { SupabaseClient.getSlotSettings() }
+            result.onSuccess { settings ->
+                disabledSlotsGlobal = settings
+                // ইতিমধ্যে একটা তারিখ সিলেক্টেড থাকলে (সাধারণত "আজ") নতুন সেটিংস অনুযায়ী গ্রিড আবার আঁকা হয়
+                selectedDate?.let { renderTimeSlotsForDate(it.isoDate) }
+            }
+            // ব্যর্থ হলে disabledSlotsGlobal খালিই থাকে => সব স্লট চালু ধরা হয় (isSlotVisible-এর ডিফল্ট আচরণ)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // AUTO-EXPIRY TICKER — "আজকের" তারিখে বসে থাকা অবস্থায় ঘড়ির কাঁটা এগিয়ে কোনো স্লট পার হয়ে
+    // গেলে, কোনো ইউজার অ্যাকশন (তারিখ বদল/রিফ্রেশ) ছাড়াই স্বয়ংক্রিয়ভাবে সেটা গ্রিড থেকে সরিয়ে দেয়।
+    // ------------------------------------------------------------------
+    private fun startSlotExpiryTicker() {
+        slotExpiryTickerJob?.cancel()
+        slotExpiryTickerJob = lifecycleScope.launch {
+            while (true) {
+                delay(SLOT_EXPIRY_CHECK_INTERVAL_MS)
+                removeExpiredSlotsFromGrid()
             }
         }
     }
 
     /**
-     * নির্দিষ্ট তারিখে Supabase-এ যেসব সময় ইতিমধ্যে বুক হয়ে আছে, এবং (আজকের তারিখ হলে) যেসব সময়
-     * ইতিমধ্যে পার হয়ে গেছে — এই দুই ধরনের স্লট টাইম-গ্রিড থেকে হাইড (gone) করে দেয়
+     * বর্তমানে গ্রিডে দেখানো প্রতিটা স্লট আবার isPastTimeSlot() দিয়ে যাচাই করে, আর কোনোটা পার হয়ে
+     * গেলে সেটা View হিসেবেই গ্রিড থেকে remove করে দেয় (শুধু GONE নয়) — যাতে বাকি স্লটগুলো
+     * GridLayout-এ নিজে থেকেই re-flow করে খালি জায়গা পূরণ করে নেয়।
      */
-    private fun applyBookedTimesFilter() {
-        for (i in 0 until timeGrid.childCount) {
-            val c = timeGrid.getChildAt(i) as TextView
-            val value = c.tag as? String ?: continue
-            val hiddenByBooking = bookedTimesForDate.contains(value)
-            val hiddenByPastTime = isPastTimeSlot(value)
-            c.visibility = if (hiddenByBooking || hiddenByPastTime) View.GONE else View.VISIBLE
+    private fun removeExpiredSlotsFromGrid() {
+        // শুধু "আজকের" তারিখ সিলেক্ট করা থাকলেই কোনো স্লট "past" হতে পারে; অন্য তারিখে কিছুই করার নেই
+        if (selectedDate?.isoDate != todayIsoDate()) return
+        if (!::timeGrid.isInitialized) return
+
+        var removedAny = false
+        for (i in timeGrid.childCount - 1 downTo 0) {
+            val child = timeGrid.getChildAt(i)
+            val value = child.tag as? String ?: continue // placeholder টেক্সটের কোনো tag নেই, তাই স্কিপ হবে
+            if (isPastTimeSlot(value)) {
+                if (selectedTime24 == value) {
+                    // ইউজার ঠিক এই সময়টাই সিলেক্ট করে বসে ছিল — এখন সেটা আর বৈধ না, তাই বাতিল করে জানানো হচ্ছে
+                    selectedTime24 = null
+                    Toast.makeText(
+                        this,
+                        "আপনার নির্বাচিত সময়টা এখন পার হয়ে গেছে, দয়া করে নতুন একটা সময় বেছে নিন",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                timeGrid.removeViewAt(i)
+                removedAny = true
+            }
+        }
+
+        if (removedAny && timeGrid.childCount == 0) {
+            addNoSlotsPlaceholder()
         }
     }
 
@@ -971,14 +1086,19 @@ class BookAppointmentActivity : AppCompatActivity() {
             Toast.makeText(this, "রিপোর্ট আপলোড হচ্ছে (${reportsToUpload.size}টি ফাইল)...", Toast.LENGTH_SHORT).show()
         }
         lifecycleScope.launch {
-            // শেষ মুহূর্তে আরেকজন একই সময় বুক করে ফেলেছে কিনা তা নিশ্চিত করার জন্য একবার আবার যাচাই করা হয়
+            // শেষ মুহূর্তে আরেকজন একই সময় বুক করে ফেলেছে কিনা, বা সময় নিজেই পার হয়ে গেছে কিনা তা নিশ্চিত করার জন্য একবার আবার যাচাই করা হয়
             val recheck = SupabaseClient.getBookedTimes(selectedDate!!.isoDate)
             val nowBooked = recheck.getOrNull()?.toSet() ?: emptySet()
-            if (nowBooked.contains(selectedTime24)) {
+            val stillPast = selectedTime24?.let { isPastTimeSlot(it) } == true
+            if (nowBooked.contains(selectedTime24) || stillPast) {
                 confirmBtn.isEnabled = true
                 bookedTimesForDate = nowBooked.toMutableSet()
-                applyBookedTimesFilter()
-                Toast.makeText(this@BookAppointmentActivity, "দুঃখিত, এই সময়টা এইমাত্র বুক হয়ে গেছে। অন্য একটা সময় বেছে নিন", Toast.LENGTH_LONG).show()
+                renderTimeSlotsForDate(selectedDate!!.isoDate)
+                val msg = if (stillPast)
+                    "দুঃখিত, এই সময়টা এইমাত্র পার হয়ে গেছে। অন্য একটা সময় বেছে নিন"
+                else
+                    "দুঃখিত, এই সময়টা এইমাত্র বুক হয়ে গেছে। অন্য একটা সময় বেছে নিন"
+                Toast.makeText(this@BookAppointmentActivity, msg, Toast.LENGTH_LONG).show()
                 return@launch
             }
 
