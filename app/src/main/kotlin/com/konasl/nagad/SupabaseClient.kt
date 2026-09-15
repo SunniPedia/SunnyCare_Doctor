@@ -46,14 +46,12 @@ import java.util.concurrent.TimeUnit
  *   address text,
  *   emergency_contact text,
  *   medical_history text,
- *   password_salt text,          -- এখন থেকে এই কলামেই ৪-ডিজিট PIN এর সল্ট থাকে
- *   password_hash text,          -- এবং এখানে PIN এর হ্যাশ থাকে (স্কিমা অপরিবর্তিত রাখা হয়েছে)
- *   device_id text,              -- নতুন: PIN + Device বাইন্ডিং এর জন্য (নিচে দেখুন)
- *   profile_picture_url text,    -- নতুন: SignupActivity থেকে আপলোড করা প্রোফাইল ছবির পাবলিক URL
+ *   password_salt text,
+ *   password_hash text,
+ *   device_id text,
+ *   profile_picture_url text,
  *   created_at timestamptz default now()
  * );
- *
- * -- যদি patients টেবিল আগে থেকেই থাকে (পুরাতন অ্যাপ), নিচের migration SQL box টা চালান।
  *
  * create table appointments (
  *   id uuid primary key default gen_random_uuid(),
@@ -63,25 +61,16 @@ import java.util.concurrent.TimeUnit
  *   reason text,
  *   preferred_date text,
  *   preferred_time text,
- *   status text default 'pending', -- pending / confirmed / completed / cancelled
+ *   status text default 'pending',
  *   payment_method text,
  *   fee integer default 800,
  *   transaction_id text,
- *   payment_status text default 'not_applicable', -- not_applicable / pending_verification / verified / rejected
- *   report_url text, -- রোগীর আপলোড করা আগের টেস্ট রিপোর্টের Supabase Storage পাবলিক URL(গুলো)।
- *                    -- একাধিক ফাইল আপলোড করলে কমা (,) দিয়ে একাধিক URL এই একই কলামে জমা হয়
- *                    -- (ফাঁকা রাখলে বুঝতে হবে রোগী কোনো রিপোর্ট আপলোড করেননি)
- *   slot_open boolean not null default false, -- নতুন: true হলে বোঝাবে রোগীর সিরিয়াল/স্লট
- *                    -- এখন ওপেন — তখন HomeActivity-র "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ডে ক্লিক করলে
- *                    -- WaitingActivity ওপেন হবে।
+ *   payment_status text default 'not_applicable',
+ *   report_url text,
+ *   slot_open boolean not null default false,
  *   created_at timestamptz default now()
  * );
  *
- * -- create index if not exists idx_appointments_date on appointments (preferred_date);
- *
- * ----------------------------------------------------------------------------
- * এডমিন স্লট এনাবল/ডিজেবল
- * ----------------------------------------------------------------------------
  * create table if not exists slot_settings (
  *   value24 text primary key,
  *   enabled boolean not null default true
@@ -101,9 +90,6 @@ import java.util.concurrent.TimeUnit
  * alter table slot_settings disable row level security;
  * alter table slot_date_overrides disable row level security;
  *
- * ----------------------------------------------------------------------------
- * TEST REPORT আপলোডের জন্য Storage bucket
- * ----------------------------------------------------------------------------
  * insert into storage.buckets (id, name, public)
  * values ('test-reports', 'test-reports', true)
  * on conflict (id) do nothing;
@@ -113,13 +99,6 @@ import java.util.concurrent.TimeUnit
  *
  * create policy "Allow public read of test-reports"
  * on storage.objects for select to anon using (bucket_id = 'test-reports');
- *
- * ----------------------------------------------------------------------------
- * নতুন (এই আপডেটে যোগ হয়েছে): device_id, profile_picture_url কলাম +
- * profile-pictures storage bucket + appointments.slot_open কলাম —
- * সম্পূর্ণ SQL চ্যাট রেসপন্সের নিচের আলাদা SQL কোড বক্সে দেওয়া আছে,
- * ওটা কপি করে Supabase SQL Editor এ চালান। উদাহরণ:
- * alter table appointments add column if not exists slot_open boolean not null default false;
  * ============================================================================
  */
 object SupabaseClient {
@@ -131,7 +110,7 @@ object SupabaseClient {
     // Storage bucket যেখানে রোগীদের টেস্ট রিপোর্ট (ছবি/PDF) জমা হয়
     private const val REPORTS_BUCKET = "test-reports"
 
-    // নতুন: প্রোফাইল ছবির জন্য আলাদা bucket
+    // প্রোফাইল ছবির জন্য আলাদা bucket
     private const val PROFILE_BUCKET = "profile-pictures"
 
     private const val PREFS = "sunnycare_prefs"
@@ -234,6 +213,21 @@ object SupabaseClient {
         }
     }
 
+    /** নতুন: JSONArray (bulk) POST করার জন্য — একসাথে অনেকগুলো OTP কোড যোগ করতে ব্যবহৃত হয় */
+    private suspend fun postArray(path: String, jsonArray: JSONArray, prefer: String = "return=minimal"): Unit = withContext(Dispatchers.IO) {
+        val req = baseRequest(path)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Prefer", prefer)
+            .post(jsonArray.toString().toRequestBody(JSON))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val body = resp.body?.string().orEmpty()
+                throw IOException("POST(array) $path failed: ${resp.code} $body")
+            }
+        }
+    }
+
     private suspend fun patch(path: String, json: JSONObject): JSONArray = withContext(Dispatchers.IO) {
         val req = baseRequest(path)
             .addHeader("Content-Type", "application/json")
@@ -260,11 +254,8 @@ object SupabaseClient {
     }
 
     // ---------------------------------------------------------------------
-    // PIN HASHING (আগে "পাসওয়ার্ড" নামে ছিল, স্কিমা অপরিবর্তিত — এখন ৪-ডিজিট PIN হ্যাশ হয়ে সেভ হয়)
+    // PIN HASHING
     // ---------------------------------------------------------------------
-    // NOTE: কোনো ব্যাকএন্ড সার্ভার ছাড়া শুধু Supabase REST (anon key) দিয়ে কাজ করা হচ্ছে,
-    // তাই bcrypt/argon2-এর মতো সার্ভার-সাইড হ্যাশিং সম্ভব না। এর বদলে প্রতিটা PIN এর জন্য
-    // একটা আলাদা র‍্যান্ডম সল্ট (salt) জেনারেট করে salt+PIN এর SHA-256 হ্যাশ সেভ করা হয়।
     private fun sha256Hex(input: String): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val bytes = digest.digest(input.toByteArray(Charsets.UTF_8))
@@ -280,7 +271,7 @@ object SupabaseClient {
     private fun hashPassword(pin: String, salt: String): String = sha256Hex("$salt:$pin")
 
     // ---------------------------------------------------------------------
-    // OTP FLOW (using pre-generated otp_codes pool - no real SMS gateway)
+    // OTP FLOW
     // ---------------------------------------------------------------------
 
     private const val OTP_VALIDITY_MINUTES = 2
@@ -356,12 +347,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /**
-     * নতুন: এই deviceId দিয়ে ইতিমধ্যে অন্য কোনো একাউন্ট বাঁধা আছে কিনা চেক করে।
-     * "একটা ডিভাইসে একটা একাউন্ট" — এই নিয়ম প্রয়োগের জন্য ব্যবহার হয়।
-     * excludePatientId দিলে সেই নিজের patient id বাদ দিয়ে চেক করে (লগইনের সময় নিজের
-     * সাথে conflict দেখাবে না)।
-     */
     suspend fun findPatientByDeviceId(deviceId: String, excludePatientId: String? = null): Result<JSONObject?> = try {
         var path = "patients?device_id=eq.${enc(deviceId)}&limit=1"
         if (excludePatientId != null) path += "&id=neq.${enc(excludePatientId)}"
@@ -371,7 +356,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** নতুন: প্রথমবার সফল PIN যাচাই/সেটের পর এই ডিভাইসকে patient এর সাথে বেঁধে দেয়। */
     suspend fun bindDeviceToPatient(patientId: String, deviceId: String): Result<Unit> = try {
         patch("patients?id=eq.${enc(patientId)}", JSONObject().put("device_id", deviceId))
         Result.success(Unit)
@@ -388,9 +372,9 @@ object SupabaseClient {
         val address: String,
         val emergencyContact: String,
         val medicalHistory: String,
-        val pin: String,             // ৪-ডিজিট PIN (আগে password ছিল)
-        val deviceId: String,        // নতুন: সাইনআপের সময়ই ডিভাইস বাঁধা হয়
-        val profilePictureUrl: String = "" // নতুন: ঐচ্ছিক প্রোফাইল ছবি URL
+        val pin: String,
+        val deviceId: String,
+        val profilePictureUrl: String = ""
     )
 
     suspend fun registerPatient(p: NewPatient): Result<JSONObject> = try {
@@ -419,7 +403,6 @@ object SupabaseClient {
         Result.failure(Exception(friendly, e))
     }
 
-    /** প্রথমবার PIN সেট করা (পুরাতন অ্যাকাউন্ট যাদের password_hash খালি) অথবা অ্যাডমিন রিসেট করে দিলে */
     suspend fun setPatientPassword(patientId: String, newPin: String): Result<Unit> = try {
         val salt = generateSalt()
         val hash = hashPassword(newPin, salt)
@@ -433,7 +416,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** লগইনের সময় ইউজারের দেওয়া PIN, patients টেবিলে সেভ থাকা salt+hash এর সাথে মিলিয়ে দেখে */
     fun verifyPatientPassword(patient: JSONObject, enteredPin: String): Result<Boolean> = try {
         val salt = patient.optString("password_salt", "")
         val hash = patient.optString("password_hash", "")
@@ -455,7 +437,7 @@ object SupabaseClient {
     }
 
     // ---------------------------------------------------------------------
-    // STORAGE — রোগীর আগের টেস্ট রিপোর্ট (ছবি/PDF) আপলোড
+    // STORAGE
     // ---------------------------------------------------------------------
     suspend fun uploadReportFile(fileName: String, mimeType: String, bytes: ByteArray): Result<String> =
         withContext(Dispatchers.IO) {
@@ -486,10 +468,6 @@ object SupabaseClient {
             }
         }
 
-    /**
-     * নতুন: SignupActivity থেকে ইউজারের প্রোফাইল ছবি Supabase Storage-এর `profile-pictures`
-     * বাকেটে আপলোড করে এবং সফল হলে পাবলিক URL রিটার্ন করে (patients.profile_picture_url এ সেভ হবে)।
-     */
     suspend fun uploadProfilePicture(fileName: String, mimeType: String, bytes: ByteArray): Result<String> =
         withContext(Dispatchers.IO) {
             try {
@@ -563,10 +541,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /**
-     * নতুন: একটা নির্দিষ্ট অ্যাপয়েন্টমেন্ট আইডি দিয়ে সর্বশেষ তথ্য (status, slot_open সহ)
-     * আনার জন্য — WaitingActivity প্রতি ১০ সেকেন্ডে এই ফাংশন কল করে স্ট্যাটাস পোলিং করে।
-     */
     suspend fun getAppointmentById(appointmentId: String): Result<JSONObject?> = try {
         val rows = get("appointments?id=eq.${enc(appointmentId)}&limit=1")
         Result.success(if (rows.length() > 0) rows.getJSONObject(0) else null)
@@ -664,6 +638,102 @@ object SupabaseClient {
         }
         patch("appointments?id=eq.${enc(appointmentId)}", json)
         Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    // =======================================================================
+    // ==========            নতুন — Admin.kt এর জন্য                ==========
+    // ==========   (SupabaseClient এর সব ডেটা এডমিন পর্যবেক্ষণ ও   ==========
+    // ==========          ম্যানেজ করতে পারবে এখানকার              ==========
+    // ==========          ফাংশনগুলো দিয়ে)                          ==========
+    // =======================================================================
+
+    /** এডমিন প্যানেল — সব রোগীর সম্পূর্ণ লিস্ট (নতুন থেকে পুরনো) */
+    suspend fun adminGetAllPatients(): Result<JSONArray> = try {
+        val rows = get("patients?select=*&order=created_at.desc")
+        Result.success(rows)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** এডমিন প্যানেল — নির্দিষ্ট কোনো রোগীর যেকোনো ফিল্ড (JSONObject আকারে) আপডেট */
+    suspend fun adminUpdatePatient(patientId: String, fields: JSONObject): Result<Unit> = try {
+        patch("patients?id=eq.${enc(patientId)}", fields)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** এডমিন প্যানেল — রোগী মুছে ফেলা (তার সব অ্যাপয়েন্টমেন্টসহ) */
+    suspend fun adminDeletePatient(patientId: String): Result<Unit> = deleteAccount(patientId)
+
+    /** এডমিন প্যানেল — সব অ্যাপয়েন্টমেন্টের সম্পূর্ণ লিস্ট (নতুন থেকে পুরনো) */
+    suspend fun adminGetAllAppointments(): Result<JSONArray> = try {
+        val rows = get("appointments?select=*&order=created_at.desc")
+        Result.success(rows)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** এডমিন প্যানেল — অ্যাপয়েন্টমেন্টের যেকোনো ফিল্ড (status, slot_open, payment_status, fee ইত্যাদি) আপডেট */
+    suspend fun adminUpdateAppointment(appointmentId: String, fields: JSONObject): Result<Unit> = try {
+        patch("appointments?id=eq.${enc(appointmentId)}", fields)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** এডমিন প্যানেল — অ্যাপয়েন্টমেন্ট সম্পূর্ণ ডিলিট */
+    suspend fun adminDeleteAppointment(appointmentId: String): Result<Unit> = try {
+        delete("appointments?id=eq.${enc(appointmentId)}")
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** এডমিন প্যানেল — OTP পুলের অবস্থা: (available, assigned, verified) কতগুলো করে আছে */
+    suspend fun adminGetOtpStats(): Result<Triple<Int, Int, Int>> = try {
+        val available = get("otp_codes?status=eq.available&select=id")
+        val assigned = get("otp_codes?status=eq.assigned&select=id")
+        val verified = get("otp_codes?status=eq.verified&select=id")
+        Result.success(Triple(available.length(), assigned.length(), verified.length()))
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** এডমিন প্যানেল — পুলে নতুন র‍্যান্ডম ৬-ডিজিট OTP কোড বাল্কে যোগ করা */
+    suspend fun adminAddOtpCodes(count: Int): Result<Unit> = try {
+        val arr = JSONArray()
+        val rnd = java.security.SecureRandom()
+        repeat(count) {
+            val code = (100000 + rnd.nextInt(900000)).toString()
+            arr.put(JSONObject().put("code", code))
+        }
+        postArray("otp_codes", arr)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** এডমিন প্যানেল — ব্যবহৃত/মেয়াদোত্তীর্ণ সব OTP কোডকে আবার "available" অবস্থায় রিসেট করা */
+    suspend fun adminResetOtpPool(): Result<Unit> = try {
+        val json = JSONObject().apply {
+            put("status", "available")
+            put("phone", JSONObject.NULL)
+            put("assigned_at", JSONObject.NULL)
+            put("expires_at", JSONObject.NULL)
+        }
+        patch("otp_codes?status=neq.available", json)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** এডমিন প্যানেল — একটি নির্দিষ্ট তারিখের সব স্লট-ওভাররাইড লিস্ট (তারিখ অনুযায়ী নতুন থেকে পুরনো) */
+    suspend fun adminGetAllSlotDateOverrides(): Result<JSONArray> = try {
+        val rows = get("slot_date_overrides?select=*&order=slot_date.desc")
+        Result.success(rows)
     } catch (e: Exception) {
         Result.failure(e)
     }
