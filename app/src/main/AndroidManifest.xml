@@ -24,6 +24,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+		<activity android:name=".AdminActivity" android:exported="false" />
+		<activity android:name=".WaitingActivity" android:exported="false" />
         <activity android:name=".AdminPaymentVerificationActivity" android:exported="false" />
 		<activity android:name=".BookAppointmentActivity" android:exported="false" />
         <activity android:name=".DebugActivity" android:exported="false" />
