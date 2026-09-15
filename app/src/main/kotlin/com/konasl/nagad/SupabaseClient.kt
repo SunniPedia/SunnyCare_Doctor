@@ -83,9 +83,30 @@ import java.util.concurrent.TimeUnit
  * -- ইতিমধ্যে বুক করা স্লট হাইড করতে ব্যবহৃত হয়) — ঐচ্ছিক কিন্তু বড় ডেটায় পারফরম্যান্সের জন্য ভালো:
  * -- create index if not exists idx_appointments_date on appointments (preferred_date);
  *
+ * ----------------------------------------------------------------------------
+ * এডমিন স্লট এনাবল/ডিজেবল (নতুন — টাইম-স্লট গায়েব/দৃশ্যমান করার জন্য)
+ * ----------------------------------------------------------------------------
+ * -- ১) গ্লোবাল সেটিংস: কোনো নির্দিষ্ট সময় (যেমন "20:00") সব তারিখেই বন্ধ রাখতে চাইলে
+ * create table if not exists slot_settings (
+ *   value24 text primary key,        -- '10:00', '14:30' ইত্যাদি (২৪-ঘণ্টা ফরম্যাট)
+ *   enabled boolean not null default true
+ * );
+ *
+ * -- ২) নির্দিষ্ট একটা তারিখে নির্দিষ্ট একটা সময় ব্যতিক্রমভাবে বন্ধ/চালু রাখতে চাইলে
+ * --    (গ্লোবাল সেটিংসকে override করে — উদাহরণ: শুধু ঈদের দিন সব স্লট বন্ধ)
+ * create table if not exists slot_date_overrides (
+ *   id bigint generated always as identity primary key,
+ *   slot_date text not null,         -- 'yyyy-MM-dd'
+ *   value24 text not null,           -- '10:00', '14:30' ইত্যাদি
+ *   enabled boolean not null,
+ *   unique(slot_date, value24)
+ * );
+ *
  * alter table otp_codes disable row level security;
  * alter table patients disable row level security;
  * alter table appointments disable row level security;
+ * alter table slot_settings disable row level security;
+ * alter table slot_date_overrides disable row level security;
  *
  * ----------------------------------------------------------------------------
  * TEST REPORT আপলোডের জন্য Storage bucket (একবারই সেটআপ করতে হবে):
@@ -209,6 +230,21 @@ object SupabaseClient {
             val body = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) throw IOException("POST $path failed: ${resp.code} $body")
             JSONArray(body)
+        }
+    }
+
+    /** POST করার সময় নিজস্ব Prefer হেডার (যেমন upsert-এর জন্য merge-duplicates) দিতে চাইলে এটা ব্যবহার হয় */
+    private suspend fun postWithPrefer(path: String, json: JSONObject, prefer: String): Unit = withContext(Dispatchers.IO) {
+        val req = baseRequest(path)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Prefer", prefer)
+            .post(json.toString().toRequestBody(JSON))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val body = resp.body?.string().orEmpty()
+                throw IOException("POST $path failed: ${resp.code} $body")
+            }
         }
     }
 
@@ -510,7 +546,7 @@ object SupabaseClient {
      * NOTE: এখানে preferred_date-এর exact match (eq.) ফিল্টার ব্যবহার করা হয়, তাই একটা তারিখের
      * বুকিং অন্য কোনো তারিখের স্লট হাইড করার কারণ হওয়ার কথা না — এই ফাংশনটা সবসময়ই সঠিকভাবে
      * তারিখ-স্কোপড ছিল। ক্লায়েন্ট সাইডে (BookAppointmentActivity) রেস-কন্ডিশন এড়াতে আলাদা
-     * request-id গার্ড যোগ করা হয়েছে, যা এই কোয়েরির ফলাফল ভুল তারিখে বসে যাওয়া থেকে রক্ষা করে।
+     * request-id + selectedDate গার্ড যোগ করা হয়েছে, যা এই কোয়েরির ফলাফল ভুল তারিখে বসে যাওয়া থেকে রক্ষা করে।
      */
     suspend fun getBookedTimes(date: String): Result<List<String>> = try {
         val rows = get("appointments?preferred_date=eq.${enc(date)}&status=neq.cancelled&select=preferred_time")
@@ -520,6 +556,73 @@ object SupabaseClient {
             if (t.isNotEmpty()) times.add(t)
         }
         Result.success(times)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    // ---------------------------------------------------------------------
+    // ADMIN — টাইম-স্লট এনাবল/ডিজেবল (নতুন)
+    // ---------------------------------------------------------------------
+
+    /**
+     * সব স্লটের গ্লোবাল enabled/disabled ম্যাপ আনে (slot_settings টেবিল)।
+     * যেসব value24-এর জন্য কোনো row-ই নেই, তাদের জন্য ম্যাপে কোনো এন্ট্রি থাকবে না —
+     * কলিং কোডে (BookAppointmentActivity.isSlotVisible) না-পাওয়া গেলে ডিফল্ট "enabled = true" ধরা হয়,
+     * তাই নতুন কোনো টাইম-স্লট যোগ করলে এটা নিজে থেকেই দৃশ্যমান থাকবে, আলাদা করে row বানাতে হবে না।
+     */
+    suspend fun getSlotSettings(): Result<Map<String, Boolean>> = try {
+        val rows = get("slot_settings?select=value24,enabled")
+        val map = mutableMapOf<String, Boolean>()
+        for (i in 0 until rows.length()) {
+            val o = rows.getJSONObject(i)
+            map[o.getString("value24")] = o.optBoolean("enabled", true)
+        }
+        Result.success(map)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** নির্দিষ্ট তারিখের override গুলো আনে (slot_date_overrides) — থাকলে global settings-কে override করবে */
+    suspend fun getSlotDateOverrides(date: String): Result<Map<String, Boolean>> = try {
+        val rows = get("slot_date_overrides?slot_date=eq.${enc(date)}&select=value24,enabled")
+        val map = mutableMapOf<String, Boolean>()
+        for (i in 0 until rows.length()) {
+            val o = rows.getJSONObject(i)
+            map[o.getString("value24")] = o.getBoolean("enabled")
+        }
+        Result.success(map)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * এডমিন প্যানেল থেকে একটা স্লট গ্লোবালি চালু/বন্ধ করে (upsert — আগে থেকে row থাকলে আপডেট,
+     * না থাকলে নতুন তৈরি হয়)। slot_settings.value24 প্রাইমারি কি হওয়ায় merge-duplicates কাজ করে।
+     */
+    suspend fun setSlotEnabled(value24: String, enabled: Boolean): Result<Unit> = try {
+        val json = JSONObject().put("value24", value24).put("enabled", enabled)
+        postWithPrefer("slot_settings", json, "resolution=merge-duplicates,return=minimal")
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * নির্দিষ্ট একটা তারিখের জন্য একটা স্লট চালু/বন্ধ করে (শুধু ওই দিনের exception হিসেবে,
+     * গ্লোবাল সেটিংস অপরিবর্তিত থাকে)। unique(slot_date, value24) কনস্ট্রেইন্টের কারণে upsert কাজ করে।
+     */
+    suspend fun setSlotDateOverride(date: String, value24: String, enabled: Boolean): Result<Unit> = try {
+        val json = JSONObject().put("slot_date", date).put("value24", value24).put("enabled", enabled)
+        postWithPrefer("slot_date_overrides", json, "resolution=merge-duplicates,return=minimal")
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** নির্দিষ্ট তারিখের একটা override মুছে দেয় (গ্লোবাল সেটিংসে ফিরিয়ে আনতে) */
+    suspend fun deleteSlotDateOverride(date: String, value24: String): Result<Unit> = try {
+        delete("slot_date_overrides?slot_date=eq.${enc(date)}&value24=eq.${enc(value24)}")
+        Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
     }
