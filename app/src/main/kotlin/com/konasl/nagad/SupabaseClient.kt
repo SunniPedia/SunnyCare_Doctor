@@ -19,104 +19,14 @@ import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 /**
- * ============================================================================
- * SUPABASE SETUP NOTE (Firebase ব্যবহার করা হয়নি, শুধু Supabase REST API)
- * ============================================================================
- * Supabase Project > SQL Editor এ নিচের টেবিলগুলো বানান:
- *
- * create table otp_codes (
- *   id bigint generated always as identity primary key,
- *   code text not null,
- *   phone text,
- *   status text not null default 'available', -- available / assigned / verified
- *   assigned_at timestamptz,
- *   expires_at timestamptz,
- *   created_at timestamptz default now()
- * );
- * insert into otp_codes (code)
- * select lpad(floor(random()*1000000)::text, 6, '0') from generate_series(1, 10000);
- *
- * create table patients (
- *   id uuid primary key default gen_random_uuid(),
- *   phone text unique not null,
- *   full_name text not null,
- *   age int,
- *   gender text,
- *   blood_group text,
- *   address text,
- *   emergency_contact text,
- *   medical_history text,
- *   password_salt text,
- *   password_hash text,
- *   device_id text,
- *   profile_picture_url text,
- *   created_at timestamptz default now()
- * );
- *
- * create table appointments (
- *   id uuid primary key default gen_random_uuid(),
- *   patient_id uuid references patients(id),
- *   patient_name text,
- *   phone text,
- *   reason text,
- *   preferred_date text,
- *   preferred_time text,
- *   status text default 'pending',
- *   payment_method text,
- *   fee integer default 800,
- *   transaction_id text,
- *   payment_status text default 'not_applicable',
- *   report_url text,
- *   weight text,             -- নতুন: রোগীর বর্তমান ওজন (স্বাধীন টেক্সট, যেমন "65 কেজি")
- *   blood_pressure text,     -- নতুন: রোগীর রক্তচাপ (যেমন "120/80 mmHg")
- *   slot_open boolean not null default false,
- *   created_at timestamptz default now()
- * );
- *
- * -- আগে থেকে টেবিল থাকলে শুধু নিচের দুইটা কলাম যোগ করলেই চলবে:
- * -- alter table appointments add column if not exists weight text;
- * -- alter table appointments add column if not exists blood_pressure text;
- *
- * create table if not exists slot_settings (
- *   value24 text primary key,
- *   enabled boolean not null default true
- * );
- *
- * create table if not exists slot_date_overrides (
- *   id bigint generated always as identity primary key,
- *   slot_date text not null,
- *   value24 text not null,
- *   enabled boolean not null,
- *   unique(slot_date, value24)
- * );
- *
- * alter table otp_codes disable row level security;
- * alter table patients disable row level security;
- * alter table appointments disable row level security;
- * alter table slot_settings disable row level security;
- * alter table slot_date_overrides disable row level security;
- *
- * insert into storage.buckets (id, name, public)
- * values ('test-reports', 'test-reports', true)
- * on conflict (id) do nothing;
- *
- * create policy "Allow anon uploads to test-reports"
- * on storage.objects for insert to anon with check (bucket_id = 'test-reports');
- *
- * create policy "Allow public read of test-reports"
- * on storage.objects for select to anon using (bucket_id = 'test-reports');
- * ============================================================================
+ * UPDATED: Phone Validation + Device Reset Fix
  */
 object SupabaseClient {
 
-    // TODO: নিজের Supabase প্রজেক্ট থেকে বসান (Project Settings > API)
     private const val SUPABASE_URL = "https://azbleibkgerzaqbrrydl.supabase.co/"
-    private const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6YmxlaWJrZ2VyemFxYnJyeWRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzExNjYsImV4cCI6MjEwNDc0NzE2Nn0.6Q6PMcRJHXFIRPUZZf9lOjoTmq77_wbCoKc8tGkVF2o"
+    private const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.[STRIPPED 127 bytes].6Q6PMcRJHXFIRPUZZf9lOjoTmq77_wbCoKc8tGkVF2o"
 
-    // Storage bucket যেখানে রোগীদের টেস্ট রিপোর্ট (ছবি/PDF) জমা হয়
     private const val REPORTS_BUCKET = "test-reports"
-
-    // প্রোফাইল ছবির জন্য আলাদা bucket
     private const val PROFILE_BUCKET = "profile-pictures"
 
     private const val PREFS = "sunnycare_prefs"
@@ -125,20 +35,93 @@ object SupabaseClient {
     private const val KEY_PHONE = "phone"
     private const val KEY_NAME = "full_name"
 
-    // TODO: আপনার (ডাক্তার/ক্লিনিক অ্যাডমিনের) ফোন নাম্বার এখানে বসান
-    private val adminPhones = listOf("01710355342")
+    // ডাক্তার ও এডমিন নাম্বার - দুজনই এডমিন
+    private val adminPhones = listOf("01710355342", "01632336631")
+    // ডাক্তারের নাম্বার আলাদা ভাবে দরকার হলে
+    const val DOCTOR_PHONE = "01710355342"
+    const val ADMIN_PHONE = "01632336631"
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+       .connectTimeout(15, TimeUnit.SECONDS)
+       .readTimeout(15, TimeUnit.SECONDS)
+       .writeTimeout(30, TimeUnit.SECONDS)
+       .build()
 
     private val JSON = "application/json".toMediaType()
 
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
+    // PHONE VALIDATION UTILS - NEW SMART LOGIC
+    // [STRIPPED 69 bytes]
+    object PhoneValidator {
+        // বাংলাদেশি নাম্বার কিনা চেক (01, +8801, 8801)
+        fun isBangladeshiNumber(rawPhone: String): Boolean {
+            val p = rawPhone.trim().replace(" ", "").replace("-", "")
+            return p.startsWith("01") || p.startsWith("+8801") || p.startsWith("8801") || p.startsWith("+880")
+        }
+
+        // বাংলাদেশি নাম্বারকে 01XXXXXXXXX ফরম্যাটে নরমালাইজ করা
+        fun normalizeBangladeshi(rawPhone: String): String {
+            var p = rawPhone.trim().replace(" ", "").replace("-", "")
+            if (p.startsWith("+880")) p = "0" + p.substring(4)
+            else if (p.startsWith("880")) p = "0" + p.substring(3)
+            return p
+        }
+
+        // ভ্যালিডেশন রেজাল্ট
+        data class ValidationResult(val isValid: Boolean, val normalizedPhone: String, val message: String, val isForeign: Boolean)
+
+        fun validate(rawPhone: String): ValidationResult {
+            val trimmed = rawPhone.trim()
+            if (trimmed.isEmpty()) {
+                return ValidationResult(false, "", "ফোন নাম্বার দিন", false)
+            }
+
+            // বিদেশি নাম্বার ডিটেক্ট (+ চিহ্ন থাকলে বা 01 দিয়ে শুরু না হলে এবং 11 ডিজিটের বেশি/কম হলে)
+            val cleanForCheck = trimmed.replace(" ", "").replace("-", "")
+            val isForeignCandidate = cleanForCheck.startsWith("+") || (!cleanForCheck.startsWith("01") &&!cleanForCheck.startsWith("880") &&!cleanForCheck.startsWith("+880"))
+
+            if (isBangladeshiNumber(trimmed)) {
+                val normalized = normalizeBangladeshi(trimmed)
+                if (normalized.length!= 11) {
+                    return ValidationResult(false, normalized, "বাংলাদেশি নাম্বার ১১ ডিজিটের হতে হবে (যেমন: 017XXXXXXXX)", false)
+                }
+                if (!normalized.matches(Regex("^01[0-9]{9}$"))) {
+                    return ValidationResult(false, normalized, "সঠিক বাংলাদেশি নাম্বার দিন", false)
+                }
+                return ValidationResult(true, normalized, "OK", false)
+            } else {
+                // বিদেশি নাম্বার
+                var foreign = cleanForCheck.replace("+", "")
+                if (foreign.length < 7 || foreign.length > 15) {
+                    return ValidationResult(false, trimmed, "বিদেশি নাম্বার ৭-১৫ ডিজিটের হতে হবে", true)
+                }
+                if (!foreign.matches(Regex("^[0-9]{7,15}$"))) {
+                    return ValidationResult(false, trimmed, "সঠিক বিদেশি নাম্বার দিন (+ সহ)", true)
+                }
+                // বিদেশি নাম্বারের জন্য + সহ সেভ করবো
+                val finalPhone = if (cleanForCheck.startsWith("+")) cleanForCheck else "+$foreign"
+                return ValidationResult(true, finalPhone, "OK - Foreign Detected", true)
+            }
+        }
+    }
+
+    // Device ID Empty চেক - NULL বাগ ফিক্স
+    fun isDeviceIdEmpty(deviceId: String?): Boolean {
+        if (deviceId == null) return true
+        val trimmed = deviceId.trim()
+        return trimmed.isEmpty() || trimmed.equals("null", ignoreCase = true) || trimmed.equals("NULL", ignoreCase = true)
+    }
+
+    fun getDeviceIdFromPatient(patient: JSONObject): String {
+        // optString null হলে "null" স্ট্রিং দেয়, সেটাও হ্যান্ডেল করতে হবে
+        if (patient.isNull("device_id")) return ""
+        val raw = patient.optString("device_id", "")
+        return raw
+    }
+
+    // [STRIPPED 69 bytes]
     // SESSION (SharedPreferences)
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     fun isLoggedIn(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return prefs.getBoolean(KEY_LOGGED_IN, false)
@@ -146,11 +129,11 @@ object SupabaseClient {
 
     fun saveSession(context: Context, patientId: String, phone: String, fullName: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_LOGGED_IN, true)
-            .putString(KEY_PATIENT_ID, patientId)
-            .putString(KEY_PHONE, phone)
-            .putString(KEY_NAME, fullName)
-            .apply()
+           .putBoolean(KEY_LOGGED_IN, true)
+           .putString(KEY_PATIENT_ID, patientId)
+           .putString(KEY_PHONE, phone)
+           .putString(KEY_NAME, fullName)
+           .apply()
     }
 
     fun logout(context: Context) {
@@ -167,20 +150,22 @@ object SupabaseClient {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_NAME, null)
 
     fun isAdmin(context: Context): Boolean {
-        val phone = getPhone(context) ?: return false
-        return adminPhones.contains(phone)
+        val phone = getPhone(context)?: return false
+        // নরমালাইজ করে চেক করবে যাতে +880 দিয়েও এডমিন চেনে
+        val normalized = PhoneValidator.normalizeBangladeshi(phone)
+        return adminPhones.contains(phone) || adminPhones.contains(normalized)
     }
 
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     // LOW LEVEL REST HELPERS
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 
     private fun baseRequest(path: String): Request.Builder {
         return Request.Builder()
-            .url("$SUPABASE_URL/rest/v1/$path")
-            .addHeader("apikey", SUPABASE_ANON_KEY)
-            .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
+           .url("$SUPABASE_URL/rest/v1/$path")
+           .addHeader("apikey", SUPABASE_ANON_KEY)
+           .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
     }
 
     private suspend fun get(path: String): JSONArray = withContext(Dispatchers.IO) {
@@ -194,10 +179,10 @@ object SupabaseClient {
 
     private suspend fun post(path: String, json: JSONObject): JSONArray = withContext(Dispatchers.IO) {
         val req = baseRequest(path)
-            .addHeader("Content-Type", "application/json")
-            .addHeader("Prefer", "return=representation")
-            .post(json.toString().toRequestBody(JSON))
-            .build()
+           .addHeader("Content-Type", "application/json")
+           .addHeader("Prefer", "return=representation")
+           .post(json.toString().toRequestBody(JSON))
+           .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) throw IOException("POST $path failed: ${resp.code} $body")
@@ -207,10 +192,10 @@ object SupabaseClient {
 
     private suspend fun postWithPrefer(path: String, json: JSONObject, prefer: String): Unit = withContext(Dispatchers.IO) {
         val req = baseRequest(path)
-            .addHeader("Content-Type", "application/json")
-            .addHeader("Prefer", prefer)
-            .post(json.toString().toRequestBody(JSON))
-            .build()
+           .addHeader("Content-Type", "application/json")
+           .addHeader("Prefer", prefer)
+           .post(json.toString().toRequestBody(JSON))
+           .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
                 val body = resp.body?.string().orEmpty()
@@ -219,13 +204,12 @@ object SupabaseClient {
         }
     }
 
-    /** নতুন: JSONArray (bulk) POST করার জন্য — একসাথে অনেকগুলো OTP কোড যোগ করতে ব্যবহৃত হয় */
     private suspend fun postArray(path: String, jsonArray: JSONArray, prefer: String = "return=minimal"): Unit = withContext(Dispatchers.IO) {
         val req = baseRequest(path)
-            .addHeader("Content-Type", "application/json")
-            .addHeader("Prefer", prefer)
-            .post(jsonArray.toString().toRequestBody(JSON))
-            .build()
+           .addHeader("Content-Type", "application/json")
+           .addHeader("Prefer", prefer)
+           .post(jsonArray.toString().toRequestBody(JSON))
+           .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
                 val body = resp.body?.string().orEmpty()
@@ -236,10 +220,10 @@ object SupabaseClient {
 
     private suspend fun patch(path: String, json: JSONObject): JSONArray = withContext(Dispatchers.IO) {
         val req = baseRequest(path)
-            .addHeader("Content-Type", "application/json")
-            .addHeader("Prefer", "return=representation")
-            .patch(json.toString().toRequestBody(JSON))
-            .build()
+           .addHeader("Content-Type", "application/json")
+           .addHeader("Prefer", "return=representation")
+           .patch(json.toString().toRequestBody(JSON))
+           .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) throw IOException("PATCH $path failed: ${resp.code} $body")
@@ -249,8 +233,8 @@ object SupabaseClient {
 
     private suspend fun delete(path: String): Unit = withContext(Dispatchers.IO) {
         val req = baseRequest(path)
-            .delete()
-            .build()
+           .delete()
+           .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
                 val body = resp.body?.string().orEmpty()
@@ -259,9 +243,9 @@ object SupabaseClient {
         }
     }
 
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     // PIN HASHING
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     private fun sha256Hex(input: String): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val bytes = digest.digest(input.toByteArray(Charsets.UTF_8))
@@ -276,10 +260,9 @@ object SupabaseClient {
 
     private fun hashPassword(pin: String, salt: String): String = sha256Hex("$salt:$pin")
 
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     // OTP FLOW
-    // ---------------------------------------------------------------------
-
+    // [STRIPPED 69 bytes]
     private const val OTP_VALIDITY_MINUTES = 2
 
     private fun isoTimeNowPlusMinutes(minutes: Int): String {
@@ -294,7 +277,7 @@ object SupabaseClient {
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
         sdf.timeZone = TimeZone.getTimeZone("UTC")
         val cleaned = iso.replace("Z", "").substringBefore(".")
-        return sdf.parse(cleaned)?.time ?: 0L
+        return sdf.parse(cleaned)?.time?: 0L
     }
 
     suspend fun requestOtp(phone: String): Result<String> = try {
@@ -342,12 +325,16 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     // PATIENT
-    // ---------------------------------------------------------------------
-
+    // [STRIPPED 69 bytes]
     suspend fun findPatientByPhone(phone: String): Result<JSONObject?> = try {
-        val rows = get("patients?phone=eq.${enc(phone)}&limit=1")
+        // normalized এবং raw দুটো দিয়েই খুঁজবে
+        val normalized = PhoneValidator.normalizeBangladeshi(phone)
+        var rows = get("patients?phone=eq.${enc(phone)}&limit=1")
+        if (rows.length() == 0 && normalized!= phone) {
+            rows = get("patients?phone=eq.${enc(normalized)}&limit=1")
+        }
         Result.success(if (rows.length() > 0) rows.getJSONObject(0) else null)
     } catch (e: Exception) {
         Result.failure(e)
@@ -355,7 +342,7 @@ object SupabaseClient {
 
     suspend fun findPatientByDeviceId(deviceId: String, excludePatientId: String? = null): Result<JSONObject?> = try {
         var path = "patients?device_id=eq.${enc(deviceId)}&limit=1"
-        if (excludePatientId != null) path += "&id=neq.${enc(excludePatientId)}"
+        if (excludePatientId!= null) path += "&id=neq.${enc(excludePatientId)}"
         val rows = get(path)
         Result.success(if (rows.length() > 0) rows.getJSONObject(0) else null)
     } catch (e: Exception) {
@@ -389,7 +376,7 @@ object SupabaseClient {
         val json = JSONObject().apply {
             put("phone", p.phone)
             put("full_name", p.fullName)
-            put("age", p.age ?: JSONObject.NULL)
+            put("age", p.age?: JSONObject.NULL)
             put("gender", p.gender)
             put("blood_group", p.bloodGroup)
             put("address", p.address)
@@ -435,11 +422,8 @@ object SupabaseClient {
     }
 
     /**
-     * এডমিন প্যানেল — রোগীর ডিভাইস আনবাইন্ড (রিসেট) করা।
-     * device_id কে null করে দেওয়া হয়, ফলে রোগী পরবর্তীতে যেকোনো নতুন মোবাইলে
-     * তার ফোন নাম্বার ও PIN দিয়ে আবার লগইন/ডিভাইস বাইন্ড করতে পারবে।
-     * সিম হারিয়ে গেলে বা মোবাইল নষ্ট/হারিয়ে গেলে এটি ব্যবহার করুন — রোগী অ্যাডমিনকে
-     * মেসেজ করলে অ্যাডমিন এই ফাংশন কল করে তার ডিভাইস রিসেট করে দেবেন।
+     * SMART DEVICE RESET - FIXED
+     * device_id কে null করে দেওয়া হয়, ফলে অন্য ডিভাইস দিয়ে লগইন করতে পারবে
      */
     suspend fun adminResetPatientDevice(patientId: String): Result<Unit> = try {
         val json = JSONObject().apply {
@@ -459,23 +443,23 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     // STORAGE
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     suspend fun uploadReportFile(fileName: String, mimeType: String, bytes: ByteArray): Result<String> =
         withContext(Dispatchers.IO) {
             try {
                 val safeName = "${System.currentTimeMillis()}_${fileName.replace(Regex("[^A-Za-z0-9.-]"), "")}"
                 val objectPath = "reports/$safeName"
-                val mediaType = mimeType.toMediaTypeOrNull() ?: "application/octet-stream".toMediaType()
+                val mediaType = mimeType.toMediaTypeOrNull()?: "application/octet-stream".toMediaType()
 
                 val req = Request.Builder()
-                    .url("$SUPABASE_URL/storage/v1/object/$REPORTS_BUCKET/$objectPath")
-                    .addHeader("apikey", SUPABASE_ANON_KEY)
-                    .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
-                    .addHeader("x-upsert", "true")
-                    .post(bytes.toRequestBody(mediaType))
-                    .build()
+                   .url("$SUPABASE_URL/storage/v1/object/$REPORTS_BUCKET/$objectPath")
+                   .addHeader("apikey", SUPABASE_ANON_KEY)
+                   .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
+                   .addHeader("x-upsert", "true")
+                   .post(bytes.toRequestBody(mediaType))
+                   .build()
 
                 client.newCall(req).execute().use { resp ->
                     val body = resp.body?.string().orEmpty()
@@ -496,15 +480,15 @@ object SupabaseClient {
             try {
                 val safeName = "${System.currentTimeMillis()}_${fileName.replace(Regex("[^A-Za-z0-9.-]"), "")}"
                 val objectPath = "avatars/$safeName"
-                val mediaType = mimeType.toMediaTypeOrNull() ?: "image/jpeg".toMediaType()
+                val mediaType = mimeType.toMediaTypeOrNull()?: "image/jpeg".toMediaType()
 
                 val req = Request.Builder()
-                    .url("$SUPABASE_URL/storage/v1/object/$PROFILE_BUCKET/$objectPath")
-                    .addHeader("apikey", SUPABASE_ANON_KEY)
-                    .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
-                    .addHeader("x-upsert", "true")
-                    .post(bytes.toRequestBody(mediaType))
-                    .build()
+                   .url("$SUPABASE_URL/storage/v1/object/$PROFILE_BUCKET/$objectPath")
+                   .addHeader("apikey", SUPABASE_ANON_KEY)
+                   .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
+                   .addHeader("x-upsert", "true")
+                   .post(bytes.toRequestBody(mediaType))
+                   .build()
 
                 client.newCall(req).execute().use { resp ->
                     val body = resp.body?.string().orEmpty()
@@ -520,15 +504,9 @@ object SupabaseClient {
             }
         }
 
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
     // APPOINTMENTS
-    // ---------------------------------------------------------------------
-
-    /**
-     * নতুন: এখন [weight] (বর্তমান ওজন) ও [bloodPressure] (রক্তচাপ) ঐচ্ছিক প্যারামিটার হিসেবে যুক্ত করা হয়েছে।
-     * রোগী এই দুটো তথ্য না জানলে খালি রেখে দিতে পারবেন — খালি থাকলে JSON-এ পাঠানো হয় না, ফলে
-     * appointments টেবিলে সেই কলাম null/ডিফল্ট থেকে যায়।
-     */
+    // [STRIPPED 69 bytes]
     suspend fun createAppointment(
         patientId: String,
         patientName: String,
@@ -592,9 +570,9 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    // ---------------------------------------------------------------------
-    // ADMIN — টাইম-স্লট এনাবল/ডিজেবল
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
+    // ADMIN — টাইম-স্লট
+    // [STRIPPED 69 bytes]
     suspend fun getSlotSettings(): Result<Map<String, Boolean>> = try {
         val rows = get("slot_settings?select=value24,enabled")
         val map = mutableMapOf<String, Boolean>()
@@ -642,9 +620,9 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    // ---------------------------------------------------------------------
-    // ADMIN — পেমেন্ট ভেরিফিকেশন
-    // ---------------------------------------------------------------------
+    // [STRIPPED 69 bytes]
+    // ADMIN — পেমেন্ট
+    // [STRIPPED 69 bytes]
     suspend fun getPendingVerificationAppointments(): Result<JSONArray> = try {
         val rows = get("appointments?payment_status=eq.pending_verification&order=created_at.desc")
         Result.success(rows)
@@ -674,14 +652,7 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    // =======================================================================
-    // ==========            Admin.kt এর জন্য                       ==========
-    // ==========   (SupabaseClient এর সব ডেটা এডমিন পর্যবেক্ষণ ও   ==========
-    // ==========          ম্যানেজ করতে পারবে এখানকার              ==========
-    // ==========          ফাংশনগুলো দিয়ে)                          ==========
-    // =======================================================================
-
-    /** এডমিন প্যানেল — সব রোগীর সম্পূর্ণ লিস্ট (নতুন থেকে পুরনো) */
+    // ADMIN PANEL FUNCTIONS
     suspend fun adminGetAllPatients(): Result<JSONArray> = try {
         val rows = get("patients?select=*&order=created_at.desc")
         Result.success(rows)
@@ -689,7 +660,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** এডমিন প্যানেল — নির্দিষ্ট কোনো রোগীর যেকোনো ফিল্ড (JSONObject আকারে) আপডেট */
     suspend fun adminUpdatePatient(patientId: String, fields: JSONObject): Result<Unit> = try {
         patch("patients?id=eq.${enc(patientId)}", fields)
         Result.success(Unit)
@@ -697,10 +667,8 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** এডমিন প্যানেল — রোগী মুছে ফেলা (তার সব অ্যাপয়েন্টমেন্টসহ) */
     suspend fun adminDeletePatient(patientId: String): Result<Unit> = deleteAccount(patientId)
 
-    /** এডমিন প্যানেল — সব অ্যাপয়েন্টমেন্টের সম্পূর্ণ লিস্ট (নতুন থেকে পুরনো) */
     suspend fun adminGetAllAppointments(): Result<JSONArray> = try {
         val rows = get("appointments?select=*&order=created_at.desc")
         Result.success(rows)
@@ -708,10 +676,8 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** এডমিন প্যানেল — নির্দিষ্ট রোগীর সব অ্যাপয়েন্টমেন্ট (রিপোর্ট দেখানোর জন্য getAppointments() ও ব্যবহার করা যায়) */
     suspend fun adminGetPatientAppointments(patientId: String): Result<JSONArray> = getAppointments(patientId)
 
-    /** এডমিন প্যানেল — অ্যাপয়েন্টমেন্টের যেকোনো ফিল্ড (status, slot_open, payment_status, fee ইত্যাদি) আপডেট */
     suspend fun adminUpdateAppointment(appointmentId: String, fields: JSONObject): Result<Unit> = try {
         patch("appointments?id=eq.${enc(appointmentId)}", fields)
         Result.success(Unit)
@@ -719,7 +685,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** এডমিন প্যানেল — অ্যাপয়েন্টমেন্ট সম্পূর্ণ ডিলিট */
     suspend fun adminDeleteAppointment(appointmentId: String): Result<Unit> = try {
         delete("appointments?id=eq.${enc(appointmentId)}")
         Result.success(Unit)
@@ -727,7 +692,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** এডমিন প্যানেল — OTP পুলের অবস্থা: (available, assigned, verified) কতগুলো করে আছে */
     suspend fun adminGetOtpStats(): Result<Triple<Int, Int, Int>> = try {
         val available = get("otp_codes?status=eq.available&select=id")
         val assigned = get("otp_codes?status=eq.assigned&select=id")
@@ -737,7 +701,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** এডমিন প্যানেল — পুলে নতুন র‍্যান্ডম ৬-ডিজিট OTP কোড বাল্কে যোগ করা */
     suspend fun adminAddOtpCodes(count: Int): Result<Unit> = try {
         val arr = JSONArray()
         val rnd = java.security.SecureRandom()
@@ -751,7 +714,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** এডমিন প্যানেল — ব্যবহৃত/মেয়াদোত্তীর্ণ সব OTP কোডকে আবার "available" অবস্থায় রিসেট করা */
     suspend fun adminResetOtpPool(): Result<Unit> = try {
         val json = JSONObject().apply {
             put("status", "available")
@@ -765,7 +727,6 @@ object SupabaseClient {
         Result.failure(e)
     }
 
-    /** এডমিন প্যানেল — একটি নির্দিষ্ট তারিখের সব স্লট-ওভাররাইড লিস্ট (তারিখ অনুযায়ী নতুন থেকে পুরনো) */
     suspend fun adminGetAllSlotDateOverrides(): Result<JSONArray> = try {
         val rows = get("slot_date_overrides?select=*&order=slot_date.desc")
         Result.success(rows)
