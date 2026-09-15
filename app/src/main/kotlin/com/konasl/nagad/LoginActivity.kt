@@ -65,9 +65,11 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var forgotPinText: TextView
     private lateinit var changeNumberText: TextView
 
-    // --- ডিভাইস-মিসম্যাচ সেকশন (নতুন: এই একাউন্ট অন্য ডিভাইসে বাঁধা থাকলে দেখানো হয়) ---
+    // --- ডিভাইস-মিসম্যাচ সেকশন (এই একাউন্ট/ডিভাইস অন্যত্র বাঁধা থাকলে দেখানো হয়) ---
     private lateinit var deviceBlockedSection: LinearLayout
     private lateinit var deviceBlockedMessage: TextView
+    private lateinit var deviceRetryBtn: Button
+    private lateinit var deviceHelpBtn: Button
 
     // ---------------------------------------------------------------
     // State
@@ -81,6 +83,13 @@ class LoginActivity : AppCompatActivity() {
      */
     private enum class PinMode { LOGIN, SETUP_EXISTING, SETUP_NEW }
 
+    /** ডিভাইস ব্লকড হওয়ার কারণ — "আবার চেষ্টা করুন" চাপলে সঠিকভাবে পুনরায় যাচাই করতে ব্যবহৃত হয়:
+     *  ACCOUNT_BOUND_ELSEWHERE - এই ফোন নাম্বারের একাউন্ট অন্য একটি ডিভাইসে বাঁধা আছে
+     *                            (Admin.kt এর "ডিভাইস রিসেট" বাটন এটাই আনবাইন্ড করে দেয়)
+     *  DEVICE_ALREADY_USED     - এই মোবাইল ফোনে ইতিমধ্যে অন্য একটি একাউন্ট বাঁধা আছে
+     */
+    private enum class DeviceBlockReason { ACCOUNT_BOUND_ELSEWHERE, DEVICE_ALREADY_USED }
+
     private val phoneDigits = StringBuilder()
     private val otpDigits = StringBuilder()
     private val pinDigits = StringBuilder()
@@ -90,6 +99,7 @@ class LoginActivity : AppCompatActivity() {
     private var currentPhone: String = ""
     private var currentPatient: JSONObject? = null
     private var pinMode: PinMode = PinMode.LOGIN
+    private var deviceBlockReason: DeviceBlockReason = DeviceBlockReason.ACCOUNT_BOUND_ELSEWHERE
     private var canResend = false
     private var resendTimer: CountDownTimer? = null
 
@@ -265,7 +275,7 @@ class LoginActivity : AppCompatActivity() {
         pinSection.addView(forgotPinText)
         pinSection.addView(changeNumberText)
 
-        // ---- Device blocked section (নতুন: অন্য ডিভাইসে বাঁধা একাউন্টের জন্য) ----
+        // ---- Device blocked section (এই একাউন্ট/ডিভাইস অন্যত্র বাঁধা থাকলে দেখানো হয়) ----
         deviceBlockedSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -279,11 +289,20 @@ class LoginActivity : AppCompatActivity() {
         ).apply {
             gravity = Gravity.CENTER
             setPadding(dp(4), 0, dp(4), 0)
+            setLineSpacing(dp(2).toFloat(), 1f)
         }
-        val deviceHelpBtn = premiumButton("Admin কে WhatsApp এ জানান") { openDeviceChangeOnWhatsApp() }.apply {
+        // অ্যাডমিন Admin.kt থেকে "ডিভাইস রিসেট" করে দিলে, ব্যবহারকারী পুরো ফর্ম আবার
+        // না ভরে এই বাটনে চেপেই সাথে সাথে যাচাই করতে পারবেন ডিভাইসটি আনবাইন্ড হয়েছে কিনা,
+        // এবং হয়ে থাকলে সরাসরি লগইন/PIN স্ক্রিনে চলে যাবেন।
+        deviceRetryBtn = secondaryButton("🔄 আবার চেষ্টা করুন") { retryDeviceCheck() }.apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(16) }
+            ).apply { topMargin = dp(18) }
+        }
+        deviceHelpBtn = premiumButton("Admin কে WhatsApp এ জানান") { openDeviceChangeOnWhatsApp() }.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
         }
         val deviceChangeNumberText = text("অন্য নাম্বার ব্যবহার করবেন?", 12f, Typeface.NORMAL, colorTextMuted).apply {
             gravity = Gravity.CENTER
@@ -291,6 +310,7 @@ class LoginActivity : AppCompatActivity() {
             setOnClickListener { resetToPhoneEntry() }
         }
         deviceBlockedSection.addView(deviceBlockedMessage)
+        deviceBlockedSection.addView(deviceRetryBtn)
         deviceBlockedSection.addView(deviceHelpBtn)
         deviceBlockedSection.addView(deviceChangeNumberText)
 
@@ -419,7 +439,7 @@ class LoginActivity : AppCompatActivity() {
                     val storedDeviceId = patient.optString("device_id", "")
                     if (storedDeviceId.isNotEmpty() && storedDeviceId != deviceId) {
                         // এই একাউন্ট অন্য ডিভাইসে বাঁধা — PIN না চেয়েই ব্লক করা হচ্ছে
-                        showDeviceBlocked()
+                        showDeviceBlocked(DeviceBlockReason.ACCOUNT_BOUND_ELSEWHERE)
                         return@onSuccess
                     }
                     val hasPin = patient.optString("password_hash").isNotEmpty() &&
@@ -482,7 +502,7 @@ class LoginActivity : AppCompatActivity() {
             val conflictResult = SupabaseClient.findPatientByDeviceId(deviceId)
             if (conflictResult.getOrNull() != null) {
                 setLoading(false)
-                showDeviceBlocked()
+                showDeviceBlocked(DeviceBlockReason.DEVICE_ALREADY_USED)
                 return@launch
             }
             setLoading(false)
@@ -533,14 +553,80 @@ class LoginActivity : AppCompatActivity() {
         setActiveField(Field.PIN)
     }
 
-    /** এই একাউন্ট/ডিভাইস অন্য ডিভাইসে বাঁধা থাকলে বা এই ডিভাইসে অন্য একাউন্ট থাকলে দেখানো হয় */
-    private fun showDeviceBlocked() {
+    /**
+     * এই একাউন্ট/ডিভাইস অন্য ডিভাইসে বাঁধা থাকলে বা এই ডিভাইসে অন্য একাউন্ট থাকলে দেখানো হয়।
+     * reason অনুযায়ী মেসেজ পরিবর্তিত হয় এবং retryDeviceCheck() সঠিকভাবে যাচাই করতে পারে
+     * অ্যাডমিন Admin.kt এর "ডিভাইস রিসেট" বাটন থেকে ইতিমধ্যে রিসেট করে দিয়েছেন কিনা।
+     */
+    private fun showDeviceBlocked(reason: DeviceBlockReason = DeviceBlockReason.ACCOUNT_BOUND_ELSEWHERE) {
+        deviceBlockReason = reason
         sendOtpBtn.visibility = View.GONE
         otpSection.visibility = View.GONE
         pinSection.visibility = View.GONE
         deviceBlockedSection.visibility = View.VISIBLE
         keypad.visibility = View.GONE
         statusText.text = ""
+        deviceBlockedMessage.text = when (reason) {
+            DeviceBlockReason.ACCOUNT_BOUND_ELSEWHERE ->
+                "এই একাউন্টটি অন্য একটি ডিভাইসে যুক্ত আছে। নিরাপত্তার জন্য একটি একাউন্ট শুধুমাত্র একটি ডিভাইসেই ব্যবহার করা যায়। অ্যাডমিনকে জানান — তিনি ডিভাইস রিসেট করে দিলে নিচের 'আবার চেষ্টা করুন' বাটনে চাপ দিন।"
+            DeviceBlockReason.DEVICE_ALREADY_USED ->
+                "এই মোবাইল ফোনে ইতিমধ্যে অন্য একটি একাউন্ট ব্যবহার করা হচ্ছে। নিরাপত্তার জন্য একটি ডিভাইসে একটি মাত্র একাউন্ট চালানো যায়। অ্যাডমিনকে জানান — সমস্যা সমাধান হলে নিচের 'আবার চেষ্টা করুন' বাটনে চাপ দিন।"
+        }
+    }
+
+    /**
+     * "🔄 আবার চেষ্টা করুন" বাটনে চাপলে — অ্যাডমিন Admin.kt থেকে ডিভাইস রিসেট করে দিয়েছেন
+     * কিনা তা পুনরায় Supabase থেকে যাচাই করে। রিসেট হয়ে থাকলে ব্যবহারকারীকে সরাসরি
+     * পরবর্তী ধাপে (PIN/লগইন) নিয়ে যায় — পুরো ফোন নাম্বার এন্ট্রি থেকে আবার শুরু করা লাগে না।
+     * এখনো রিসেট না হয়ে থাকলে সুন্দর একটা বার্তা দেখিয়ে একই স্ক্রিনে রাখে।
+     */
+    private fun retryDeviceCheck() {
+        setLoading(true)
+        statusText.text = ""
+        when (deviceBlockReason) {
+            DeviceBlockReason.ACCOUNT_BOUND_ELSEWHERE -> {
+                lifecycleScope.launch {
+                    val result = SupabaseClient.findPatientByPhone(currentPhone)
+                    setLoading(false)
+                    result.onSuccess { patient ->
+                        if (patient == null) {
+                            statusText.text = "একাউন্ট খুঁজে পাওয়া যায়নি, আবার চেষ্টা করুন"
+                            return@onSuccess
+                        }
+                        currentPatient = patient
+                        val deviceId = DeviceUtils.getDeviceId(this@LoginActivity)
+                        val storedDeviceId = patient.optString("device_id", "")
+                        if (storedDeviceId.isNotEmpty() && storedDeviceId != deviceId) {
+                            statusText.text = "এখনো অ্যাডমিন ডিভাইস রিসেট করেননি, একটু পর আবার চেষ্টা করুন"
+                        } else {
+                            val hasPin = patient.optString("password_hash").isNotEmpty() &&
+                                patient.optString("password_salt").isNotEmpty()
+                            Toast.makeText(this@LoginActivity, "ডিভাইস রিসেট হয়ে গেছে! এখন লগইন করুন", Toast.LENGTH_SHORT).show()
+                            showPinSection(if (hasPin) PinMode.LOGIN else PinMode.SETUP_EXISTING)
+                        }
+                    }.onFailure {
+                        statusText.text = it.message ?: "সমস্যা হয়েছে, আবার চেষ্টা করুন"
+                    }
+                }
+            }
+            DeviceBlockReason.DEVICE_ALREADY_USED -> {
+                val deviceId = DeviceUtils.getDeviceId(this@LoginActivity)
+                lifecycleScope.launch {
+                    val result = SupabaseClient.findPatientByDeviceId(deviceId)
+                    setLoading(false)
+                    result.onSuccess { conflict ->
+                        if (conflict == null) {
+                            Toast.makeText(this@LoginActivity, "ডিভাইস এখন খালি আছে! এগিয়ে যান", Toast.LENGTH_SHORT).show()
+                            showPinSection(PinMode.SETUP_NEW)
+                        } else {
+                            statusText.text = "এই ডিভাইসে এখনো অন্য একাউন্ট বাঁধা আছে"
+                        }
+                    }.onFailure {
+                        statusText.text = it.message ?: "সমস্যা হয়েছে, আবার চেষ্টা করুন"
+                    }
+                }
+            }
+        }
     }
 
     /** "অন্য নাম্বার ব্যবহার করবেন?" চাপলে পুরো ফর্ম রিসেট হয়ে আবার ফোন নাম্বার চাওয়া হয় */
@@ -557,6 +643,7 @@ class LoginActivity : AppCompatActivity() {
         refreshFields()
         currentPatient = null
         pinMode = PinMode.LOGIN
+        deviceBlockReason = DeviceBlockReason.ACCOUNT_BOUND_ELSEWHERE
         statusText.text = ""
         setActiveField(Field.PHONE)
     }
@@ -596,7 +683,8 @@ class LoginActivity : AppCompatActivity() {
                         return@launch
                     }
                     // PIN ঠিক আছে। এই একাউন্টে এখনো কোনো ডিভাইস বাঁধা না থাকলে (পুরাতন ইউজার,
-                    // প্রথমবার নতুন সিস্টেমে লগইন করছেন), এখনই এই ডিভাইসকে বেঁধে দেওয়া হচ্ছে।
+                    // প্রথমবার নতুন সিস্টেমে লগইন করছেন, বা অ্যাডমিন সদ্য ডিভাইস রিসেট করে দিয়েছেন),
+                    // এখনই এই ডিভাইসকে বেঁধে দেওয়া হচ্ছে।
                     val storedDeviceId = patient.optString("device_id", "")
                     if (storedDeviceId.isEmpty()) {
                         val deviceId = DeviceUtils.getDeviceId(this@LoginActivity)
@@ -608,7 +696,7 @@ class LoginActivity : AppCompatActivity() {
                         }
                         if (conflict != null) {
                             setLoading(false)
-                            showDeviceBlocked()
+                            showDeviceBlocked(DeviceBlockReason.DEVICE_ALREADY_USED)
                             return@launch
                         }
                         SupabaseClient.bindDeviceToPatient(patient.getString("id"), deviceId)
@@ -638,7 +726,7 @@ class LoginActivity : AppCompatActivity() {
                     }
                     if (conflict != null) {
                         setLoading(false)
-                        showDeviceBlocked()
+                        showDeviceBlocked(DeviceBlockReason.DEVICE_ALREADY_USED)
                         return@launch
                     }
                     val setResult = SupabaseClient.setPatientPassword(patient.getString("id"), pin)
@@ -703,6 +791,11 @@ class LoginActivity : AppCompatActivity() {
         keypad.isEnabled = !loading
         keypad.alpha = if (loading) 0.5f else 1f
         pinActionBtn.isEnabled = !loading
+        if (::deviceRetryBtn.isInitialized) {
+            deviceRetryBtn.isEnabled = !loading
+            deviceRetryBtn.alpha = if (loading) 0.6f else 1f
+        }
+        if (::deviceHelpBtn.isInitialized) deviceHelpBtn.isEnabled = !loading
     }
 
     // ------------------------------------------------------------------
@@ -812,6 +905,38 @@ class LoginActivity : AppCompatActivity() {
         ).apply { cornerRadius = dp(15).toFloat() }
         elevation = dp(3).toFloat()
         setPadding(0, dp(14), 0, dp(14))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+            }
+            false
+        }
+        setOnClickListener { onClick() }
+    }
+
+    /**
+     * সাদা ব্যাকগ্রাউন্ড ও রঙিন বর্ডার-টেক্সটসহ সেকেন্ডারি বাটন — "আবার চেষ্টা করুন" এর মতো
+     * কম-জোরালো (কিন্তু গুরুত্বপূর্ণ) অ্যাকশনের জন্য, যাতে প্রাইমারি বাটন থেকে আলাদা বোঝা যায়।
+     */
+    private fun secondaryButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
+        text = label
+        setTextColor(colorPrimary)
+        textSize = 14.5f
+        isAllCaps = false
+        setTypeface(null, Typeface.BOLD)
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(15).toFloat()
+            setColor(Color.WHITE)
+            setStroke(dp(2), colorPrimary)
+        }
+        elevation = dp(1).toFloat()
+        setPadding(0, dp(13), 0, dp(13))
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         )
