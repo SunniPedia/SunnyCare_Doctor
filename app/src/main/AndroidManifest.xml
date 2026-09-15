@@ -11,6 +11,7 @@
     <application
         android:allowBackup="true"
 		android:name=".MyApp"
+		android:icon="@drawable/sunnycare"
         android:label="SunnyCare ☀"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar"
         android:supportsRtl="true">
