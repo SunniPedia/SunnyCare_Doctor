@@ -40,6 +40,7 @@ import org.json.JSONObject
  *  ট্যাব ১ — অ্যাপয়েন্টমেন্ট: সব রোগীর সব অ্যাপয়েন্টমেন্ট, status/payment_status/
  *            slot_open/fee এডিট করা ও ডিলিট করা যায়
  *  ট্যাব ২ — রোগী: সব রোগীর প্রোফাইল তথ্য দেখা, এডিট করা, PIN রিসেট করা,
+ *            ডিভাইস রিসেট করা (সিম/মোবাইল হারালে নতুন ডিভাইসে লগইনের জন্য),
  *            অ্যাকাউন্ট ডিলিট করা যায়
  *  ট্যাব ৩ — টাইম স্লট: প্রতিটি সময়-স্লট গ্লোবালি চালু/বন্ধ করা যায়, এবং
  *            নির্দিষ্ট তারিখের জন্য আলাদা ওভাররাইডও দেওয়া যায়
@@ -627,6 +628,7 @@ class AdminActivity : AppCompatActivity() {
         val age = obj.optString("age", "")
         val gender = obj.optString("gender", "")
         val blood = obj.optString("blood_group", "")
+        val deviceId = obj.optString("device_id", "")
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -645,6 +647,12 @@ class AdminActivity : AppCompatActivity() {
                 if (blood.isNotBlank()) "রক্ত: $blood" else null
             ).joinToString("  •  ")
             addView(text(summary.ifEmpty { "অতিরিক্ত তথ্য নেই" }, 11.5f, Typeface.NORMAL, colorDark, Gravity.START))
+            addView(text(
+                if (deviceId.isNotBlank() && deviceId != "null") "ডিভাইস: বাইন্ড করা আছে" else "ডিভাইস: বাইন্ড করা নেই",
+                10.5f, Typeface.NORMAL, colorTextMuted, Gravity.START
+            ).apply {
+                setPadding(0, dp(4), 0, 0)
+            })
 
             addView(rowDivider(dp(10), dp(10)))
 
@@ -672,6 +680,31 @@ class AdminActivity : AppCompatActivity() {
                 }
             }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
             addView(actionsRow)
+
+            addView(space(dp(8)))
+
+            // ডিভাইস রিসেট — সিম/মোবাইল হারিয়ে গেলে বা নষ্ট হয়ে গেলে রোগী নতুন ডিভাইসে
+            // লগইন করতে পারার জন্য এডমিন এখান থেকে তার device_id আনবাইন্ড করে দিতে পারবেন
+            addView(smallActionButton("ডিভাইস রিসেট", colorInfo) {
+                confirmDialog(
+                    title = "ডিভাইস রিসেট",
+                    message = "$name এর সাথে যুক্ত ডিভাইসটি আনবাইন্ড করা হবে। এরপর সে যেকোনো নতুন মোবাইলে তার ফোন নাম্বার ও PIN দিয়ে লগইন করতে পারবে। সিম বা মোবাইল হারিয়ে/নষ্ট হয়ে গেলে এটি ব্যবহার করুন।",
+                    positiveText = "রিসেট করুন",
+                    positiveColor = colorInfo
+                ) {
+                    lifecycleScope.launch {
+                        val res = SupabaseClient.adminResetPatientDevice(id)
+                        res.onSuccess {
+                            Toast.makeText(this@AdminActivity, "ডিভাইস রিসেট করা হয়েছে, রোগী এখন নতুন ডিভাইসে লগইন করতে পারবেন", Toast.LENGTH_SHORT).show()
+                            loadPatients()
+                        }.onFailure {
+                            Toast.makeText(this@AdminActivity, "ডিভাইস রিসেট ব্যর্থ হয়েছে", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
 
             addView(space(dp(8)))
             addView(smallActionButton("অ্যাকাউন্ট ডিলিট করুন", colorDanger) {
