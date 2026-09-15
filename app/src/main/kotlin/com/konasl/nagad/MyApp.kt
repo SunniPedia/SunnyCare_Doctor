@@ -8,8 +8,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.TextView
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.children
-import java.io.File
 
 class MyApp : Application() {
 
@@ -41,15 +41,18 @@ class MyApp : Application() {
         })
     }
 
+    /**
+     * আগে এই ফাংশন internal storage-এ ডাউনলোড করে রাখা ফন্ট ফাইল (filesDir/fonts/SolaimanLipi.ttf)
+     * থেকে টাইপফেস লোড করত। এখন ফন্টটা সরাসরি প্রজেক্টের res/font/solaimanlipi.ttf রিসোর্স হিসেবে
+     * বান্ডেল করা আছে, তাই ResourcesCompat.getFont() দিয়ে সরাসরি সেখান থেকেই লোড হয় —
+     * কোনো ডাউনলোড, ফাইল-চেক বা ইন্টারনেট পারমিশনের প্রয়োজন নেই।
+     */
     fun loadFont() {
         try {
-            val fontFile = File(filesDir, "fonts/SolaimanLipi.ttf")
-            if (fontFile.exists()) {
-                banglaTypeface = Typeface.createFromFile(fontFile)
-                // মিক্সড ফন্ট = SolaimanLipi, কিন্তু ইংরেজি না থাকলে আমরা Apply ই করবো না
-                // তাই ইংরেজি আগের মতোই সুন্দর থাকবে
-                mixedTypeface = banglaTypeface
-            }
+            banglaTypeface = ResourcesCompat.getFont(this, R.font.solaimanlipi)
+            // মিক্সড ফন্ট = SolaimanLipi, কিন্তু ইংরেজি না থাকলে আমরা Apply ই করবো না
+            // তাই ইংরেজি আগের মতোই সুন্দর থাকবে
+            mixedTypeface = banglaTypeface
         } catch (e: Exception) { e.printStackTrace() }
     }
 
