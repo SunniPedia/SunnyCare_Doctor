@@ -57,7 +57,6 @@ class SignupActivity : AppCompatActivity() {
     private var selectedImageUri: Uri? = null
     private var skipPhotoUpload = false
 
-    // এই লঞ্চারটা অবশ্যই ক্লাস-লেভেল ফিল্ড হিসেবে রেজিস্টার করতে হয় (Activity CREATED হওয়ার আগে)
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
             selectedImageUri = uri
@@ -88,12 +87,16 @@ class SignupActivity : AppCompatActivity() {
 
     private var normalContainerBottomPadding = 0
     private var phone: String = ""
-    private var pin: String = "" // LoginActivity থেকে আসা ৪-ডিজিট PIN (আগে password ছিল)
+    private var pin: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         phone = intent.getStringExtra("phone") ?: ""
         pin = intent.getStringExtra("pin") ?: ""
+
+        // ফোনটা নরমালাইজ করে নিচ্ছি (BD হলে 11 ডিজিট, বিদেশি হলে + সহ)
+        val phoneValidation = SupabaseClient.PhoneValidator.validate(phone)
+        if (phoneValidation.isValid) phone = phoneValidation.normalizedPhone
 
         appFont = try {
             Typeface.createFromAsset(assets, "fonts/SolaimanLipi.ttf")
@@ -191,7 +194,6 @@ class SignupActivity : AppCompatActivity() {
             clipToOutline = true
         }
 
-        // ---- নতুন: প্রোফাইল ছবি সেকশন (ঐচ্ছিক) ----
         val avatarSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -286,7 +288,7 @@ class SignupActivity : AppCompatActivity() {
             }
         }
         addressInput = fieldInput("ঠিকানা *", InputType.TYPE_CLASS_TEXT, multiLine = true, imeAction = EditorInfo.IME_ACTION_NEXT)
-        emergencyInput = fieldInput("জরুরি যোগাযোগ নাম্বার *", InputType.TYPE_CLASS_PHONE, imeAction = EditorInfo.IME_ACTION_NEXT)
+        emergencyInput = fieldInput("জরুরি যোগাযোগ নাম্বার * (11 ডিজিট / বিদেশি +)", InputType.TYPE_CLASS_PHONE, imeAction = EditorInfo.IME_ACTION_NEXT)
         historyInput = fieldInput("পূর্ববর্তী রোগ/অ্যালার্জি (যদি থাকে)", InputType.TYPE_CLASS_TEXT, multiLine = true, imeAction = EditorInfo.IME_ACTION_DONE)
 
         nameInput.setOnEditorActionListener { _, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_NEXT) { ageInput.requestFocus(); true } else false }
@@ -465,7 +467,6 @@ class SignupActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /** নতুন: প্রোফাইল ছবি আপলোড না করলে ইউজারকে একবার জানিয়ে দেওয়া হয় - "এখনই যুক্ত করুন" বা "ছাড়াই চালিয়ে যান" */
     private fun showPhotoReminderDialog() {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -526,7 +527,7 @@ class SignupActivity : AppCompatActivity() {
         val name = nameInput.text.toString().trim()
         val ageStr = ageInput.text.toString().trim()
         val address = addressInput.text.toString().trim()
-        val emergency = emergencyInput.text.toString().trim()
+        val emergencyRaw = emergencyInput.text.toString().trim()
         val history = historyInput.text.toString().trim()
 
         setNormal(nameInput); setNormal(ageInput); setNormal(addressInput); setNormal(emergencyInput); setNormal(historyInput)
@@ -535,15 +536,25 @@ class SignupActivity : AppCompatActivity() {
         if (name.isEmpty()) { setError(nameInput) }
         if (ageStr.isEmpty()) { setError(ageInput) }
         if (address.isEmpty()) { setError(addressInput) }
-        if (emergency.isEmpty()) { setError(emergencyInput) }
+        if (emergencyRaw.isEmpty()) { setError(emergencyInput) }
         if (!isBloodGroupSelected) {
             bloodGroupRow.background = fieldBgError()
             if (firstErrorView == null) firstErrorView = bloodGroupRow
             isValid = false
         }
 
+        // Emergency Contact Smart Validation - BD 11 digit / Foreign
+        if (emergencyRaw.isNotEmpty()) {
+            val eValid = SupabaseClient.PhoneValidator.validate(emergencyRaw)
+            if (!eValid.isValid) {
+                statusText.text = "জরুরি নাম্বার: ${eValid.message}"
+                setError(emergencyInput)
+                isValid = false
+            }
+        }
+
         if (!isValid) {
-            statusText.text = "অনুগ্রহ করে * চিহ্নিত সব ফিল্ড পূরণ করুন"
+            if (statusText.text.isEmpty()) statusText.text = "অনুগ্রহ করে * চিহ্নিত সব ফিল্ড পূরণ করুন"
             firstErrorView?.let { ensureVisible(it) }
             return
         }
@@ -553,7 +564,6 @@ class SignupActivity : AppCompatActivity() {
             return
         }
 
-        // নতুন: প্রোফাইল ছবি না দিলে একবার জানিয়ে দেওয়া হয়, তারপর ইউজারের সিদ্ধান্তে চলবে
         if (selectedImageUri == null && !skipPhotoUpload) {
             showPhotoReminderDialog()
             return
@@ -564,10 +574,11 @@ class SignupActivity : AppCompatActivity() {
             0 -> "পুরুষ"; 1 -> "মহিলা"; else -> "অন্যান্য"
         }
 
-        proceedWithSubmit(name, age, gender, address, emergency, history)
+        val emergencyNormalized = SupabaseClient.PhoneValidator.validate(emergencyRaw).normalizedPhone
+
+        proceedWithSubmit(name, age, gender, address, emergencyNormalized, history)
     }
 
-    /** ভ্যালিডেশন শেষে আসল সাবমিট: (ঐচ্ছিক) ছবি আপলোড + ডিভাইস-বাইন্ডিং যাচাই + প্রোফাইল সেভ */
     private fun proceedWithSubmit(
         name: String,
         age: Int?,
@@ -605,13 +616,12 @@ class SignupActivity : AppCompatActivity() {
                 }
             }
 
-            // "একটা ডিভাইসে একটা একাউন্ট" — চূড়ান্তভাবে সাবমিট করার ঠিক আগে আরেকবার নিশ্চিত হওয়া হচ্ছে
             val deviceId = DeviceUtils.getDeviceId(this@SignupActivity)
             val conflictResult = SupabaseClient.findPatientByDeviceId(deviceId)
             if (conflictResult.getOrNull() != null) {
                 progress.visibility = View.GONE
                 submitBtn.isEnabled = true
-                statusText.text = "এই ডিভাইসে ইতিমধ্যে একটি একাউন্ট যুক্ত আছে। সাহায্যের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন।"
+                statusText.text = "এই ডিভাইসে ইতিমধ্যে একটি একাউন্ট যুক্ত আছে। সাহায্যের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন। Doctor: 01710355342 Admin: 01632336631"
                 return@launch
             }
 
@@ -706,7 +716,6 @@ class SignupActivity : AppCompatActivity() {
     private fun applyFontRecursively(view: View) { val font = appFont ?: return; when (view) { is TextView -> view.setTypeface(font, view.typeface?.style ?: Typeface.NORMAL); is ViewGroup -> for (i in 0 until view.childCount) applyFontRecursively(view.getChildAt(i)) } }
     private fun dotView(context: Context, color: Int): View = View(context).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) } }
 
-    /** নতুন: প্রোফাইল ছবি এখনো বাছাই না করা পর্যন্ত দেখানোর জন্য একটা সাধারণ silhouette - কোনো drawable resource ছাড়াই Canvas এ আঁকা */
     private fun personPlaceholderDrawable(): android.graphics.drawable.Drawable {
         val size = dp(92)
         val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
@@ -724,7 +733,6 @@ class SignupActivity : AppCompatActivity() {
         return android.graphics.drawable.BitmapDrawable(resources, bmp)
     }
 
-    /** নতুন: ক্যামেরা ব্যাজের ছোট আইকন (কোনো drawable resource ছাড়াই Canvas এ আঁকা) */
     private fun cameraIconView(context: Context): View = object : View(context) {
         private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
         private val lensPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = colorPrimary; style = Paint.Style.FILL }
