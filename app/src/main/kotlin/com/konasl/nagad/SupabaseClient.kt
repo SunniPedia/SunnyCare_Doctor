@@ -428,6 +428,23 @@ object SupabaseClient {
         Result.failure(e)
     }
 
+    /**
+     * এডমিন প্যানেল — রোগীর ডিভাইস আনবাইন্ড (রিসেট) করা।
+     * device_id কে null করে দেওয়া হয়, ফলে রোগী পরবর্তীতে যেকোনো নতুন মোবাইলে
+     * তার ফোন নাম্বার ও PIN দিয়ে আবার লগইন/ডিভাইস বাইন্ড করতে পারবে।
+     * সিম হারিয়ে গেলে বা মোবাইল নষ্ট/হারিয়ে গেলে এটি ব্যবহার করুন — রোগী অ্যাডমিনকে
+     * মেসেজ করলে অ্যাডমিন এই ফাংশন কল করে তার ডিভাইস রিসেট করে দেবেন।
+     */
+    suspend fun adminResetPatientDevice(patientId: String): Result<Unit> = try {
+        val json = JSONObject().apply {
+            put("device_id", JSONObject.NULL)
+        }
+        patch("patients?id=eq.${enc(patientId)}", json)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
     suspend fun deleteAccount(patientId: String): Result<Unit> = try {
         delete("appointments?patient_id=eq.${enc(patientId)}")
         delete("patients?id=eq.${enc(patientId)}")
