@@ -1,14 +1,28 @@
 package com.konasl.nagad
 
 import android.app.Dialog
-import android.content.Intent
+import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.pdf.PdfRenderer
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.text.InputType
+import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -19,6 +33,7 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
@@ -26,8 +41,13 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.net.URL
 
 /**
  * ============================================================================
@@ -41,11 +61,19 @@ import org.json.JSONObject
  *            slot_open/fee এডিট করা ও ডিলিট করা যায়
  *  ট্যাব ২ — রোগী: সব রোগীর প্রোফাইল তথ্য দেখা, এডিট করা, PIN রিসেট করা,
  *            ডিভাইস রিসেট করা (সিম/মোবাইল হারালে নতুন ডিভাইসে লগইনের জন্য),
- *            অ্যাকাউন্ট ডিলিট করা যায়
+ *            রোগীর সব টেস্ট রিপোর্ট (ছবি/PDF) দেখা, অ্যাকাউন্ট ডিলিট করা যায়
  *  ট্যাব ৩ — টাইম স্লট: প্রতিটি সময়-স্লট গ্লোবালি চালু/বন্ধ করা যায়, এবং
  *            নির্দিষ্ট তারিখের জন্য আলাদা ওভাররাইডও দেওয়া যায়
  *  ট্যাব ৪ — OTP পুল: available/assigned/verified কোডের সংখ্যা দেখা, নতুন কোড
  *            বাল্কে যোগ করা এবং ব্যবহৃত কোড রিসেট করা যায়
+ *
+ * নতুন সংযোজন:
+ *  • সব "←" ব্যাক বাটন এখন ইমুজি/ফন্ট-ক্যারেক্টার নয়, সম্পূর্ণ Canvas-ভেক্টর আইকন
+ *  • রোগীর কার্ডে "রিপোর্ট দেখুন" বাটন — তার সব অ্যাপয়েন্টমেন্ট থেকে জমা দেওয়া
+ *    টেস্ট রিপোর্টের (ছবি/PDF) লিস্ট দেখায়
+ *  • সম্পূর্ণ built-in, কোনো তৃতীয়-পক্ষ লাইব্রেরি ছাড়াই হাই-কোয়ালিটি ImageViewer
+ *    (পিঞ্চ-জুম/প্যান সহ) ও PdfViewer (android.graphics.pdf.PdfRenderer দিয়ে
+ *    উচ্চ-রেজ্যুলেশনে পৃষ্ঠা রেন্ডার করে)
  * ============================================================================
  */
 class AdminActivity : AppCompatActivity() {
@@ -152,7 +180,7 @@ class AdminActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, dp(110))
         }
-        patientContent.addView(panelTopBar("রোগীর তালিকা", "সব রোগীর প্রোফাইল দেখুন ও ম্যানেজ করুন"))
+        patientContent.addView(panelTopBar("রোগীর তালিকা", "সব রোগীর প্রোফাইল ও রিপোর্ট দেখুন ও ম্যানেজ করুন"))
         patientsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), 0)
@@ -336,16 +364,17 @@ class AdminActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val backBtn = TextView(this).apply {
-            text = "←"
-            textSize = 18f
-            setTextColor(Color.WHITE)
-            setTypeface(null, Typeface.BOLD)
+        // ইমুজি/টেক্সট অ্যারো ("←") নয় — Canvas দিয়ে সম্পূর্ণ ভেক্টর-আঁকা ব্যাক আইকন,
+        // ফলে যেকোনো ফন্ট বা ডিভাইসে সবসময় স্পষ্ট ও প্রফেশনাল দেখাবে।
+        val backBtn = ImageView(this).apply {
+            setImageDrawable(BackArrowDrawable(Color.WHITE, dp(2).toFloat()))
             background = roundedBg(Color.argb(46, 255, 255, 255), 30f)
-            gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+            val pad = dp(9)
+            setPadding(pad, pad, pad, pad)
             isClickable = true
             isFocusable = true
+            contentDescription = "পেছনে যান"
             setOnClickListener { finish() }
         }
         val textCol = LinearLayout(this).apply {
@@ -400,6 +429,9 @@ class AdminActivity : AppCompatActivity() {
         val slotOpen = obj.optBoolean("slot_open", false)
         val fee = obj.optInt("fee", 0)
         val txnId = obj.optString("transaction_id", "")
+        val weight = obj.optString("weight", "")
+        val bloodPressure = obj.optString("blood_pressure", "")
+        val reportUrl = obj.optString("report_url", "")
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -416,7 +448,7 @@ class AdminActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
             infoCol.addView(text(name.ifEmpty { "নাম নেই" }, 14f, Typeface.BOLD, colorDark, Gravity.START))
-            infoCol.addView(text("$phone", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+            infoCol.addView(text(phone, 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
                 setPadding(0, dp(2), 0, 0)
             })
             topRow.addView(infoCol)
@@ -427,6 +459,8 @@ class AdminActivity : AppCompatActivity() {
 
             addView(kvRow("তারিখ ও সময়", "$date • $time"))
             addView(kvRow("কারণ", reason.ifEmpty { "সাধারণ পরামর্শ" }))
+            if (weight.isNotBlank() && weight != "null") addView(kvRow("বর্তমান ওজন", "$weight কেজি"))
+            if (bloodPressure.isNotBlank() && bloodPressure != "null") addView(kvRow("রক্তচাপ", bloodPressure))
             addView(kvRow("ফি", "৳$fee"))
             addView(kvRow("পেমেন্ট স্ট্যাটাস", paymentStatusLabel(paymentStatus)))
             if (txnId.isNotBlank()) addView(kvRow("ট্রানজেকশন আইডি", txnId))
@@ -464,6 +498,21 @@ class AdminActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
             addView(actionsRow)
+
+            // এই অ্যাপয়েন্টমেন্টের সাথে যদি টেস্ট রিপোর্ট (ছবি/PDF) যুক্ত থাকে, সরাসরি এখান থেকেই দেখা যাবে
+            if (reportUrl.isNotBlank()) {
+                addView(space(dp(8)))
+                addView(smallActionButton("এই অ্যাপয়েন্টমেন্টের রিপোর্ট দেখুন", colorInfo) {
+                    val urls = reportUrl.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                    if (urls.isEmpty()) {
+                        Toast.makeText(this@AdminActivity, "কোনো রিপোর্ট পাওয়া যায়নি", Toast.LENGTH_SHORT).show()
+                    } else {
+                        renderReportsListDialog(name.ifEmpty { "রোগী" }, urls)
+                    }
+                }.apply {
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                })
+            }
         }
     }
 
@@ -680,6 +729,15 @@ class AdminActivity : AppCompatActivity() {
                 }
             }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
             addView(actionsRow)
+
+            addView(space(dp(8)))
+
+            // নতুন: এই রোগীর জমা দেওয়া সব অ্যাপয়েন্টমেন্টের টেস্ট রিপোর্ট (ছবি/PDF) একসাথে দেখার বাটন
+            addView(smallActionButton("রোগীর রিপোর্ট দেখুন", colorPrimary) {
+                showPatientReportsDialog(id, name.ifEmpty { "রোগী" })
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
 
             addView(space(dp(8)))
 
@@ -993,6 +1051,345 @@ class AdminActivity : AppCompatActivity() {
     }
 
     // ==================================================================
+    // নতুন — রোগীর রিপোর্ট লিস্ট + হাই-কোয়ালিটি ImageViewer / PdfViewer
+    // (সম্পূর্ণ built-in, কোনো এক্সট্রা লাইব্রেরি/ডিপেন্ডেন্সি ছাড়াই)
+    // ==================================================================
+
+    /** নির্দিষ্ট রোগীর সব অ্যাপয়েন্টমেন্ট থেকে জমা দেওয়া রিপোর্টের URL গুলো একত্র করে লিস্ট দেখায় */
+    private fun showPatientReportsDialog(patientId: String, patientName: String) {
+        Toast.makeText(this, "রিপোর্ট খোঁজা হচ্ছে...", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val result = SupabaseClient.adminGetPatientAppointments(patientId)
+            val reportUrls = mutableListOf<String>()
+            result.onSuccess { rows ->
+                for (i in 0 until rows.length()) {
+                    val obj = rows.getJSONObject(i)
+                    val raw = obj.optString("report_url", "")
+                    if (raw.isNotBlank() && raw != "null") {
+                        raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { reportUrls.add(it) }
+                    }
+                }
+            }
+            if (result.isFailure) {
+                Toast.makeText(this@AdminActivity, "রিপোর্ট লোড করা যায়নি", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (reportUrls.isEmpty()) {
+                Toast.makeText(this@AdminActivity, "$patientName এর কোনো রিপোর্ট পাওয়া যায়নি", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            renderReportsListDialog(patientName, reportUrls)
+        }
+    }
+
+    /** রিপোর্ট URL-গুলোর একটা ক্লিকযোগ্য লিস্ট ডায়ালগ — প্রতিটাতে ট্যাপ করলে ইমেজ/PDF ভিউয়ার খোলে */
+    private fun renderReportsListDialog(patientName: String, urls: List<String>) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val scrollWrap = ScrollView(this)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(Color.WHITE, 22f)
+            setPadding(dp(20), dp(20), dp(20), dp(18))
+        }
+        card.addView(text("$patientName এর রিপোর্ট", 15.5f, Typeface.BOLD, colorDark, Gravity.START))
+        card.addView(text("${urls.size}টি ফাইল পাওয়া গেছে — দেখতে ট্যাপ করুন", 11f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+            setPadding(0, dp(4), 0, dp(14))
+        })
+
+        urls.forEachIndexed { index, url ->
+            val isPdf = isPdfUrl(url)
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = roundedBgStroke(Color.parseColor("#F8FBFA"), colorFieldBorder, 12f, 1)
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                isClickable = true
+                isFocusable = true
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    if (index != 0) topMargin = dp(8)
+                }
+            }
+            row.addView(ImageView(this).apply {
+                setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.DOCUMENT, colorPrimary, dp(15)))
+                background = roundedBg(Color.parseColor("#E4F3F1"), 10f)
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+            })
+            row.addView(text(
+                if (isPdf) "PDF রিপোর্ট ${index + 1}" else "ছবি রিপোর্ট ${index + 1}",
+                12.5f, Typeface.BOLD, colorDark, Gravity.START
+            ).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) }
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            })
+            row.addView(ImageView(this).apply {
+                setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.ARROW_RIGHT, colorPrimary, dp(14)))
+                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
+            })
+            row.setOnClickListener {
+                dialog.dismiss()
+                if (isPdf) openPdfViewer(url, "রিপোর্ট ${index + 1}") else openImageViewer(url = url, title = "রিপোর্ট ${index + 1}")
+            }
+            card.addView(row)
+        }
+
+        card.addView(dialogButton("বন্ধ করুন", colorTextMuted, Color.parseColor("#F1F3F2")) { dialog.dismiss() }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(16)
+            }
+        })
+
+        scrollWrap.addView(card)
+        dialog.setContentView(scrollWrap)
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.9).toInt(),
+            (resources.displayMetrics.heightPixels * 0.8).toInt()
+        )
+        dialog.show()
+    }
+
+    private fun isPdfUrl(url: String): Boolean = url.substringBefore("?").lowercase().endsWith(".pdf")
+
+    /** নেটওয়ার্ক থেকে যেকোনো ফাইলের raw bytes ডাউনলোড করে — শুধু android.net এর বিল্ট-ইন API দিয়ে */
+    private fun downloadBytes(url: String): ByteArray {
+        val connection = URL(url).openConnection()
+        connection.connectTimeout = 15000
+        connection.readTimeout = 15000
+        connection.doInput = true
+        connection.connect()
+        return connection.getInputStream().use { it.readBytes() }
+    }
+
+    /**
+     * হাই-কোয়ালিটি, ফুলস্ক্রিন ImageViewer — পিঞ্চ-টু-জুম ও প্যান সাপোর্ট সহ।
+     * `url` দিলে নেটওয়ার্ক থেকে ফুল-রেজ্যুলেশন বিটম্যাপ ডাউনলোড করে দেখায়,
+     * অথবা সরাসরি একটা `bitmap` (যেমন PdfViewer থেকে রেন্ডার করা পৃষ্ঠা) দেখানো যায়।
+     * কোনো তৃতীয়-পক্ষ ইমেজ-ভিউয়ার লাইব্রেরি ছাড়াই সম্পূর্ণ Android বিল্ট-ইন API দিয়ে তৈরি।
+     */
+    private fun openImageViewer(bitmap: Bitmap? = null, url: String? = null, title: String = "ছবি") {
+        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.BLACK))
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        val zoomImage = ZoomableImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        val progress = ProgressBar(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER
+            }
+            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            visibility = if (bitmap != null) View.GONE else View.VISIBLE
+        }
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(34), dp(14), dp(14))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.argb(190, 0, 0, 0), Color.TRANSPARENT))
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.TOP
+            }
+        }
+        val closeBtn = ImageView(this).apply {
+            setImageDrawable(CloseIconDrawable(Color.WHITE, dp(2).toFloat()))
+            background = roundedBg(Color.argb(60, 255, 255, 255), 30f)
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+            val pad = dp(9)
+            setPadding(pad, pad, pad, pad)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { dialog.dismiss() }
+        }
+        val titleText = text(title, 14f, Typeface.BOLD, Color.WHITE, Gravity.START).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+        }
+        topBar.addView(closeBtn)
+        topBar.addView(titleText)
+
+        root.addView(zoomImage)
+        root.addView(progress)
+        root.addView(topBar)
+        dialog.setContentView(root)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        dialog.show()
+
+        fun applyBitmap(bmp: Bitmap) {
+            progress.visibility = View.GONE
+            zoomImage.setImageBitmap(bmp)
+            zoomImage.resetZoomFit()
+        }
+
+        if (bitmap != null) {
+            applyBitmap(bitmap)
+        } else if (url != null) {
+            lifecycleScope.launch {
+                try {
+                    val bytes = withContext(Dispatchers.IO) { downloadBytes(url) }
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) applyBitmap(bmp) else {
+                        progress.visibility = View.GONE
+                        Toast.makeText(this@AdminActivity, "ছবি লোড করা যায়নি", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    progress.visibility = View.GONE
+                    Toast.makeText(this@AdminActivity, "ছবি লোড ব্যর্থ: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * হাই-কোয়ালিটি PdfViewer — android.graphics.pdf.PdfRenderer (Android বিল্ট-ইন, API 21+)
+     * দিয়ে প্রতিটা পৃষ্ঠা উচ্চ-রেজ্যুলেশনে (স্ক্রিনের প্রস্থের ~২ গুণ ঘনত্বে) রেন্ডার করে
+     * ভার্টিক্যালি স্ক্রলযোগ্য লিস্টে দেখায়। কোনো পৃষ্ঠায় ট্যাপ করলে সেটা পূর্ণ-স্ক্রিন
+     * পিঞ্চ-জুম ImageViewer-এ খোলে (একই ZoomableImageView পুনঃব্যবহার করে)।
+     * কোনো এক্সট্রা PDF-ভিউয়ার লাইব্রেরি ছাড়াই — সম্পূর্ণ Android SDK বিল্ট-ইন।
+     */
+    private fun openPdfViewer(url: String, title: String = "ডকুমেন্ট") {
+        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val bgColor = Color.parseColor("#1A1A1A")
+        dialog.window?.setBackgroundDrawable(ColorDrawable(bgColor))
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(bgColor)
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        val scrollView = NestedScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setPadding(0, dp(64), 0, dp(24))
+            clipToPadding = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
+        val pagesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        scrollView.addView(pagesContainer)
+
+        val progress = ProgressBar(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER
+            }
+            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+        }
+        val loadingLabel = text("PDF লোড হচ্ছে, একটু অপেক্ষা করুন...", 11.5f, Typeface.NORMAL, Color.parseColor("#CCCCCC"), Gravity.CENTER).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER
+                topMargin = dp(56)
+            }
+        }
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(34), dp(14), dp(14))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.argb(210, 0, 0, 0), Color.TRANSPARENT))
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.TOP
+            }
+        }
+        val closeBtn = ImageView(this).apply {
+            setImageDrawable(CloseIconDrawable(Color.WHITE, dp(2).toFloat()))
+            background = roundedBg(Color.argb(60, 255, 255, 255), 30f)
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+            val pad = dp(9)
+            setPadding(pad, pad, pad, pad)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { dialog.dismiss() }
+        }
+        val titleText = text(title, 14f, Typeface.BOLD, Color.WHITE, Gravity.START).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+        }
+        topBar.addView(closeBtn)
+        topBar.addView(titleText)
+
+        root.addView(scrollView)
+        root.addView(progress)
+        root.addView(loadingLabel)
+        root.addView(topBar)
+        dialog.setContentView(root)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        dialog.show()
+
+        lifecycleScope.launch {
+            var tempFile: File? = null
+            var pfd: ParcelFileDescriptor? = null
+            var renderer: PdfRenderer? = null
+            try {
+                val bytes = withContext(Dispatchers.IO) { downloadBytes(url) }
+                tempFile = withContext(Dispatchers.IO) {
+                    File(cacheDir, "admin_report_${System.currentTimeMillis()}.pdf").apply {
+                        FileOutputStream(this).use { it.write(bytes) }
+                    }
+                }
+                pfd = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                renderer = PdfRenderer(pfd)
+                val pageCount = renderer.pageCount
+
+                progress.visibility = View.GONE
+                loadingLabel.visibility = View.GONE
+                titleText.text = "$title ($pageCount পৃষ্ঠা)"
+
+                val screenWidthPx = resources.displayMetrics.widthPixels
+                for (i in 0 until pageCount) {
+                    val page = renderer.openPage(i)
+                    // "হাই-কোয়ালিটি" রেন্ডারের জন্য স্ক্রিনের প্রস্থের প্রায় ২ গুণ রেজ্যুলেশনে আঁকা হয়,
+                    // যাতে জুম করলেও পৃষ্ঠা ঝাপসা না হয়ে যায়
+                    val rawScale = (screenWidthPx.toFloat() / page.width.toFloat()) * 2f
+                    val safeScale = rawScale.coerceIn(1f, 4f)
+                    val outW = (page.width * safeScale).toInt().coerceAtLeast(1)
+                    val outH = (page.height * safeScale).toInt().coerceAtLeast(1)
+                    val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+                    Canvas(bmp).drawColor(Color.WHITE)
+                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    page.close()
+
+                    val pageIndexForClick = i
+                    val pageImage = ImageView(this@AdminActivity).apply {
+                        setImageBitmap(bmp)
+                        adjustViewBounds = true
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                            setMargins(dp(8), dp(6), dp(8), dp(6))
+                        }
+                        background = roundedBg(Color.WHITE, 4f)
+                        isClickable = true
+                        isFocusable = true
+                        setOnClickListener {
+                            openImageViewer(bitmap = bmp, title = "পৃষ্ঠা ${pageIndexForClick + 1}/$pageCount")
+                        }
+                    }
+                    pagesContainer.addView(pageImage)
+                    pagesContainer.addView(text("পৃষ্ঠা ${i + 1}/$pageCount", 10.5f, Typeface.NORMAL, Color.parseColor("#B0B0B0"), Gravity.CENTER).apply {
+                        setPadding(0, 0, 0, dp(10))
+                    })
+                }
+            } catch (e: Exception) {
+                progress.visibility = View.GONE
+                loadingLabel.visibility = View.GONE
+                Toast.makeText(this@AdminActivity, "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}", Toast.LENGTH_SHORT).show()
+            } finally {
+                withContext(Dispatchers.IO) {
+                    try { renderer?.close() } catch (e: Exception) { /* ignore */ }
+                    try { pfd?.close() } catch (e: Exception) { /* ignore */ }
+                    try { tempFile?.delete() } catch (e: Exception) { /* ignore */ }
+                }
+            }
+        }
+    }
+
+    // ==================================================================
     // সাধারণ (shared) UI helpers
     // ==================================================================
     private fun statusBadgeView(status: String): TextView {
@@ -1169,5 +1566,148 @@ class AdminActivity : AppCompatActivity() {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = radiusDp * resources.displayMetrics.density
         setColor(color)
+    }
+
+    private fun roundedBgStroke(fillColor: Int, strokeColor: Int, radiusDp: Float, strokeWidthDp: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = radiusDp * resources.displayMetrics.density
+        setColor(fillColor)
+        setStroke(dp(strokeWidthDp), strokeColor)
+    }
+
+    // ------------------------------------------------------------------
+    // BackArrowDrawable — ব্যাক বাটনের জন্য সম্পূর্ণ ভেক্টর-আঁকা (Canvas/Paint দিয়ে) অ্যারো আইকন।
+    // BookAppointmentActivity-র সাথে ডিজাইন-সামঞ্জস্যপূর্ণ, কোনো ইমুজি/ফন্ট-ক্যারেক্টার ব্যবহার হয়নি।
+    // ------------------------------------------------------------------
+    private class BackArrowDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = strokeWidthPx
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+
+            val left = b.left + w * 0.22f
+            val right = b.left + w * 0.78f
+            val cy = b.top + h / 2f
+            val armLen = w * 0.26f
+
+            canvas.drawLine(left, cy, right, cy, paint)
+            canvas.drawLine(left, cy, left + armLen, cy - armLen, paint)
+            canvas.drawLine(left, cy, left + armLen, cy + armLen, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // CloseIconDrawable — ImageViewer/PdfViewer-এর "বন্ধ করুন" (X) বাটনের জন্য ভেক্টর আইকন
+    // ------------------------------------------------------------------
+    private class CloseIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = strokeWidthPx
+            strokeCap = Paint.Cap.ROUND
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val inset = minOf(w, h) * 0.28f
+            canvas.drawLine(b.left + inset, b.top + inset, b.right - inset, b.bottom - inset, paint)
+            canvas.drawLine(b.right - inset, b.top + inset, b.left + inset, b.bottom - inset, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // ZoomableImageView — পিঞ্চ-টু-জুম ও ড্র্যাগ-প্যান সাপোর্ট করা ImageView, সম্পূর্ণ
+    // Android বিল্ট-ইন ScaleGestureDetector/Matrix API দিয়ে তৈরি (কোনো এক্সট্রা লাইব্রেরি নয়)।
+    // ImageViewer ও PdfViewer — দুই জায়গাতেই এটা পুনঃব্যবহার হয়।
+    // ------------------------------------------------------------------
+    private class ZoomableImageView(context: Context) : ImageView(context) {
+        private val imgMatrix = Matrix()
+        private var lastX = 0f
+        private var lastY = 0f
+        private var isDragging = false
+        private var minScale = 1f
+        private val maxScale = 8f
+        private var currentScale = 1f
+
+        private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                var factor = detector.scaleFactor
+                val projected = currentScale * factor
+                if (projected < minScale) factor = minScale / currentScale
+                if (projected > maxScale) factor = maxScale / currentScale
+                currentScale *= factor
+                imgMatrix.postScale(factor, factor, detector.focusX, detector.focusY)
+                imageMatrix = imgMatrix
+                return true
+            }
+        })
+
+        init {
+            scaleType = ScaleType.MATRIX
+            setOnTouchListener { _, event ->
+                scaleDetector.onTouchEvent(event)
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        lastX = event.x; lastY = event.y; isDragging = true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (isDragging && !scaleDetector.isInProgress) {
+                            val dx = event.x - lastX
+                            val dy = event.y - lastY
+                            imgMatrix.postTranslate(dx, dy)
+                            imageMatrix = imgMatrix
+                            lastX = event.x; lastY = event.y
+                        }
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                        isDragging = false
+                    }
+                }
+                true
+            }
+        }
+
+        /** ইমেজ সেট হওয়ার পর ভিউ-এর ঠিক মাঝখানে, স্ক্রিনে ফিট করে জুম-লেভেল ১x-এ রিসেট করে */
+        fun resetZoomFit() {
+            post {
+                val d = drawable ?: return@post
+                val vw = width.toFloat()
+                val vh = height.toFloat()
+                val dw = d.intrinsicWidth.toFloat()
+                val dh = d.intrinsicHeight.toFloat()
+                if (vw <= 0 || vh <= 0 || dw <= 0 || dh <= 0) return@post
+                val scale = minOf(vw / dw, vh / dh)
+                minScale = scale
+                currentScale = scale
+                imgMatrix.reset()
+                imgMatrix.postScale(scale, scale)
+                imgMatrix.postTranslate((vw - dw * scale) / 2f, (vh - dh * scale) / 2f)
+                imageMatrix = imgMatrix
+            }
+        }
     }
 }
