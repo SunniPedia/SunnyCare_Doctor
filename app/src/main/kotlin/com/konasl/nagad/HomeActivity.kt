@@ -30,7 +30,9 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 class HomeActivity : AppCompatActivity() {
@@ -1106,7 +1108,7 @@ class HomeActivity : AppCompatActivity() {
 
     private fun loadProfileAvatarImage(url: String) {
         lifecycleScope.launch {
-            val bitmap = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val bitmap = withContext(Dispatchers.IO) {
                 var connection: java.net.HttpURLConnection? = null
                 try {
                     connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
