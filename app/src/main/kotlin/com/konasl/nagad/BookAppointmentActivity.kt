@@ -586,6 +586,22 @@ class BookAppointmentActivity : AppCompatActivity() {
         return result
     }
 
+    // ক্লিনিকের কর্মঘণ্টা: সকাল ১০:০০ (600 মিনিট) থেকে রাত ৮:০০ (1200 মিনিট) পর্যন্ত।
+    // generateTimeSlots()-এর startMinutes/endMinutes এর সাথে হুবহু মিলিয়ে রাখা হয়েছে,
+    // যাতে কাস্টম টাইম-পিকার আর অটো-জেনারেটেড স্লট গ্রিড — দুটোই একই সীমার মধ্যে কাজ করে।
+    private val CLINIC_OPEN_MINUTES = 10 * 60   // 10:00
+    private val CLINIC_CLOSE_MINUTES = 20 * 60  // 20:00
+
+    /** কোনো "HH:mm" সময় ক্লিনিকের কর্মঘণ্টার (সকাল ১০টা–রাত ৮টা, দুই প্রান্ত ইনক্লুসিভ) মধ্যে আছে কিনা যাচাই করে */
+    private fun isWithinClinicHours(value24: String): Boolean {
+        val parts = value24.split(":")
+        if (parts.size != 2) return false
+        val h = parts[0].toIntOrNull() ?: return false
+        val m = parts[1].toIntOrNull() ?: return false
+        val totalMinutes = h * 60 + m
+        return totalMinutes in CLINIC_OPEN_MINUTES..CLINIC_CLOSE_MINUTES
+    }
+
     /** আজকের তারিখ "yyyy-MM-dd" ফরম্যাটে — DateOption.isoDate-এর সাথে মেলানোর জন্য */
     private fun todayIsoDate(): String {
         val cal = Calendar.getInstance()
