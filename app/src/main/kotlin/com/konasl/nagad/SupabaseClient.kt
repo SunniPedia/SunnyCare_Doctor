@@ -71,6 +71,9 @@ import java.util.concurrent.TimeUnit
  *   report_url text, -- রোগীর আপলোড করা আগের টেস্ট রিপোর্টের Supabase Storage পাবলিক URL(গুলো)।
  *                    -- একাধিক ফাইল আপলোড করলে কমা (,) দিয়ে একাধিক URL এই একই কলামে জমা হয়
  *                    -- (ফাঁকা রাখলে বুঝতে হবে রোগী কোনো রিপোর্ট আপলোড করেননি)
+ *   slot_open boolean not null default false, -- নতুন: true হলে বোঝাবে রোগীর সিরিয়াল/স্লট
+ *                    -- এখন ওপেন — তখন HomeActivity-র "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ডে ক্লিক করলে
+ *                    -- WaitingActivity ওপেন হবে।
  *   created_at timestamptz default now()
  * );
  *
@@ -113,8 +116,10 @@ import java.util.concurrent.TimeUnit
  *
  * ----------------------------------------------------------------------------
  * নতুন (এই আপডেটে যোগ হয়েছে): device_id, profile_picture_url কলাম +
- * profile-pictures storage bucket — সম্পূর্ণ SQL চ্যাট রেসপন্সের নিচের
- * আলাদা SQL কোড বক্সে দেওয়া আছে, ওটা কপি করে Supabase SQL Editor এ চালান।
+ * profile-pictures storage bucket + appointments.slot_open কলাম —
+ * সম্পূর্ণ SQL চ্যাট রেসপন্সের নিচের আলাদা SQL কোড বক্সে দেওয়া আছে,
+ * ওটা কপি করে Supabase SQL Editor এ চালান। উদাহরণ:
+ * alter table appointments add column if not exists slot_open boolean not null default false;
  * ============================================================================
  */
 object SupabaseClient {
@@ -554,6 +559,17 @@ object SupabaseClient {
     suspend fun getAppointments(patientId: String): Result<JSONArray> = try {
         val rows = get("appointments?patient_id=eq.${enc(patientId)}&order=created_at.desc")
         Result.success(rows)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * নতুন: একটা নির্দিষ্ট অ্যাপয়েন্টমেন্ট আইডি দিয়ে সর্বশেষ তথ্য (status, slot_open সহ)
+     * আনার জন্য — WaitingActivity প্রতি ১০ সেকেন্ডে এই ফাংশন কল করে স্ট্যাটাস পোলিং করে।
+     */
+    suspend fun getAppointmentById(appointmentId: String): Result<JSONObject?> = try {
+        val rows = get("appointments?id=eq.${enc(appointmentId)}&limit=1")
+        Result.success(if (rows.length() > 0) rows.getJSONObject(0) else null)
     } catch (e: Exception) {
         Result.failure(e)
     }
