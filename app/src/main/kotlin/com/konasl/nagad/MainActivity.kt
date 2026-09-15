@@ -12,16 +12,11 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.setPadding
-import java.io.File
-import java.io.FileOutputStream
-import java.net.URL
-import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
 
-    private val FONT_URL = "https://cdn.jsdelivr.net/gh/SunniPedia/sunnipedia/fonts/SolaimanLipi.ttf"
-    private val FONT_NAME = "SolaimanLipi.ttf"
     private var customTypeface: Typeface? = null
     private val allTextViews = mutableListOf<TextView>()
 
@@ -139,6 +134,9 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
 
         // === ফন্ট লোডিং লজিক ===
+        // আগে ইন্টারনেট থেকে ফন্ট ডাউনলোড করে internal storage-এ সেভ করে তারপর লোড করা হতো।
+        // এখন ফন্ট ফাইলটা সরাসরি প্রজেক্টের res/font/solaimanlipi.ttf-এ বান্ডেল করা আছে, তাই
+        // কোনো নেটওয়ার্ক কল বা ব্যাকগ্রাউন্ড থ্রেড ছাড়াই ResourcesCompat.getFont() দিয়ে সরাসরি লোড হয়।
         loadFontAndApply()
 
         // Auto navigate
@@ -152,40 +150,28 @@ class MainActivity : AppCompatActivity() {
         }, 2600)
     }
 
+    /**
+     * res/font/solaimanlipi.ttf থেকে সরাসরি টাইপফেস লোড করে — এটা একটা লোকাল রিসোর্স ফাইল
+     * (কোনো ডাউনলোড/নেটওয়ার্ক কল নেই), তাই কোনো ব্যাকগ্রাউন্ড থ্রেডের প্রয়োজন নেই, মূল থ্রেডেই
+     * তাৎক্ষণিকভাবে লোড হয়ে যায়।
+     */
     private fun loadFontAndApply() {
-        thread {
-            try {
-                val fontDir = File(filesDir, "fonts")
-                if (!fontDir.exists()) fontDir.mkdirs()
-                val fontFile = File(fontDir, FONT_NAME)
+        try {
+            customTypeface = ResourcesCompat.getFont(this, R.font.solaimanlipi)
 
-                if (!fontFile.exists()) {
-                    URL(FONT_URL).openStream().use { input ->
-                        FileOutputStream(fontFile).use { output ->
-                            input.copyTo(output)
-                        }
+            // MyApp কে জানিয়ে দাও ফন্ট রেডি - Auto System এর জন্য
+            (application as MyApp).loadFont()
+
+            customTypeface?.let { tf ->
+                allTextViews.forEach { tv ->
+                    if (tv.text.any { c -> c.code in 2432..2559 }) {
+                        val oldStyle = tv.typeface?.style ?: Typeface.NORMAL
+                        tv.typeface = Typeface.create(tf, oldStyle)
                     }
                 }
-
-                customTypeface = Typeface.createFromFile(fontFile)
-                
-                // MyApp কে জানিয়ে দাও ফন্ট রেডি - Auto System এর জন্য
-                (application as MyApp).loadFont()
-
-                runOnUiThread {
-                    customTypeface?.let { tf ->
-                        allTextViews.forEach { tv ->
-                            if (tv.text.any { c -> c.code in 2432..2559 }) {
-                                val oldStyle = tv.typeface?.style ?: Typeface.NORMAL
-                                tv.typeface = Typeface.create(tf, oldStyle)
-                            }
-                        }
-                    }
-                }
-
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
