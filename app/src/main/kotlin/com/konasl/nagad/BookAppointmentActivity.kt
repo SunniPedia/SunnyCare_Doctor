@@ -112,6 +112,9 @@ class BookAppointmentActivity : AppCompatActivity() {
     private lateinit var reasonInput: EditText
     private lateinit var nameInput: EditText
     private lateinit var phoneInput: EditText
+    // নতুন: রোগীর বর্তমান ওজন ও রক্তচাপ — দুটোই ঐচ্ছিক ফিল্ড
+    private lateinit var weightInput: EditText
+    private lateinit var bloodPressureInput: EditText
     private lateinit var confirmBtn: LinearLayout
     private lateinit var totalFeeText: TextView
 
@@ -267,9 +270,10 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
 
         // ---------------- SECTION: TIME ----------------
-        // timeGrid/timeLoadingText/customTimeBtn buildDateOptions() কল করার *আগে* initialize করা হচ্ছে,
+        // timeGrid/timeLoadingText/customTimeBtn buildDateOptions() কল করার আগে initialize করা হচ্ছে,
         // কারণ buildDateOptions() প্রথম ডেট চিপ অটো-সিলেক্ট (performClick) করে, যেটা
         // fetchBookedTimesAndRefresh -> renderTimeSlotsForDate এর মাধ্যমে সরাসরি timeGrid অ্যাক্সেস করে।
+        // ফলে "আজকের তারিখ" সবসময় Activity ওপেন হওয়ার সাথে সাথেই স্বয়ংক্রিয়ভাবে সিলেক্ট থাকে (নিচে buildDateOptions() দ্রষ্টব্য)।
         val timeSection = sectionTitle(HomeActivity.VectorIconDrawable.IconType.CLOCK, "সময় নির্বাচন করুন")
         timeLoadingText = text("তারিখের জন্য খালি সময় যাচাই করা হচ্ছে...", 11f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -297,7 +301,7 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
 
         // timeGrid প্রস্তুত হওয়ার পরই এখন buildDateOptions() কল হচ্ছে, যাতে প্রথম
-        // তারিখ অটো-সিলেক্ট হওয়ার সময় (chip.performClick()) কোনো ক্র্যাশ না হয়।
+        // তারিখ (আজ) অটো-সিলেক্ট হওয়ার সময় (chip.performClick()) কোনো ক্র্যাশ না হয়।
         buildDateOptions()
 
         // ---------------- SECTION: PATIENT INFO ----------------
@@ -319,6 +323,13 @@ class BookAppointmentActivity : AppCompatActivity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minLines = 2
         }
+        // নতুন: বর্তমান ওজন — সংখ্যাসূচক (দশমিকসহ), ঐচ্ছিক
+        weightInput = styledInput("যেমন: 65 (কেজি)", "").apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        // নতুন: রক্তচাপ — "সিস্টোলিক/ডায়াস্টোলিক" ফরম্যাটে (যেমন 120/80) লেখার জন্য সাধারণ টেক্সট ইনপুট, ঐচ্ছিক
+        bloodPressureInput = styledInput("যেমন: 120/80 mmHg", "")
+
         infoCard.addView(fieldLabel("নাম"))
         infoCard.addView(nameInput)
         infoCard.addView(space(dp(14)))
@@ -327,6 +338,12 @@ class BookAppointmentActivity : AppCompatActivity() {
         infoCard.addView(space(dp(14)))
         infoCard.addView(fieldLabel("সমস্যার বিবরণ"))
         infoCard.addView(reasonInput)
+        infoCard.addView(space(dp(14)))
+        infoCard.addView(fieldLabel("বর্তমান ওজন (কেজি) — ঐচ্ছিক, না জানা থাকলে খালি রাখুন"))
+        infoCard.addView(weightInput)
+        infoCard.addView(space(dp(14)))
+        infoCard.addView(fieldLabel("রক্তচাপ (mmHg) — ঐচ্ছিক, না জানা থাকলে খালি রাখুন"))
+        infoCard.addView(bloodPressureInput)
         infoCard.addView(space(dp(14)))
         infoCard.addView(fieldLabel("আগের টেস্ট রিপোর্ট (ঐচ্ছিক, একাধিক ফাইল যোগ করা যাবে)"))
         infoCard.addView(buildReportPickSection())
@@ -522,6 +539,8 @@ class BookAppointmentActivity : AppCompatActivity() {
                 // এই তারিখে Supabase-এ ইতিমধ্যে বুক থাকা সময় ও এডমিনের date-override যাচাই করে গ্রিড নতুন করে বানানো হয়
                 fetchBookedTimesAndRefresh(option.isoDate)
             }
+            // index == 0 মানেই "আজ" (দেখুন generateDateOptions()) — Activity ওপেন হওয়া মাত্রই
+            // আজকের তারিখটাই স্বয়ংক্রিয়ভাবে সিলেক্টেড দেখানো হয়, ব্যবহারকারীকে আলাদা করে ট্যাপ করতে হয় না।
             if (index == 0) chip.performClick()
             dateRow.addView(chip)
         }
@@ -1075,6 +1094,9 @@ class BookAppointmentActivity : AppCompatActivity() {
         val phone = phoneInput.text.toString().trim()
         val reason = reasonInput.text.toString().trim()
         val trxId = trxIdInput.text.toString().trim()
+        // ওজন ও রক্তচাপ — দুটোই ঐচ্ছিক, তাই খালি রাখলেও বুকিং আটকাবে না
+        val weight = weightInput.text.toString().trim()
+        val bloodPressure = bloodPressureInput.text.toString().trim()
 
         if (selectedDate == null) { Toast.makeText(this, "তারিখ নির্বাচন করুন", Toast.LENGTH_SHORT).show(); return }
         if (selectedTime24 == null) { Toast.makeText(this, "সময় নির্বাচন করুন", Toast.LENGTH_SHORT).show(); return }
@@ -1144,7 +1166,9 @@ class BookAppointmentActivity : AppCompatActivity() {
                 fee = appointmentFee,
                 transactionId = trxId,
                 paymentStatus = "pending_verification",
-                reportUrl = uploadedUrls.joinToString(",")
+                reportUrl = uploadedUrls.joinToString(","),
+                weight = weight,
+                bloodPressure = bloodPressure
             )
             result.onSuccess {
                 Toast.makeText(
