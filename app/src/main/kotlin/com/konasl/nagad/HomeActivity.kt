@@ -686,7 +686,7 @@ class HomeActivity : AppCompatActivity() {
 
         // ভেরিফাইড ব্যাজ (ক্যানভাস চেক আইকন)
         inner.addView(
-            text("বি.এম.ডি.সি নং – এ-১৭৪৬৩ • Verified", 10.5f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
+            text("বি.এম.ডি.সি নং – এ-১১৭৪৬৩ • Verified", 10.5f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
                 background = roundedBg(Color.parseColor("#E4F3F1"), 30f)
                 setPadding(dp(12), dp(6), dp(12), dp(6))
                 compoundDrawablePadding = dp(6)
