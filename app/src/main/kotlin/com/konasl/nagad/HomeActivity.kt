@@ -3,10 +3,14 @@ package com.konasl.nagad
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.CornerPathEffect
+import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
@@ -28,7 +32,11 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 class HomeActivity : AppCompatActivity() {
 
@@ -854,6 +862,49 @@ class HomeActivity : AppCompatActivity() {
                         added = true
                     }
                 }
+
+                // ---------------------------------------------------------------
+                // নতুন: প্রোফাইল ছবি (profile_picture_url) থাকলে সেটা লোড করে দেখানো,
+                // না থাকলে/খালি থাকলে ডিফল্ট (নামের প্রথম অক্ষরের) অ্যাভাটারই থাকবে।
+                // ---------------------------------------------------------------
+                val photoUrl = patient.optString("profile_picture_url", "")
+                if (photoUrl.isNotBlank()) {
+                    loadProfileAvatarImage(photoUrl)
+                } else {
+                    profileAvatar.setPhoto(null) // ডিফল্ট অ্যাভাটার নিশ্চিত করা
+                }
+            }
+        }
+    }
+
+    /**
+     * নতুন: profile_picture_url থেকে ব্যাকগ্রাউন্ডে (Dispatchers.IO) ছবিটা ডাউনলোড করে
+     * Bitmap বানিয়ে profileAvatar-এ বসায়। কোনো কারণে ডাউনলোড ব্যর্থ হলে চুপচাপ
+     * ডিফল্ট (নামের অক্ষরের) অ্যাভাটার দেখানো অবস্থাতেই থেকে যাবে।
+     */
+    private fun loadProfileAvatarImage(url: String) {
+        lifecycleScope.launch {
+            val bitmap = withContext(Dispatchers.IO) {
+                var connection: HttpURLConnection? = null
+                try {
+                    connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 15000
+                        readTimeout = 15000
+                        doInput = true
+                        instanceFollowRedirects = true
+                    }
+                    connection.connect()
+                    connection.inputStream.use { input ->
+                        BitmapFactory.decodeStream(input)
+                    }
+                } catch (e: Exception) {
+                    null
+                } finally {
+                    connection?.disconnect()
+                }
+            }
+            if (bitmap != null) {
+                profileAvatar.setPhoto(bitmap)
             }
         }
     }
@@ -1057,9 +1108,6 @@ class HomeActivity : AppCompatActivity() {
 
     /**
      * প্রকৃতপক্ষে Supabase-এ কল করে অ্যাকাউন্ট ডিলিট করে।
-     * NOTE: SupabaseClient.kt-এ একটি deleteAccount(patientId: String): Result<Unit>
-     * ফাংশন যুক্ত করতে হবে — এখনো এটি নেই বলেই আগে ডিলিট আসলে হচ্ছিল না,
-     * শুধু টোস্ট দেখিয়ে লগ আউট করে দিচ্ছিল।
      */
     private fun performAccountDeletion() {
         val patientId = SupabaseClient.getPatientId(this)
@@ -1083,7 +1131,6 @@ class HomeActivity : AppCompatActivity() {
 
     /**
      * অ্যাপের নিজস্ব ডিজাইন-ভাষায় তৈরি কাস্টম কনফার্মেশন ডায়ালগ (সিস্টেম ডিফল্ট AlertDialog নয়)।
-     * এই একটিভিটির সব কনফার্মেশন-ডায়ালগ এই একটি ফাংশন দিয়েই বানানো হয়।
      */
     private fun showCustomConfirmDialog(
         iconType: VectorIconDrawable.IconType,
@@ -1304,10 +1351,6 @@ class HomeActivity : AppCompatActivity() {
         @Deprecated("Deprecated in Java")
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
-        /**
-         * পরিশীলিত, নরম-কর্নার হোম আইকন (Material-স্টাইল ছাদ + দরজার খাঁজ সহ)
-         * — আগের জ্যাগড ছাদের বদলে মসৃণ, ভারসাম্যপূর্ণ সিলুয়েট।
-         */
         private fun drawHome(canvas: Canvas, s: Float) {
             val u = s / 24f
             val path = Path().apply {
@@ -1459,7 +1502,6 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawPath(arrow, strokePaint)
         }
 
-        /** নথি/লিস্ট আইকন - "আমার অ্যাপয়েন্টমেন্ট" এর জন্য */
         private fun drawDocument(canvas: Canvas, s: Float) {
             canvas.drawRoundRect(s * 0.08f, 0f, s * 0.92f, s, s * 0.10f, s * 0.10f, strokePaint)
             canvas.drawLine(s * 0.24f, s * 0.30f, s * 0.76f, s * 0.30f, strokePaint)
@@ -1467,21 +1509,16 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawLine(s * 0.24f, s * 0.74f, s * 0.58f, s * 0.74f, strokePaint)
         }
 
-        /** ট্র্যাশ/ডিলিট আইকন - "ডিলিট প্রোফাইল" এর জন্য */
         private fun drawTrash(canvas: Canvas, s: Float) {
-            // ঢাকনা
             canvas.drawLine(s * 0.16f, s * 0.22f, s * 0.84f, s * 0.22f, strokePaint)
             canvas.drawLine(s * 0.38f, s * 0.22f, s * 0.42f, s * 0.06f, strokePaint)
             canvas.drawLine(s * 0.42f, s * 0.06f, s * 0.58f, s * 0.06f, strokePaint)
             canvas.drawLine(s * 0.58f, s * 0.06f, s * 0.62f, s * 0.22f, strokePaint)
-            // বডি
             canvas.drawRoundRect(s * 0.22f, s * 0.22f, s * 0.78f, s * 0.96f, s * 0.05f, s * 0.05f, strokePaint)
-            // ভেতরের দাগ
             canvas.drawLine(s * 0.40f, s * 0.36f, s * 0.40f, s * 0.82f, strokePaint)
             canvas.drawLine(s * 0.60f, s * 0.36f, s * 0.60f, s * 0.82f, strokePaint)
         }
 
-        /** লোকেশন/পিন আইকন - "চেম্বার" ঠিকানার জন্য */
         private fun drawLocation(canvas: Canvas, s: Float) {
             val path = Path()
             path.moveTo(s * 0.5f, s * 0.98f)
@@ -1494,14 +1531,12 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawCircle(s * 0.5f, s * 0.34f, s * 0.12f, fillPaint)
         }
 
-        /** ঘড়ি আইকন - "রোগী দেখার সময়" এর জন্য */
         private fun drawClock(canvas: Canvas, s: Float) {
             canvas.drawCircle(s / 2, s / 2, s / 2 - strokePaint.strokeWidth / 2, strokePaint)
             canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.5f, s * 0.22f, strokePaint)
             canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.70f, s * 0.58f, strokePaint)
         }
 
-        /** "+" প্লাস আইকন - "অ্যাপয়েন্টমেন্ট বুক করুন" বাটনের জন্য */
         private fun drawPlus(canvas: Canvas, s: Float) {
             val plusStroke = Paint(strokePaint).apply { strokeWidth = s * 0.16f }
             canvas.drawLine(s * 0.5f, s * 0.06f, s * 0.5f, s * 0.94f, plusStroke)
@@ -1532,10 +1567,30 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /** রোগীর প্রোফাইল অ্যাভাটার - নামের প্রথম অক্ষর দিয়ে তৈরি (কোনো ছবি ছাড়া) */
+    /**
+     * রোগীর প্রোফাইল অ্যাভাটার:
+     * - প্রোফাইল ছবি (Bitmap) সেট করা থাকলে সেটি বৃত্তাকার-ক্রপ করে দেখায়।
+     * - ছবি না থাকলে (null) নামের প্রথম অক্ষর দিয়ে তৈরি ডিফল্ট গ্রেডিয়েন্ট অ্যাভাটার দেখায়।
+     */
     class PatientAvatarView(context: Context) : View(context) {
         var initial: String = "র"
             set(value) { field = value; invalidate() }
+
+        private var photoBitmap: Bitmap? = null
+        private var bitmapShader: BitmapShader? = null
+        private val photoMatrix = Matrix()
+
+        /** ছবি সেট/ক্লিয়ার করার জন্য - null দিলে ডিফল্ট (অক্ষর) অ্যাভাটারে ফিরে যাবে */
+        fun setPhoto(bitmap: Bitmap?) {
+            photoBitmap = bitmap
+            bitmapShader = if (bitmap != null) {
+                BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            } else {
+                null
+            }
+            requestLayout()
+            invalidate()
+        }
 
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
         private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1544,6 +1599,7 @@ class HomeActivity : AppCompatActivity() {
         private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
         }
+        private val photoPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
         init {
             setLayerType(LAYER_TYPE_SOFTWARE, null)
@@ -1554,12 +1610,41 @@ class HomeActivity : AppCompatActivity() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val w = width.toFloat(); val h = height.toFloat()
-            bgPaint.shader = RadialGradient(w / 2, h / 2, w / 2, Color.parseColor("#16897A"), Color.parseColor("#0A4A42"), Shader.TileMode.CLAMP)
-            canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, bgPaint)
-            canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, ringPaint)
-            textPaint.textSize = h * 0.4f
-            val cy = h / 2 - (textPaint.descent() + textPaint.ascent()) / 2
-            canvas.drawText(initial.uppercase(), w / 2, cy, textPaint)
+            if (w <= 0f || h <= 0f) return
+
+            val bmp = photoBitmap
+            val shader = bitmapShader
+
+            if (bmp != null && shader != null) {
+                // ---------------- ছবি আছে: বৃত্তাকার-ক্রপ করা প্রোফাইল ছবি ----------------
+                val scale: Float
+                val dx: Float
+                val dy: Float
+                if (bmp.width.toFloat() * h > w * bmp.height.toFloat()) {
+                    scale = h / bmp.height.toFloat()
+                    dx = (w - bmp.width * scale) * 0.5f
+                    dy = 0f
+                } else {
+                    scale = w / bmp.width.toFloat()
+                    dx = 0f
+                    dy = (h - bmp.height * scale) * 0.5f
+                }
+                photoMatrix.reset()
+                photoMatrix.setScale(scale, scale)
+                photoMatrix.postTranslate(dx, dy)
+                shader.setLocalMatrix(photoMatrix)
+                photoPaint.shader = shader
+                canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, photoPaint)
+                canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, ringPaint)
+            } else {
+                // ---------------- ডিফল্ট: নামের প্রথম অক্ষরের গ্রেডিয়েন্ট অ্যাভাটার ----------------
+                bgPaint.shader = RadialGradient(w / 2, h / 2, w / 2, Color.parseColor("#16897A"), Color.parseColor("#0A4A42"), Shader.TileMode.CLAMP)
+                canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, bgPaint)
+                canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, ringPaint)
+                textPaint.textSize = h * 0.4f
+                val cy = h / 2 - (textPaint.descent() + textPaint.ascent()) / 2
+                canvas.drawText(initial.uppercase(), w / 2, cy, textPaint)
+            }
         }
     }
 }
