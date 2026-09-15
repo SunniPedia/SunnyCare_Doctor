@@ -1,6 +1,5 @@
 package com.konasl.nagad
 
-import android.app.TimePickerDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -102,7 +101,6 @@ class BookAppointmentActivity : AppCompatActivity() {
     private lateinit var dateRow: LinearLayout
     private lateinit var timeGrid: GridLayout
     private lateinit var timeLoadingText: TextView
-    private lateinit var customTimeBtn: TextView
     private lateinit var paymentRow: LinearLayout
     private lateinit var manualPayCard: LinearLayout
     private lateinit var manualPayNumberText: TextView
@@ -270,10 +268,11 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
 
         // ---------------- SECTION: TIME ----------------
-        // timeGrid/timeLoadingText/customTimeBtn buildDateOptions() কল করার আগে initialize করা হচ্ছে,
+        // timeGrid/timeLoadingText buildDateOptions() কল করার আগে initialize করা হচ্ছে,
         // কারণ buildDateOptions() প্রথম ডেট চিপ অটো-সিলেক্ট (performClick) করে, যেটা
         // fetchBookedTimesAndRefresh -> renderTimeSlotsForDate এর মাধ্যমে সরাসরি timeGrid অ্যাক্সেস করে।
-        // ফলে "আজকের তারিখ" সবসময় Activity ওপেন হওয়ার সাথে সাথেই স্বয়ংক্রিয়ভাবে সিলেক্ট থাকে (নিচে buildDateOptions() দ্রষ্টব্য)।
+        // ফলে "আজকের তারিখ" (অথবা আজকের সব স্লট পার হয়ে গেলে "আগামীকাল") সবসময় Activity ওপেন
+        // হওয়ার সাথে সাথেই স্বয়ংক্রিয়ভাবে সিলেক্ট থাকে (নিচে buildDateOptions() দ্রষ্টব্য)।
         val timeSection = sectionTitle(HomeActivity.VectorIconDrawable.IconType.CLOCK, "সময় নির্বাচন করুন")
         timeLoadingText = text("তারিখের জন্য খালি সময় যাচাই করা হচ্ছে...", 11f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -291,17 +290,8 @@ class BookAppointmentActivity : AppCompatActivity() {
         // সেটাই cross-date leak-এর মূল কারণ ছিল। এখন গ্রিড খালি রেখে renderTimeSlotsForDate()
         // প্রতিটা তারিখ বদলে (এবং প্রতিটা booked-times রেসপন্স আসার পর) সম্পূর্ণ নতুন করে বানায়।
 
-        customTimeBtn = text("+ অন্য সময় বেছে নিন", 12.5f, Typeface.BOLD, colorPrimary, Gravity.CENTER).apply {
-            background = roundedBg(Color.parseColor("#E4F3F1"), 14f)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(dp(18), dp(10), dp(18), 0)
-            }
-            setOnClickListener { pickCustomTime() }
-        }
-
         // timeGrid প্রস্তুত হওয়ার পরই এখন buildDateOptions() কল হচ্ছে, যাতে প্রথম
-        // তারিখ (আজ) অটো-সিলেক্ট হওয়ার সময় (chip.performClick()) কোনো ক্র্যাশ না হয়।
+        // তারিখ অটো-সিলেক্ট হওয়ার সময় (chip.performClick()) কোনো ক্র্যাশ না হয়।
         buildDateOptions()
 
         // ---------------- SECTION: PATIENT INFO ----------------
@@ -468,7 +458,6 @@ class BookAppointmentActivity : AppCompatActivity() {
         page.addView(timeSection)
         page.addView(timeLoadingText)
         page.addView(timeGrid)
-        page.addView(customTimeBtn)
         page.addView(infoSection)
         page.addView(infoCard)
         page.addView(paymentSection)
@@ -486,6 +475,8 @@ class BookAppointmentActivity : AppCompatActivity() {
 
         // "আজকের" তারিখে বসে থাকা অবস্থায় সময় গড়িয়ে গেলে (কেউ কোনো অ্যাকশন না নিলেও)
         // পার হয়ে যাওয়া স্লট স্বয়ংক্রিয়ভাবে গ্রিড থেকে সরে যাওয়ার জন্য ব্যাকগ্রাউন্ড টিকার চালু করা হলো।
+        // আজকের সবগুলো স্লট একসাথে পার হয়ে গেলে এই টিকারই আজকের তারিখটা তালিকা থেকে বাদ দিয়ে
+        // আগামীকালের তারিখ অটো-সিলেক্ট করে দেয় (দেখুন removeExpiredSlotsFromGrid নিচে)।
         startSlotExpiryTicker()
     }
 
@@ -539,20 +530,35 @@ class BookAppointmentActivity : AppCompatActivity() {
                 // এই তারিখে Supabase-এ ইতিমধ্যে বুক থাকা সময় ও এডমিনের date-override যাচাই করে গ্রিড নতুন করে বানানো হয়
                 fetchBookedTimesAndRefresh(option.isoDate)
             }
-            // index == 0 মানেই "আজ" (দেখুন generateDateOptions()) — Activity ওপেন হওয়া মাত্রই
-            // আজকের তারিখটাই স্বয়ংক্রিয়ভাবে সিলেক্টেড দেখানো হয়, ব্যবহারকারীকে আলাদা করে ট্যাপ করতে হয় না।
+            // index == 0 মানেই তালিকার প্রথম তারিখ (সাধারণত "আজ", কিন্তু আজকের সব স্লট পার হয়ে
+            // গেলে generateDateOptions() নিজেই "আজ" বাদ দিয়ে "আগামীকাল" থেকে তালিকা শুরু করে) —
+            // Activity ওপেন হওয়া মাত্রই এই প্রথম তারিখটাই স্বয়ংক্রিয়ভাবে সিলেক্টেড দেখানো হয়,
+            // ব্যবহারকারীকে আলাদা করে ট্যাপ করতে হয় না।
             if (index == 0) chip.performClick()
             dateRow.addView(chip)
         }
     }
 
-    /** আজ থেকে শুরু করে পরবর্তী ১০ দিনের তারিখ — প্রতিবার Activity খুললে Calendar থেকে ফ্রেশ জেনারেট হয়, তাই সবসময় আপডেটেড থাকে */
+    /**
+     * আজ থেকে শুরু করে পরবর্তী ১০ দিনের তারিখ — প্রতিবার এই ফাংশন কল হলে Calendar থেকে ফ্রেশ জেনারেট হয়, তাই সবসময় আপডেটেড থাকে।
+     *
+     * বিশেষ শর্ত: ক্লিনিকের সর্বশেষ টাইম-স্লট (রাত ৮:০০)-ও যদি বর্তমান সময়ের হিসেবে পার হয়ে যায় — অর্থাৎ
+     * আজকের তারিখে বুক করার মতো আর কোনো সময়ই অবশিষ্ট না থাকে — তাহলে আজকের তারিখটা তালিকা থেকে
+     * সম্পূর্ণ বাদ দিয়ে সরাসরি আগামীকাল থেকে তালিকা শুরু করা হয়। এতে ইউজার এমন কোনো তারিখ কখনো
+     * সিলেক্ট করতে পারবে না যেদিন আসলে বুক করার মতো কোনো সময়ই নেই।
+     */
     private fun generateDateOptions(): List<DateOption> {
         val quickLabels = arrayOf("আজ", "আগামীকাল")
         val weekDays = arrayOf("রবি", "সোম", "মঙ্গল", "বুধ", "বৃহঃ", "শুক্র", "শনি")
         val months = arrayOf("জানু", "ফেব্রু", "মার্চ", "এপ্রিল", "মে", "জুন", "জুলাই", "আগস্ট", "সেপ্ট", "অক্টো", "নভে", "ডিসে")
         val result = mutableListOf<DateOption>()
-        for (i in 0..9) {
+
+        // startOffset = 1 মানে আজকে (i=0) বাদ দিয়ে আগামীকাল (i=1) থেকে তালিকা শুরু হবে।
+        // লেবেল এখনো বাস্তব আজকের সাপেক্ষে গণনা হয় (quickLabels[i]) — তাই startOffset=1 হলে
+        // প্রথম আইটেমের লেবেল ঠিকভাবেই "আগামীকাল" দেখাবে, ভুল করে "আজ" দেখাবে না।
+        val startOffset = if (isTodayFullyPastByTime()) 1 else 0
+
+        for (i in startOffset until startOffset + 10) {
             val cal = Calendar.getInstance()
             cal.add(Calendar.DAY_OF_YEAR, i)
             val label = if (i < quickLabels.size) quickLabels[i] else weekDays[cal.get(Calendar.DAY_OF_WEEK) - 1]
@@ -606,8 +612,7 @@ class BookAppointmentActivity : AppCompatActivity() {
     }
 
     // ক্লিনিকের কর্মঘণ্টা: সকাল ১০:০০ (600 মিনিট) থেকে রাত ৮:০০ (1200 মিনিট) পর্যন্ত।
-    // generateTimeSlots()-এর startMinutes/endMinutes এর সাথে হুবহু মিলিয়ে রাখা হয়েছে,
-    // যাতে কাস্টম টাইম-পিকার আর অটো-জেনারেটেড স্লট গ্রিড — দুটোই একই সীমার মধ্যে কাজ করে।
+    // generateTimeSlots()-এর startMinutes/endMinutes এর সাথে হুবহু মিলিয়ে রাখা হয়েছে।
     private val CLINIC_OPEN_MINUTES = 10 * 60   // 10:00
     private val CLINIC_CLOSE_MINUTES = 20 * 60  // 20:00
 
@@ -625,6 +630,24 @@ class BookAppointmentActivity : AppCompatActivity() {
     private fun todayIsoDate(): String {
         val cal = Calendar.getInstance()
         return "%04d-%02d-%02d".format(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH))
+    }
+
+    /**
+     * ক্লিনিকের সর্বশেষ টাইম-স্লট (রাত ৮:০০)-এর সময়ও বর্তমান সময়ের হিসেবে পার হয়ে গেছে কিনা যাচাই করে —
+     * অর্থাৎ আজকের তারিখে আসলেই আর কোনো বুকযোগ্য সময় অবশিষ্ট নেই কিনা। এটা true হলে আজকের তারিখটা
+     * তারিখ-তালিকা থেকে বাদ দেওয়া হয় (generateDateOptions()) এবং প্রয়োজনে তালিকা রিফ্রেশ করে
+     * আগামীকাল অটো-সিলেক্ট করা হয় (removeExpiredSlotsFromGrid())।
+     */
+    private fun isTodayFullyPastByTime(): Boolean {
+        val now = Calendar.getInstance()
+        val lastSlotCal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, CLINIC_CLOSE_MINUTES / 60)
+            set(Calendar.MINUTE, CLINIC_CLOSE_MINUTES % 60)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        // শেষ স্লটের সময় এখন আর ভবিষ্যতে নেই (অর্থাৎ বর্তমান সময় সেটার সমান বা তার পরে) মানেই আজকের সব স্লট পার হয়ে গেছে
+        return !lastSlotCal.after(now)
     }
 
     /**
@@ -689,7 +712,7 @@ class BookAppointmentActivity : AppCompatActivity() {
         highlightSelectedTime(selectedTime24)
     }
 
-    /** একটা সময়-স্লটের চিপ (TextView) তৈরি করে — নতুন গ্রিড রেন্ডার আর কাস্টম রিফ্রেশ দুই জায়গাতেই পুনঃব্যবহার হয় */
+    /** একটা সময়-স্লটের চিপ (TextView) তৈরি করে — নতুন গ্রিড রেন্ডার আর টিকার-রিফ্রেশ দুই জায়গাতেই পুনঃব্যবহার হয় */
     private fun buildTimeChip(slot: TimeSlot): TextView {
         return text(slot.label, 12.5f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
             background = roundedBgStroke(colorCard, colorFieldBorder, 14f, 1)
@@ -730,33 +753,6 @@ class BookAppointmentActivity : AppCompatActivity() {
                 roundedBgStroke(colorCard, colorFieldBorder, 14f, 1)
             c.setTextColor(if (selected) Color.WHITE else colorDark)
         }
-        customTimeBtn.background = roundedBg(Color.parseColor("#E4F3F1"), 14f)
-        customTimeBtn.setTextColor(colorPrimary)
-        customTimeBtn.text = "+ অন্য সময় বেছে নিন"
-    }
-
-    private fun pickCustomTime() {
-        val cal = Calendar.getInstance()
-        TimePickerDialog(this, { _, h, min ->
-            val chosen = "%02d:%02d".format(h, min)
-            if (bookedTimesForDate.contains(chosen)) {
-                Toast.makeText(this, "এই সময়ে ইতিমধ্যে অ্যাপয়েন্টমেন্ট বুক করা আছে, অন্য একটা সময় বেছে নিন", Toast.LENGTH_SHORT).show()
-                return@TimePickerDialog
-            }
-            if (isPastTimeSlot(chosen)) {
-                Toast.makeText(this, "এই সময়টা ইতিমধ্যে পার হয়ে গেছে, অন্য একটা সময় বেছে নিন", Toast.LENGTH_SHORT).show()
-                return@TimePickerDialog
-            }
-            selectedTime24 = chosen
-            for (i in 0 until timeGrid.childCount) {
-                val c = timeGrid.getChildAt(i) as? TextView ?: continue
-                c.background = roundedBgStroke(colorCard, colorFieldBorder, 14f, 1)
-                c.setTextColor(colorDark)
-            }
-            customTimeBtn.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(colorPrimaryLight, colorPrimaryDark)).apply { cornerRadius = dp(14).toFloat() }
-            customTimeBtn.setTextColor(Color.WHITE)
-            customTimeBtn.text = "নির্বাচিত সময়: $selectedTime24"
-        }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), false).show()
     }
 
     // ------------------------------------------------------------------
@@ -807,7 +803,7 @@ class BookAppointmentActivity : AppCompatActivity() {
             val result = withContext(Dispatchers.IO) { SupabaseClient.getSlotSettings() }
             result.onSuccess { settings ->
                 disabledSlotsGlobal = settings
-                // ইতিমধ্যে একটা তারিখ সিলেক্টেড থাকলে (সাধারণত "আজ") নতুন সেটিংস অনুযায়ী গ্রিড আবার আঁকা হয়
+                // ইতিমধ্যে একটা তারিখ সিলেক্টেড থাকলে (সাধারণত তালিকার প্রথম তারিখ) নতুন সেটিংস অনুযায়ী গ্রিড আবার আঁকা হয়
                 selectedDate?.let { renderTimeSlotsForDate(it.isoDate) }
             }
             // ব্যর্থ হলে disabledSlotsGlobal খালিই থাকে => সব স্লট চালু ধরা হয় (isSlotVisible-এর ডিফল্ট আচরণ)
@@ -817,6 +813,8 @@ class BookAppointmentActivity : AppCompatActivity() {
     // ------------------------------------------------------------------
     // AUTO-EXPIRY TICKER — "আজকের" তারিখে বসে থাকা অবস্থায় ঘড়ির কাঁটা এগিয়ে কোনো স্লট পার হয়ে
     // গেলে, কোনো ইউজার অ্যাকশন (তারিখ বদল/রিফ্রেশ) ছাড়াই স্বয়ংক্রিয়ভাবে সেটা গ্রিড থেকে সরিয়ে দেয়।
+    // আজকের সবগুলো স্লট একসাথে পার হয়ে গেলে এটাই আজকের তারিখটা তালিকা থেকে বাদ দিয়ে
+    // স্বয়ংক্রিয়ভাবে আগামীকাল সিলেক্ট করে দেয়।
     // ------------------------------------------------------------------
     private fun startSlotExpiryTicker() {
         slotExpiryTickerJob?.cancel()
@@ -832,6 +830,10 @@ class BookAppointmentActivity : AppCompatActivity() {
      * বর্তমানে গ্রিডে দেখানো প্রতিটা স্লট আবার isPastTimeSlot() দিয়ে যাচাই করে, আর কোনোটা পার হয়ে
      * গেলে সেটা View হিসেবেই গ্রিড থেকে remove করে দেয় (শুধু GONE নয়) — যাতে বাকি স্লটগুলো
      * GridLayout-এ নিজে থেকেই re-flow করে খালি জায়গা পূরণ করে নেয়।
+     *
+     * সব স্লট রিমুভ হয়ে যাওয়ার পর যদি দেখা যায় নির্বাচিত তারিখটা আজকেরই এবং আজকের ক্লিনিক-সময়
+     * (রাত ৮:০০) পুরোপুরি পার হয়ে গেছে, তাহলে শুধু "কোনো খালি সময় নেই" লেখা দেখানোর বদলে
+     * পুরো তারিখ-তালিকা রিফ্রেশ করে আজকের তারিখটা বাদ দিয়ে আগামীকাল অটো-সিলেক্ট করে দেওয়া হয়।
      */
     private fun removeExpiredSlotsFromGrid() {
         // শুধু "আজকের" তারিখ সিলেক্ট করা থাকলেই কোনো স্লট "past" হতে পারে; অন্য তারিখে কিছুই করার নেই
@@ -846,11 +848,6 @@ class BookAppointmentActivity : AppCompatActivity() {
                 if (selectedTime24 == value) {
                     // ইউজার ঠিক এই সময়টাই সিলেক্ট করে বসে ছিল — এখন সেটা আর বৈধ না, তাই বাতিল করে জানানো হচ্ছে
                     selectedTime24 = null
-                    Toast.makeText(
-                        this,
-                        "আপনার নির্বাচিত সময়টা এখন পার হয়ে গেছে, দয়া করে নতুন একটা সময় বেছে নিন",
-                        Toast.LENGTH_LONG
-                    ).show()
                 }
                 timeGrid.removeViewAt(i)
                 removedAny = true
@@ -858,7 +855,27 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
 
         if (removedAny && timeGrid.childCount == 0) {
-            addNoSlotsPlaceholder()
+            if (isTodayFullyPastByTime()) {
+                // আজকের সবগুলো স্লট এইমাত্র পার হয়ে গেছে — আজকের তারিখটা তালিকা থেকে সরিয়ে
+                // স্বয়ংক্রিয়ভাবে আগামীকালের তারিখ সিলেক্ট করে দেওয়া হচ্ছে
+                Toast.makeText(
+                    this,
+                    "আজকের সব সময় পার হয়ে গেছে, আগামীকালের জন্য অ্যাপয়েন্টমেন্ট নেওয়া হচ্ছে",
+                    Toast.LENGTH_LONG
+                ).show()
+                buildDateOptions()
+            } else {
+                Toast.makeText(
+                    this,
+                    "আপনার নির্বাচিত সময়টা এখন পার হয়ে গেছে, দয়া করে নতুন একটা সময় বেছে নিন",
+                    Toast.LENGTH_LONG
+                ).show()
+                addNoSlotsPlaceholder()
+            }
+        } else if (removedAny) {
+            // কিছু স্লট রিমুভ হয়েছে কিন্তু এখনও খালি সময় বাকি আছে — শুধু ইউজারকে জানানো হচ্ছে
+            // যদি তার নিজের সিলেক্ট করা সময়টাই বাদ পড়ে থাকে
+            // (উপরের লুপেই selectedTime24 = null করে দেওয়া হয়েছে, এখানে শুধু বার্তা দরকার হলে দেখানো যায়)
         }
     }
 
