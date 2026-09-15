@@ -1010,7 +1010,7 @@ class LoginActivity : AppCompatActivity() {
 
             if (digits.isEmpty()) {
                 val hy = cy - (hintPaint.descent() + hintPaint.ascent()) / 2
-                canvas.drawText("01XXXXXXXXX / + বিদেশি", padding, hy, hintPaint)
+                canvas.drawText("XXXXXXXXX", padding, hy, hintPaint)
                 if (isActive && cursorVisible) drawCursor(canvas, padding, cy)
             } else {
                 val display = formatted()
