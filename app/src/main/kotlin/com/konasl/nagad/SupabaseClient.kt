@@ -67,9 +67,15 @@ import java.util.concurrent.TimeUnit
  *   transaction_id text,
  *   payment_status text default 'not_applicable',
  *   report_url text,
+ *   weight text,             -- নতুন: রোগীর বর্তমান ওজন (স্বাধীন টেক্সট, যেমন "65 কেজি")
+ *   blood_pressure text,     -- নতুন: রোগীর রক্তচাপ (যেমন "120/80 mmHg")
  *   slot_open boolean not null default false,
  *   created_at timestamptz default now()
  * );
+ *
+ * -- আগে থেকে টেবিল থাকলে শুধু নিচের দুইটা কলাম যোগ করলেই চলবে:
+ * -- alter table appointments add column if not exists weight text;
+ * -- alter table appointments add column if not exists blood_pressure text;
  *
  * create table if not exists slot_settings (
  *   value24 text primary key,
@@ -459,7 +465,7 @@ object SupabaseClient {
     suspend fun uploadReportFile(fileName: String, mimeType: String, bytes: ByteArray): Result<String> =
         withContext(Dispatchers.IO) {
             try {
-                val safeName = "${System.currentTimeMillis()}_${fileName.replace(Regex("[^A-Za-z0-9.-]"), "_")}"
+                val safeName = "${System.currentTimeMillis()}_${fileName.replace(Regex("[^A-Za-z0-9.-]"), "")}"
                 val objectPath = "reports/$safeName"
                 val mediaType = mimeType.toMediaTypeOrNull() ?: "application/octet-stream".toMediaType()
 
@@ -488,7 +494,7 @@ object SupabaseClient {
     suspend fun uploadProfilePicture(fileName: String, mimeType: String, bytes: ByteArray): Result<String> =
         withContext(Dispatchers.IO) {
             try {
-                val safeName = "${System.currentTimeMillis()}_${fileName.replace(Regex("[^A-Za-z0-9.-]"), "_")}"
+                val safeName = "${System.currentTimeMillis()}_${fileName.replace(Regex("[^A-Za-z0-9.-]"), "")}"
                 val objectPath = "avatars/$safeName"
                 val mediaType = mimeType.toMediaTypeOrNull() ?: "image/jpeg".toMediaType()
 
@@ -518,6 +524,11 @@ object SupabaseClient {
     // APPOINTMENTS
     // ---------------------------------------------------------------------
 
+    /**
+     * নতুন: এখন [weight] (বর্তমান ওজন) ও [bloodPressure] (রক্তচাপ) ঐচ্ছিক প্যারামিটার হিসেবে যুক্ত করা হয়েছে।
+     * রোগী এই দুটো তথ্য না জানলে খালি রেখে দিতে পারবেন — খালি থাকলে JSON-এ পাঠানো হয় না, ফলে
+     * appointments টেবিলে সেই কলাম null/ডিফল্ট থেকে যায়।
+     */
     suspend fun createAppointment(
         patientId: String,
         patientName: String,
@@ -529,7 +540,9 @@ object SupabaseClient {
         fee: Int = 800,
         transactionId: String = "",
         paymentStatus: String = "not_applicable",
-        reportUrl: String = ""
+        reportUrl: String = "",
+        weight: String = "",
+        bloodPressure: String = ""
     ): Result<JSONObject> = try {
         val json = JSONObject().apply {
             put("patient_id", patientId)
@@ -544,6 +557,8 @@ object SupabaseClient {
             put("transaction_id", transactionId)
             put("payment_status", paymentStatus)
             if (reportUrl.isNotEmpty()) put("report_url", reportUrl)
+            if (weight.isNotEmpty()) put("weight", weight)
+            if (bloodPressure.isNotEmpty()) put("blood_pressure", bloodPressure)
         }
         val rows = post("appointments", json)
         Result.success(rows.getJSONObject(0))
@@ -660,7 +675,7 @@ object SupabaseClient {
     }
 
     // =======================================================================
-    // ==========            নতুন — Admin.kt এর জন্য                ==========
+    // ==========            Admin.kt এর জন্য                       ==========
     // ==========   (SupabaseClient এর সব ডেটা এডমিন পর্যবেক্ষণ ও   ==========
     // ==========          ম্যানেজ করতে পারবে এখানকার              ==========
     // ==========          ফাংশনগুলো দিয়ে)                          ==========
@@ -692,6 +707,9 @@ object SupabaseClient {
     } catch (e: Exception) {
         Result.failure(e)
     }
+
+    /** এডমিন প্যানেল — নির্দিষ্ট রোগীর সব অ্যাপয়েন্টমেন্ট (রিপোর্ট দেখানোর জন্য getAppointments() ও ব্যবহার করা যায়) */
+    suspend fun adminGetPatientAppointments(patientId: String): Result<JSONArray> = getAppointments(patientId)
 
     /** এডমিন প্যানেল — অ্যাপয়েন্টমেন্টের যেকোনো ফিল্ড (status, slot_open, payment_status, fee ইত্যাদি) আপডেট */
     suspend fun adminUpdateAppointment(appointmentId: String, fields: JSONObject): Result<Unit> = try {
