@@ -13,6 +13,7 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -25,6 +26,7 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -50,6 +52,21 @@ class SignupActivity : AppCompatActivity() {
 
     private var appFont: Typeface? = null
 
+    private lateinit var avatarImage: ImageView
+    private lateinit var avatarHint: TextView
+    private var selectedImageUri: Uri? = null
+    private var skipPhotoUpload = false
+
+    // এই লঞ্চারটা অবশ্যই ক্লাস-লেভেল ফিল্ড হিসেবে রেজিস্টার করতে হয় (Activity CREATED হওয়ার আগে)
+    private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        if (uri != null) {
+            selectedImageUri = uri
+            skipPhotoUpload = false
+            avatarImage.setImageURI(uri)
+            avatarHint.text = "ছবি পরিবর্তন করুন"
+        }
+    }
+
     private lateinit var nameInput: EditText
     private lateinit var ageInput: EditText
     private lateinit var addressInput: EditText
@@ -71,12 +88,12 @@ class SignupActivity : AppCompatActivity() {
 
     private var normalContainerBottomPadding = 0
     private var phone: String = ""
-    private var password: String = ""
+    private var pin: String = "" // LoginActivity থেকে আসা ৪-ডিজিট PIN (আগে password ছিল)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         phone = intent.getStringExtra("phone") ?: ""
-        password = intent.getStringExtra("password") ?: ""
+        pin = intent.getStringExtra("pin") ?: ""
 
         appFont = try {
             Typeface.createFromAsset(assets, "fonts/SolaimanLipi.ttf")
@@ -174,6 +191,55 @@ class SignupActivity : AppCompatActivity() {
             clipToOutline = true
         }
 
+        // ---- নতুন: প্রোফাইল ছবি সেকশন (ঐচ্ছিক) ----
+        val avatarSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(18) }
+        }
+        val avatarFrame = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(92), dp(92)).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        }
+        avatarImage = ImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(dp(92), dp(92))
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#E4F3F1"))
+            }
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            setImageDrawable(personPlaceholderDrawable())
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { pickImageLauncher.launch("image/*") }
+        }
+        val cameraBadge = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(dp(28), dp(28)).apply { gravity = Gravity.BOTTOM or Gravity.END }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(colorPrimary)
+                setStroke(dp(2), Color.WHITE)
+            }
+            isClickable = true
+            isFocusable = true
+            addView(cameraIconView(this@SignupActivity).apply {
+                layoutParams = FrameLayout.LayoutParams(dp(14), dp(14)).apply { gravity = Gravity.CENTER }
+            })
+            setOnClickListener { pickImageLauncher.launch("image/*") }
+        }
+        avatarFrame.addView(avatarImage)
+        avatarFrame.addView(cameraBadge)
+        avatarHint = text("প্রোফাইল ছবি যুক্ত করুন (ঐচ্ছিক)", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER).apply {
+            setPadding(0, dp(8), 0, 0)
+        }
+        avatarSection.addView(avatarFrame)
+        avatarSection.addView(avatarHint)
+
         val formHeading = text("ব্যক্তিগত তথ্য", 13.5f, Typeface.BOLD, colorDark, Gravity.START).apply { setPadding(0, 0, 0, dp(4)) }
         nameInput = fieldInput("পূর্ণ নাম *", InputType.TYPE_CLASS_TEXT, imeAction = EditorInfo.IME_ACTION_NEXT)
         ageInput = fieldInput("বয়স *", InputType.TYPE_CLASS_NUMBER, imeAction = EditorInfo.IME_ACTION_NEXT)
@@ -232,7 +298,6 @@ class SignupActivity : AppCompatActivity() {
         val smartFocusListener = View.OnFocusChangeListener { v, hasFocus ->
             val et = v as? EditText
             if (et != null) {
-                // Error থাকলে লাল বর্ডারই থাকবে, না থাকলে active/normal
                 if (et.background.constantState != fieldBgError().constantState) {
                     et.background = fieldBg(hasFocus)
                 }
@@ -240,7 +305,6 @@ class SignupActivity : AppCompatActivity() {
             if (hasFocus) {
                 v.postDelayed({ ensureVisible(v) }, 150)
             } else {
-                // ফোকাস চলে গেলে যদি ভ্যালিড হয় তাহলে নরমাল করে দাও
                 et?.let { if (it.text.toString().trim().isNotEmpty()) it.background = fieldBg(false) }
             }
         }
@@ -263,6 +327,7 @@ class SignupActivity : AppCompatActivity() {
         }
         statusText = text("", 12.5f, Typeface.NORMAL, colorError, Gravity.CENTER).apply { setPadding(0, dp(10), 0, 0) }
 
+        card.addView(avatarSection)
         card.addView(formHeading)
         card.addView(space(dp(10)))
         card.addView(label("পূর্ণ নাম *"))
@@ -400,6 +465,51 @@ class SignupActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    /** নতুন: প্রোফাইল ছবি আপলোড না করলে ইউজারকে একবার জানিয়ে দেওয়া হয় - "এখনই যুক্ত করুন" বা "ছাড়াই চালিয়ে যান" */
+    private fun showPhotoReminderDialog() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(Color.WHITE, 20f)
+            setPadding(dp(24), dp(22), dp(24), dp(18))
+            elevation = dp(14).toFloat()
+        }
+        val dialogTitle = text("প্রোফাইল ছবি যুক্ত করেননি", 15.5f, Typeface.BOLD, colorPrimaryDark, Gravity.CENTER)
+        val msg = text(
+            "প্রোফাইল ছবি থাকলে আপনার তথ্য সহজে সনাক্ত করা যায়। আপনি চাইলে এখনই একটি ছবি যুক্ত করতে পারেন, অথবা ছবি ছাড়াই চালিয়ে যেতে পারেন।",
+            12.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER
+        ).apply { setPadding(0, dp(10), 0, dp(18)) }
+        val addBtn = premiumButton("ছবি যুক্ত করুন") {
+            dialog.dismiss()
+            pickImageLauncher.launch("image/*")
+        }
+        val skipText = text("ছবি ছাড়াই চালিয়ে যান", 13f, Typeface.BOLD, colorTextMuted, Gravity.CENTER).apply {
+            setPadding(0, dp(14), 0, 0)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                skipPhotoUpload = true
+                dialog.dismiss()
+                onSubmit()
+            }
+        }
+        layout.addView(dialogTitle)
+        layout.addView(msg)
+        layout.addView(addBtn)
+        layout.addView(skipText)
+        applyFontRecursively(layout)
+        dialog.setContentView(layout)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.CENTER)
+            val params = attributes
+            params.width = (resources.displayMetrics.widthPixels * 0.86).toInt()
+            attributes = params
+        }
+        dialog.show()
+    }
+
     private fun onSubmit() {
         var isValid = true
         var firstErrorView: View? = null
@@ -438,8 +548,14 @@ class SignupActivity : AppCompatActivity() {
             return
         }
 
-        if (password.isBlank()) {
-            statusText.text = "পাসওয়ার্ড পাওয়া যায়নি, দয়া করে আবার শুরু থেকে চেষ্টা করুন"
+        if (pin.isBlank()) {
+            statusText.text = "PIN পাওয়া যায়নি, দয়া করে আবার শুরু থেকে চেষ্টা করুন"
+            return
+        }
+
+        // নতুন: প্রোফাইল ছবি না দিলে একবার জানিয়ে দেওয়া হয়, তারপর ইউজারের সিদ্ধান্তে চলবে
+        if (selectedImageUri == null && !skipPhotoUpload) {
+            showPhotoReminderDialog()
             return
         }
 
@@ -448,11 +564,57 @@ class SignupActivity : AppCompatActivity() {
             0 -> "পুরুষ"; 1 -> "মহিলা"; else -> "অন্যান্য"
         }
 
+        proceedWithSubmit(name, age, gender, address, emergency, history)
+    }
+
+    /** ভ্যালিডেশন শেষে আসল সাবমিট: (ঐচ্ছিক) ছবি আপলোড + ডিভাইস-বাইন্ডিং যাচাই + প্রোফাইল সেভ */
+    private fun proceedWithSubmit(
+        name: String,
+        age: Int?,
+        gender: String,
+        address: String,
+        emergency: String,
+        history: String
+    ) {
         submitBtn.isEnabled = false
         progress.visibility = View.VISIBLE
         statusText.text = ""
 
         lifecycleScope.launch {
+            var profileUrl = ""
+            val uri = selectedImageUri
+            if (uri != null) {
+                try {
+                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes != null) {
+                        val mime = contentResolver.getType(uri) ?: "image/jpeg"
+                        val uploadResult = SupabaseClient.uploadProfilePicture("profile.jpg", mime, bytes)
+                        if (uploadResult.isFailure) {
+                            progress.visibility = View.GONE
+                            submitBtn.isEnabled = true
+                            statusText.text = uploadResult.exceptionOrNull()?.message ?: "প্রোফাইল ছবি আপলোড করতে সমস্যা হয়েছে"
+                            return@launch
+                        }
+                        profileUrl = uploadResult.getOrDefault("")
+                    }
+                } catch (e: Exception) {
+                    progress.visibility = View.GONE
+                    submitBtn.isEnabled = true
+                    statusText.text = "প্রোফাইল ছবি পড়তে সমস্যা হয়েছে"
+                    return@launch
+                }
+            }
+
+            // "একটা ডিভাইসে একটা একাউন্ট" — চূড়ান্তভাবে সাবমিট করার ঠিক আগে আরেকবার নিশ্চিত হওয়া হচ্ছে
+            val deviceId = DeviceUtils.getDeviceId(this@SignupActivity)
+            val conflictResult = SupabaseClient.findPatientByDeviceId(deviceId)
+            if (conflictResult.getOrNull() != null) {
+                progress.visibility = View.GONE
+                submitBtn.isEnabled = true
+                statusText.text = "এই ডিভাইসে ইতিমধ্যে একটি একাউন্ট যুক্ত আছে। সাহায্যের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন।"
+                return@launch
+            }
+
             val result = SupabaseClient.registerPatient(
                 SupabaseClient.NewPatient(
                     phone = phone,
@@ -463,7 +625,9 @@ class SignupActivity : AppCompatActivity() {
                     address = address,
                     emergencyContact = emergency,
                     medicalHistory = history,
-                    password = password
+                    pin = pin,
+                    deviceId = deviceId,
+                    profilePictureUrl = profileUrl
                 )
             )
             progress.visibility = View.GONE
@@ -541,6 +705,37 @@ class SignupActivity : AppCompatActivity() {
     private fun roundedBg(color: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = radiusDp * resources.displayMetrics.density; setColor(color) }
     private fun applyFontRecursively(view: View) { val font = appFont ?: return; when (view) { is TextView -> view.setTypeface(font, view.typeface?.style ?: Typeface.NORMAL); is ViewGroup -> for (i in 0 until view.childCount) applyFontRecursively(view.getChildAt(i)) } }
     private fun dotView(context: Context, color: Int): View = View(context).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) } }
+
+    /** নতুন: প্রোফাইল ছবি এখনো বাছাই না করা পর্যন্ত দেখানোর জন্য একটা সাধারণ silhouette - কোনো drawable resource ছাড়াই Canvas এ আঁকা */
+    private fun personPlaceholderDrawable(): android.graphics.drawable.Drawable {
+        val size = dp(92)
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#B9C7C4") }
+        val cx = size / 2f
+        canvas.drawCircle(cx, size * 0.38f, size * 0.16f, paint)
+        val bodyPath = android.graphics.Path().apply {
+            moveTo(size * 0.22f, size * 0.92f)
+            quadTo(cx, size * 0.60f, size * 0.78f, size * 0.92f)
+            lineTo(size * 0.22f, size * 0.92f)
+            close()
+        }
+        canvas.drawPath(bodyPath, paint)
+        return android.graphics.drawable.BitmapDrawable(resources, bmp)
+    }
+
+    /** নতুন: ক্যামেরা ব্যাজের ছোট আইকন (কোনো drawable resource ছাড়াই Canvas এ আঁকা) */
+    private fun cameraIconView(context: Context): View = object : View(context) {
+        private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+        private val lensPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = colorPrimary; style = Paint.Style.FILL }
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            canvas.drawRoundRect(android.graphics.RectF(w * 0.05f, h * 0.28f, w * 0.95f, h * 0.9f), 2f, 2f, bodyPaint)
+            canvas.drawCircle(w / 2, h * 0.6f, h * 0.2f, lensPaint)
+        }
+    }
+
     private fun checkBadgeView(context: Context): View = object : View(context) {
         private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 2.4f; strokeCap = Paint.Cap.ROUND }
         override fun onDraw(canvas: Canvas) { super.onDraw(canvas); val w = width.toFloat(); val h = height.toFloat(); val path = android.graphics.Path().apply { moveTo(w * 0.18f, h * 0.52f); lineTo(w * 0.42f, h * 0.76f); lineTo(w * 0.85f, h * 0.24f) }; canvas.drawPath(path, p) }
