@@ -3,14 +3,10 @@ package com.konasl.nagad
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.CornerPathEffect
-import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
@@ -24,6 +20,8 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -32,11 +30,8 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.net.HttpURLConnection
-import java.net.URL
+import org.json.JSONObject
 
 class HomeActivity : AppCompatActivity() {
 
@@ -82,6 +77,14 @@ class HomeActivity : AppCompatActivity() {
     private lateinit var profileNameText: TextView
     private lateinit var profilePhoneText: TextView
     private lateinit var profileDetailsContainer: LinearLayout
+
+    // ---------------- নতুন: হোমে "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ড ----------------
+    private lateinit var homeUpcomingContainer: LinearLayout
+
+    // ---------------- নতুন: প্রতি ১০ সেকেন্ড স্ট্যাটাস পোলিং ----------------
+    private val pollHandler = Handler(Looper.getMainLooper())
+    private var pollRunnable: Runnable? = null
+    private val POLL_INTERVAL_MS = 10_000L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -181,7 +184,17 @@ class HomeActivity : AppCompatActivity() {
             homeContent.addView(adminRow)
         }
 
-        homeScroll.addView(homeContent)
+        // ---------------- নতুন: "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ডের কন্টেইনার (কার্ডগুলোর নিচে) ----------------
+        homeUpcomingContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(14), dp(16), dp(14), 0)
+            }
+            visibility = View.GONE // যতক্ষণ না কোনো অ্যাক্টিভ অ্যাপয়েন্টমেন্ট পাওয়া যায়, ততক্ষণ লুকানো থাকবে
+        }
+        homeContent.addView(homeUpcomingContainer)
+
+        homeScroll.addView(homeContent) // NestedScrollView-এর মধ্যেই সবকিছু, তাই HomeActivity সবসময় স্ক্রলযোগ্য থাকবে
         homePanel = homeScroll
 
         // ---------------- APPOINTMENTS PANEL ----------------
@@ -230,12 +243,230 @@ class HomeActivity : AppCompatActivity() {
 
         loadAppointments()
         loadProfileDetails()
+        loadHomeUpcomingAppointment()
         updateNavStyle()
     }
 
     override fun onResume() {
         super.onResume()
         loadAppointments()
+        loadHomeUpcomingAppointment()
+        startStatusPolling()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopStatusPolling()
+    }
+
+    // ------------------------------------------------------------------
+    // নতুন: প্রতি ১০ সেকেন্ডে অ্যাপয়েন্টমেন্ট স্ট্যাটাস (কনফার্মড/স্লট ওপেন) অটো-রিফ্রেশ
+    // ------------------------------------------------------------------
+    private fun startStatusPolling() {
+        stopStatusPolling()
+        val runnable = object : Runnable {
+            override fun run() {
+                loadAppointments()
+                loadHomeUpcomingAppointment()
+                pollHandler.postDelayed(this, POLL_INTERVAL_MS)
+            }
+        }
+        pollRunnable = runnable
+        pollHandler.postDelayed(runnable, POLL_INTERVAL_MS)
+    }
+
+    private fun stopStatusPolling() {
+        pollRunnable?.let { pollHandler.removeCallbacks(it) }
+        pollRunnable = null
+    }
+
+    /** নতুন: রোগীর সবচেয়ে পুরনো (আগে বুক করা), এখনো চলমান (pending/confirmed) অ্যাপয়েন্টমেন্টটি খুঁজে বের করে হোম কার্ড আপডেট করে */
+    private fun loadHomeUpcomingAppointment() {
+        val patientId = SupabaseClient.getPatientId(this) ?: return
+        lifecycleScope.launch {
+            val result = SupabaseClient.getAppointments(patientId)
+            result.onSuccess { rows ->
+                var active: JSONObject? = null
+                // getAppointments() created_at অনুযায়ী descending (নতুন আগে) অর্ডারে আসে,
+                // তাই পেছন থেকে খুঁজলে সবচেয়ে পুরনো চলমান অ্যাপয়েন্টমেন্টটাই আগে পাওয়া যাবে
+                for (i in rows.length() - 1 downTo 0) {
+                    val obj = rows.getJSONObject(i)
+                    val status = obj.optString("status", "")
+                    if (status == "pending" || status == "confirmed") {
+                        active = obj
+                        break
+                    }
+                }
+                renderHomeUpcomingAppointment(active)
+            }
+            // ব্যর্থ হলে চুপচাপ স্কিপ করা হলো - আগের কার্ডটাই দেখানো অবস্থায় থাকবে
+        }
+    }
+
+    /** নতুন: "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ডটি কন্টেইনারে বসায়, না থাকলে লুকিয়ে রাখে */
+    private fun renderHomeUpcomingAppointment(appt: JSONObject?) {
+        homeUpcomingContainer.removeAllViews()
+        if (appt == null) {
+            homeUpcomingContainer.visibility = View.GONE
+            return
+        }
+        homeUpcomingContainer.visibility = View.VISIBLE
+        homeUpcomingContainer.addView(text("আসন্ন অ্যাপয়েন্টমেন্ট", 14.5f, Typeface.BOLD, colorDark, Gravity.START).apply {
+            compoundDrawablePadding = dp(6)
+            setCompoundDrawablesWithIntrinsicBounds(
+                VectorIconDrawable(VectorIconDrawable.IconType.CALENDAR, colorPrimary, dp(15)), null, null, null
+            )
+            setPadding(dp(4), 0, 0, dp(10))
+        })
+        homeUpcomingContainer.addView(buildUpcomingAppointmentCard(appt))
+    }
+
+    /**
+     * নতুন: "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ড।
+     * - status == pending: "রিভিউ করা হচ্ছে" বার্তা, ক্লিকযোগ্য নয়
+     * - status == confirmed && slot_open == false: "কনফার্মড, সিরিয়ালের অপেক্ষায়" বার্তা, ক্লিকযোগ্য নয়
+     * - status == confirmed && slot_open == true: হাইলাইটেড gradient CTA, ক্লিক করলে WaitingActivity ওপেন হয়
+     */
+    private fun buildUpcomingAppointmentCard(appt: JSONObject): LinearLayout {
+        val appointmentId = appt.optString("id", "")
+        val date = appt.optString("preferred_date", "")
+        val time = appt.optString("preferred_time", "")
+        val reason = appt.optString("reason", "")
+        val status = appt.optString("status", "pending")
+        val slotOpen = appt.optBoolean("slot_open", false)
+        val patientName = appt.optString("patient_name", SupabaseClient.getName(this) ?: "")
+        val phone = appt.optString("phone", SupabaseClient.getPhone(this) ?: "")
+
+        val canJoin = status == "confirmed" && slotOpen
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = if (canJoin) {
+                GradientDrawable(
+                    GradientDrawable.Orientation.TL_BR,
+                    intArrayOf(colorPrimaryLight, colorPrimary, colorPrimaryDark)
+                ).apply { cornerRadius = dp(20).toFloat() }
+            } else {
+                roundedBg(colorCard, 20f)
+            }
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            elevation = dp(2).toFloat()
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(20).toFloat())
+                }
+            }
+            clipToOutline = true
+
+            val titleColor = if (canJoin) Color.WHITE else colorDark
+            val mutedColor = if (canJoin) Color.argb(220, 255, 255, 255) else colorTextMuted
+
+            // ---- উপরের সারি: তারিখ/সময় + স্ট্যাটাস ব্যাজ ----
+            val topRow = LinearLayout(this@HomeActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            val infoCol = LinearLayout(this@HomeActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            infoCol.addView(text("$date • $time", 14.5f, Typeface.BOLD, titleColor, Gravity.START))
+            infoCol.addView(text(reason.ifEmpty { "সাধারণ পরামর্শ" }, 12f, Typeface.NORMAL, mutedColor, Gravity.START).apply {
+                setPadding(0, dp(4), 0, 0)
+            })
+            topRow.addView(infoCol)
+
+            val (statusLabel, statusColor) = when (status) {
+                "confirmed" -> "কনফার্মড" to Color.parseColor("#16A34A")
+                "completed" -> "সম্পন্ন" to Color.parseColor("#2563EB")
+                "cancelled" -> "বাতিল" to Color.parseColor("#DC2626")
+                else -> "পেন্ডিং" to colorAccent
+            }
+            topRow.addView(text(statusLabel, 10.5f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+                background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(lighten(statusColor, 0.12f), statusColor)).apply {
+                    cornerRadius = dp(30).toFloat()
+                }
+                setPadding(dp(10), dp(5), dp(10), dp(5))
+            })
+            addView(topRow)
+
+            // ---- পাতলা বিভাজক ----
+            addView(View(this@HomeActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                    topMargin = dp(14); bottomMargin = dp(14)
+                }
+                setBackgroundColor(if (canJoin) Color.argb(60, 255, 255, 255) else colorFieldBorder)
+            })
+
+            if (canJoin) {
+                // -------- স্লট ওপেন হয়ে গেছে: ক্লিকযোগ্য CTA, WaitingActivity তে নিয়ে যাবে --------
+                val ctaRow = LinearLayout(this@HomeActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    background = roundedBg(Color.argb(46, 255, 255, 255), 14f)
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        val intent = Intent(this@HomeActivity, WaitingActivity::class.java).apply {
+                            putExtra("appointment_id", appointmentId)
+                            putExtra("patient_name", patientName)
+                            putExtra("phone", phone)
+                            putExtra("preferred_date", date)
+                            putExtra("preferred_time", time)
+                            putExtra("reason", reason)
+                        }
+                        startActivity(intent)
+                    }
+                }
+                ctaRow.addView(ImageView(this@HomeActivity).apply {
+                    setImageDrawable(VectorIconDrawable(VectorIconDrawable.IconType.CHECK, Color.WHITE, dp(18)))
+                    background = roundedBg(Color.argb(60, 255, 255, 255), 10f)
+                    layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
+                })
+                val ctaTextCol = LinearLayout(this@HomeActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) }
+                }
+                ctaTextCol.addView(text("আপনার সিরিয়াল শুরু হয়েছে", 12.5f, Typeface.BOLD, Color.WHITE, Gravity.START))
+                ctaTextCol.addView(text("এখনই যোগ দিন", 11f, Typeface.NORMAL, Color.argb(220, 255, 255, 255), Gravity.START).apply {
+                    setPadding(0, dp(2), 0, 0)
+                })
+                ctaRow.addView(ctaTextCol)
+                ctaRow.addView(ImageView(this@HomeActivity).apply {
+                    setImageDrawable(VectorIconDrawable(VectorIconDrawable.IconType.ARROW_RIGHT, Color.WHITE, dp(16)))
+                    layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
+                })
+                addView(ctaRow)
+            } else {
+                // -------- এখনো স্লট ওপেন হয়নি --------
+                val waitRow = LinearLayout(this@HomeActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                waitRow.addView(ImageView(this@HomeActivity).apply {
+                    setImageDrawable(VectorIconDrawable(VectorIconDrawable.IconType.CLOCK, colorPrimary, dp(16)))
+                    background = roundedBg(Color.parseColor("#E4F3F1"), 10f)
+                    layoutParams = LinearLayout.LayoutParams(dp(30), dp(30))
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
+                })
+                val waitTextCol = LinearLayout(this@HomeActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) }
+                }
+                val waitMsg = if (status == "confirmed")
+                    "কনফার্মড — সিরিয়াল ওপেন হলে এখানে জানানো হবে"
+                else
+                    "আপনার অ্যাপয়েন্টমেন্ট রিভিউ করা হচ্ছে"
+                waitTextCol.addView(text(waitMsg, 12f, Typeface.BOLD, colorDark, Gravity.START))
+                waitTextCol.addView(text("স্ট্যাটাস প্রতি ১০ সেকেন্ডে অটো-আপডেট হয়", 10.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+                    setPadding(0, dp(2), 0, 0)
+                })
+                waitRow.addView(waitTextCol)
+                addView(waitRow)
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -864,7 +1095,7 @@ class HomeActivity : AppCompatActivity() {
                 }
 
                 // ---------------------------------------------------------------
-                // নতুন: প্রোফাইল ছবি (profile_picture_url) থাকলে সেটা লোড করে দেখানো,
+                // প্রোফাইল ছবি (profile_picture_url) থাকলে সেটা লোড করে দেখানো,
                 // না থাকলে/খালি থাকলে ডিফল্ট (নামের প্রথম অক্ষরের) অ্যাভাটারই থাকবে।
                 // ---------------------------------------------------------------
                 val photoUrl = patient.optString("profile_picture_url", "")
@@ -878,16 +1109,16 @@ class HomeActivity : AppCompatActivity() {
     }
 
     /**
-     * নতুন: profile_picture_url থেকে ব্যাকগ্রাউন্ডে (Dispatchers.IO) ছবিটা ডাউনলোড করে
+     * profile_picture_url থেকে ব্যাকগ্রাউন্ডে (Dispatchers.IO) ছবিটা ডাউনলোড করে
      * Bitmap বানিয়ে profileAvatar-এ বসায়। কোনো কারণে ডাউনলোড ব্যর্থ হলে চুপচাপ
      * ডিফল্ট (নামের অক্ষরের) অ্যাভাটার দেখানো অবস্থাতেই থেকে যাবে।
      */
     private fun loadProfileAvatarImage(url: String) {
         lifecycleScope.launch {
-            val bitmap = withContext(Dispatchers.IO) {
-                var connection: HttpURLConnection? = null
+            val bitmap = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                var connection: java.net.HttpURLConnection? = null
                 try {
-                    connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
                         connectTimeout = 15000
                         readTimeout = 15000
                         doInput = true
@@ -895,7 +1126,7 @@ class HomeActivity : AppCompatActivity() {
                     }
                     connection.connect()
                     connection.inputStream.use { input ->
-                        BitmapFactory.decodeStream(input)
+                        android.graphics.BitmapFactory.decodeStream(input)
                     }
                 } catch (e: Exception) {
                     null
@@ -1131,6 +1362,7 @@ class HomeActivity : AppCompatActivity() {
 
     /**
      * অ্যাপের নিজস্ব ডিজাইন-ভাষায় তৈরি কাস্টম কনফার্মেশন ডায়ালগ (সিস্টেম ডিফল্ট AlertDialog নয়)।
+     * এই একটিভিটির সব কনফার্মেশন-ডায়ালগ এই একটি ফাংশন দিয়েই বানানো হয়।
      */
     private fun showCustomConfirmDialog(
         iconType: VectorIconDrawable.IconType,
@@ -1351,6 +1583,10 @@ class HomeActivity : AppCompatActivity() {
         @Deprecated("Deprecated in Java")
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
+        /**
+         * পরিশীলিত, নরম-কর্নার হোম আইকন (Material-স্টাইল ছাদ + দরজার খাঁজ সহ)
+         * — আগের জ্যাগড ছাদের বদলে মসৃণ, ভারসাম্যপূর্ণ সিলুয়েট।
+         */
         private fun drawHome(canvas: Canvas, s: Float) {
             val u = s / 24f
             val path = Path().apply {
@@ -1502,6 +1738,7 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawPath(arrow, strokePaint)
         }
 
+        /** নথি/লিস্ট আইকন - "আমার অ্যাপয়েন্টমেন্ট" এর জন্য */
         private fun drawDocument(canvas: Canvas, s: Float) {
             canvas.drawRoundRect(s * 0.08f, 0f, s * 0.92f, s, s * 0.10f, s * 0.10f, strokePaint)
             canvas.drawLine(s * 0.24f, s * 0.30f, s * 0.76f, s * 0.30f, strokePaint)
@@ -1509,16 +1746,21 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawLine(s * 0.24f, s * 0.74f, s * 0.58f, s * 0.74f, strokePaint)
         }
 
+        /** ট্র্যাশ/ডিলিট আইকন - "ডিলিট প্রোফাইল" এর জন্য */
         private fun drawTrash(canvas: Canvas, s: Float) {
+            // ঢাকনা
             canvas.drawLine(s * 0.16f, s * 0.22f, s * 0.84f, s * 0.22f, strokePaint)
             canvas.drawLine(s * 0.38f, s * 0.22f, s * 0.42f, s * 0.06f, strokePaint)
             canvas.drawLine(s * 0.42f, s * 0.06f, s * 0.58f, s * 0.06f, strokePaint)
             canvas.drawLine(s * 0.58f, s * 0.06f, s * 0.62f, s * 0.22f, strokePaint)
+            // বডি
             canvas.drawRoundRect(s * 0.22f, s * 0.22f, s * 0.78f, s * 0.96f, s * 0.05f, s * 0.05f, strokePaint)
+            // ভেতরের দাগ
             canvas.drawLine(s * 0.40f, s * 0.36f, s * 0.40f, s * 0.82f, strokePaint)
             canvas.drawLine(s * 0.60f, s * 0.36f, s * 0.60f, s * 0.82f, strokePaint)
         }
 
+        /** লোকেশন/পিন আইকন - "চেম্বার" ঠিকানার জন্য */
         private fun drawLocation(canvas: Canvas, s: Float) {
             val path = Path()
             path.moveTo(s * 0.5f, s * 0.98f)
@@ -1531,12 +1773,14 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawCircle(s * 0.5f, s * 0.34f, s * 0.12f, fillPaint)
         }
 
+        /** ঘড়ি আইকন - "রোগী দেখার সময়" এর জন্য */
         private fun drawClock(canvas: Canvas, s: Float) {
             canvas.drawCircle(s / 2, s / 2, s / 2 - strokePaint.strokeWidth / 2, strokePaint)
             canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.5f, s * 0.22f, strokePaint)
             canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.70f, s * 0.58f, strokePaint)
         }
 
+        /** "+" প্লাস আইকন - "অ্যাপয়েন্টমেন্ট বুক করুন" বাটনের জন্য */
         private fun drawPlus(canvas: Canvas, s: Float) {
             val plusStroke = Paint(strokePaint).apply { strokeWidth = s * 0.16f }
             canvas.drawLine(s * 0.5f, s * 0.06f, s * 0.5f, s * 0.94f, plusStroke)
@@ -1576,15 +1820,15 @@ class HomeActivity : AppCompatActivity() {
         var initial: String = "র"
             set(value) { field = value; invalidate() }
 
-        private var photoBitmap: Bitmap? = null
-        private var bitmapShader: BitmapShader? = null
-        private val photoMatrix = Matrix()
+        private var photoBitmap: android.graphics.Bitmap? = null
+        private var bitmapShader: android.graphics.BitmapShader? = null
+        private val photoMatrix = android.graphics.Matrix()
 
         /** ছবি সেট/ক্লিয়ার করার জন্য - null দিলে ডিফল্ট (অক্ষর) অ্যাভাটারে ফিরে যাবে */
-        fun setPhoto(bitmap: Bitmap?) {
+        fun setPhoto(bitmap: android.graphics.Bitmap?) {
             photoBitmap = bitmap
             bitmapShader = if (bitmap != null) {
-                BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                android.graphics.BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
             } else {
                 null
             }
