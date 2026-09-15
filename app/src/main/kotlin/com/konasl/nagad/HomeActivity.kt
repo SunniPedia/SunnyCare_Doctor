@@ -163,7 +163,7 @@ class HomeActivity : AppCompatActivity() {
         // ---------------- DOCTOR CARD (গ্রেডিয়েন্ট বর্ডার সহ) ----------------
         val doctorCard = buildDoctorCard()
 
-        // ---------------- QUICK ACTIONS (নতুন ডিজাইন: বুক অ্যাপয়েন্টমেন্ট হিরো কার্ড + দুটি সাইড কার্ড) ----------------
+        // ---------------- QUICK ACTIONS ----------------
         val quickActionsSection = buildQuickActionsSection()
 
         homeContent.addView(headerContainer)
@@ -181,20 +181,25 @@ class HomeActivity : AppCompatActivity() {
             adminRow.addView(adminActionCard(VectorIconDrawable.IconType.SHIELD, "পেমেন্ট ভেরিফিকেশন", Color.parseColor("#059669")) {
                 startActivity(Intent(this, AdminPaymentVerificationActivity::class.java))
             })
+            // নতুন: এডমিন প্যানেল (সব ডেটা পর্যবেক্ষণ ও ম্যানেজমেন্ট) — শুধু অ্যাডমিনের জন্য দৃশ্যমান
+            adminRow.addView(space(dp(10)))
+            adminRow.addView(adminActionCard(VectorIconDrawable.IconType.SHIELD, "এডমিন প্যানেল (সব ডেটা)", Color.parseColor("#0F6C61")) {
+                startActivity(Intent(this, AdminActivity::class.java))
+            })
             homeContent.addView(adminRow)
         }
 
-        // ---------------- নতুন: "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ডের কন্টেইনার (কার্ডগুলোর নিচে) ----------------
+        // ---------------- নতুন: "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ডের কন্টেইনার ----------------
         homeUpcomingContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(dp(14), dp(16), dp(14), 0)
             }
-            visibility = View.GONE // যতক্ষণ না কোনো অ্যাক্টিভ অ্যাপয়েন্টমেন্ট পাওয়া যায়, ততক্ষণ লুকানো থাকবে
+            visibility = View.GONE
         }
         homeContent.addView(homeUpcomingContainer)
 
-        homeScroll.addView(homeContent) // NestedScrollView-এর মধ্যেই সবকিছু, তাই HomeActivity সবসময় স্ক্রলযোগ্য থাকবে
+        homeScroll.addView(homeContent)
         homePanel = homeScroll
 
         // ---------------- APPOINTMENTS PANEL ----------------
@@ -217,7 +222,7 @@ class HomeActivity : AppCompatActivity() {
         appointmentsScroll.addView(appointmentsContent)
         appointmentsPanel = appointmentsScroll
 
-        // ---------------- PROFILE PANEL (এই একটিভিটির মধ্যেই) ----------------
+        // ---------------- PROFILE PANEL ----------------
         val profileScroll = NestedScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -260,8 +265,6 @@ class HomeActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // নতুন: প্রতি ১০ সেকেন্ডে অ্যাপয়েন্টমেন্ট স্ট্যাটাস (কনফার্মড/স্লট ওপেন) অটো-রিফ্রেশ
-    // ------------------------------------------------------------------
     private fun startStatusPolling() {
         stopStatusPolling()
         val runnable = object : Runnable {
@@ -280,15 +283,12 @@ class HomeActivity : AppCompatActivity() {
         pollRunnable = null
     }
 
-    /** নতুন: রোগীর সবচেয়ে পুরনো (আগে বুক করা), এখনো চলমান (pending/confirmed) অ্যাপয়েন্টমেন্টটি খুঁজে বের করে হোম কার্ড আপডেট করে */
     private fun loadHomeUpcomingAppointment() {
         val patientId = SupabaseClient.getPatientId(this) ?: return
         lifecycleScope.launch {
             val result = SupabaseClient.getAppointments(patientId)
             result.onSuccess { rows ->
                 var active: JSONObject? = null
-                // getAppointments() created_at অনুযায়ী descending (নতুন আগে) অর্ডারে আসে,
-                // তাই পেছন থেকে খুঁজলে সবচেয়ে পুরনো চলমান অ্যাপয়েন্টমেন্টটাই আগে পাওয়া যাবে
                 for (i in rows.length() - 1 downTo 0) {
                     val obj = rows.getJSONObject(i)
                     val status = obj.optString("status", "")
@@ -299,11 +299,9 @@ class HomeActivity : AppCompatActivity() {
                 }
                 renderHomeUpcomingAppointment(active)
             }
-            // ব্যর্থ হলে চুপচাপ স্কিপ করা হলো - আগের কার্ডটাই দেখানো অবস্থায় থাকবে
         }
     }
 
-    /** নতুন: "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ডটি কন্টেইনারে বসায়, না থাকলে লুকিয়ে রাখে */
     private fun renderHomeUpcomingAppointment(appt: JSONObject?) {
         homeUpcomingContainer.removeAllViews()
         if (appt == null) {
@@ -321,12 +319,6 @@ class HomeActivity : AppCompatActivity() {
         homeUpcomingContainer.addView(buildUpcomingAppointmentCard(appt))
     }
 
-    /**
-     * নতুন: "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ড।
-     * - status == pending: "রিভিউ করা হচ্ছে" বার্তা, ক্লিকযোগ্য নয়
-     * - status == confirmed && slot_open == false: "কনফার্মড, সিরিয়ালের অপেক্ষায়" বার্তা, ক্লিকযোগ্য নয়
-     * - status == confirmed && slot_open == true: হাইলাইটেড gradient CTA, ক্লিক করলে WaitingActivity ওপেন হয়
-     */
     private fun buildUpcomingAppointmentCard(appt: JSONObject): LinearLayout {
         val appointmentId = appt.optString("id", "")
         val date = appt.optString("preferred_date", "")
@@ -361,7 +353,6 @@ class HomeActivity : AppCompatActivity() {
             val titleColor = if (canJoin) Color.WHITE else colorDark
             val mutedColor = if (canJoin) Color.argb(220, 255, 255, 255) else colorTextMuted
 
-            // ---- উপরের সারি: তারিখ/সময় + স্ট্যাটাস ব্যাজ ----
             val topRow = LinearLayout(this@HomeActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -390,7 +381,6 @@ class HomeActivity : AppCompatActivity() {
             })
             addView(topRow)
 
-            // ---- পাতলা বিভাজক ----
             addView(View(this@HomeActivity).apply {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
                     topMargin = dp(14); bottomMargin = dp(14)
@@ -399,7 +389,6 @@ class HomeActivity : AppCompatActivity() {
             })
 
             if (canJoin) {
-                // -------- স্লট ওপেন হয়ে গেছে: ক্লিকযোগ্য CTA, WaitingActivity তে নিয়ে যাবে --------
                 val ctaRow = LinearLayout(this@HomeActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -440,7 +429,6 @@ class HomeActivity : AppCompatActivity() {
                 })
                 addView(ctaRow)
             } else {
-                // -------- এখনো স্লট ওপেন হয়নি --------
                 val waitRow = LinearLayout(this@HomeActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -469,8 +457,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------------------------------
-    // ট্যাব সুইচিং
     // ------------------------------------------------------------------
     private fun switchTab(tab: Tab) {
         currentTab = tab
@@ -634,6 +620,24 @@ class HomeActivity : AppCompatActivity() {
                 gravity = Gravity.BOTTOM or Gravity.END
             }
         })
+        // ------------------------------------------------------------------
+        // নতুন: শুধুমাত্র অ্যাডমিনের জন্য — ডাক্তারের অ্যাভাটারে ক্লিক করলে
+        // Admin.kt (AdminActivity) ওপেন হবে, যেখানে SupabaseClient এর সব
+        // ডেটা (রোগী, অ্যাপয়েন্টমেন্ট, স্লট, OTP পুল) পর্যবেক্ষণ ও ম্যানেজ
+        // করা যায়। সাধারণ রোগীর জন্য এই আইকন আগের মতোই অ-ক্লিকযোগ্য থাকবে।
+        // ------------------------------------------------------------------
+        if (SupabaseClient.isAdmin(this)) {
+            avatarWrap.isClickable = true
+            avatarWrap.isFocusable = true
+            avatarWrap.foreground = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(Color.argb(60, 0, 0, 0)),
+                null,
+                GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+            )
+            avatarWrap.setOnClickListener {
+                startActivity(Intent(this, AdminActivity::class.java))
+            }
+        }
         val doctorTextCol = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(14) }
@@ -811,9 +815,7 @@ class HomeActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // কুইক অ্যাকশন সেকশন - নতুন ডিজাইন:
-    // বাম পাশে বড় "অ্যাপয়েন্টমেন্ট বুক করুন" হিরো কার্ড (ফি সহ),
-    // ডান পাশে দুটি ছোট কার্ড: "আমার অ্যাপয়েন্টমেন্ট" ও "জরুরি যোগাযোগ"
+    // কুইক অ্যাকশন সেকশন
     // ------------------------------------------------------------------
     private fun buildQuickActionsSection(): LinearLayout {
         val row = LinearLayout(this).apply {
@@ -832,7 +834,6 @@ class HomeActivity : AppCompatActivity() {
         return row
     }
 
-    /** বড় হিরো কার্ড: "অ্যাপয়েন্টমেন্ট বুক করুন" + ফি */
     private fun buildBookAppointmentHeroCard(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -867,7 +868,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /** ডান পাশের কলাম: দুটি ছোট কার্ড */
     private fun buildSideActionsColumn(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -969,7 +969,7 @@ class HomeActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // প্রোফাইল প্যানেল - এই একটিভিটির মধ্যেই সম্পূর্ণ প্রোফাইল দেখা যায়
+    // প্রোফাইল প্যানেল
     // ------------------------------------------------------------------
     private fun buildProfilePanel(): LinearLayout {
         val panel = LinearLayout(this).apply {
@@ -1094,25 +1094,16 @@ class HomeActivity : AppCompatActivity() {
                     }
                 }
 
-                // ---------------------------------------------------------------
-                // প্রোফাইল ছবি (profile_picture_url) থাকলে সেটা লোড করে দেখানো,
-                // না থাকলে/খালি থাকলে ডিফল্ট (নামের প্রথম অক্ষরের) অ্যাভাটারই থাকবে।
-                // ---------------------------------------------------------------
                 val photoUrl = patient.optString("profile_picture_url", "")
                 if (photoUrl.isNotBlank()) {
                     loadProfileAvatarImage(photoUrl)
                 } else {
-                    profileAvatar.setPhoto(null) // ডিফল্ট অ্যাভাটার নিশ্চিত করা
+                    profileAvatar.setPhoto(null)
                 }
             }
         }
     }
 
-    /**
-     * profile_picture_url থেকে ব্যাকগ্রাউন্ডে (Dispatchers.IO) ছবিটা ডাউনলোড করে
-     * Bitmap বানিয়ে profileAvatar-এ বসায়। কোনো কারণে ডাউনলোড ব্যর্থ হলে চুপচাপ
-     * ডিফল্ট (নামের অক্ষরের) অ্যাভাটার দেখানো অবস্থাতেই থেকে যাবে।
-     */
     private fun loadProfileAvatarImage(url: String) {
         lifecycleScope.launch {
             val bitmap = withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -1173,10 +1164,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * "কোনো অ্যাপয়েন্টমেন্ট নেই" খালি-অবস্থার প্রিমিয়াম কার্ড:
-     * একটি বৃত্তাকার আইকন, সহায়ক টেক্সট এবং "+" আইকনসহ gradient বুকিং বাটন।
-     */
     private fun buildEmptyAppointmentsCard(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1224,7 +1211,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /** "+" ভেক্টর আইকন ও gradient ব্যাকগ্রাউন্ডসহ "অ্যাপয়েন্টমেন্ট বুক করুন" বাটন */
     private fun buildBookAppointmentButton(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1337,9 +1323,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * প্রকৃতপক্ষে Supabase-এ কল করে অ্যাকাউন্ট ডিলিট করে।
-     */
     private fun performAccountDeletion() {
         val patientId = SupabaseClient.getPatientId(this)
         if (patientId == null) {
@@ -1360,10 +1343,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * অ্যাপের নিজস্ব ডিজাইন-ভাষায় তৈরি কাস্টম কনফার্মেশন ডায়ালগ (সিস্টেম ডিফল্ট AlertDialog নয়)।
-     * এই একটিভিটির সব কনফার্মেশন-ডায়ালগ এই একটি ফাংশন দিয়েই বানানো হয়।
-     */
     private fun showCustomConfirmDialog(
         iconType: VectorIconDrawable.IconType,
         iconBgColor: Int,
@@ -1448,7 +1427,6 @@ class HomeActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /** প্রোফাইল প্যানেলের অ্যাকশন বাটন (লগ আউট / ডিলিট প্রোফাইল) - ভেক্টর আইকন সহ */
     private fun profileActionButton(
         label: String,
         iconType: VectorIconDrawable.IconType,
@@ -1507,8 +1485,7 @@ class HomeActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // ক্যানভাসে আঁকা ভেক্টর আইকন (কোনো ইমোজি নেই) - সব কুইক অ্যাকশন,
-    // বটম ন্যাভ, ব্যাজ, ও হেডারের আইকনে ব্যবহৃত হয়
+    // ক্যানভাসে আঁকা ভেক্টর আইকন
     // ------------------------------------------------------------------
     class VectorIconDrawable(
         private val type: IconType,
@@ -1583,10 +1560,6 @@ class HomeActivity : AppCompatActivity() {
         @Deprecated("Deprecated in Java")
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
-        /**
-         * পরিশীলিত, নরম-কর্নার হোম আইকন (Material-স্টাইল ছাদ + দরজার খাঁজ সহ)
-         * — আগের জ্যাগড ছাদের বদলে মসৃণ, ভারসাম্যপূর্ণ সিলুয়েট।
-         */
         private fun drawHome(canvas: Canvas, s: Float) {
             val u = s / 24f
             val path = Path().apply {
@@ -1738,7 +1711,6 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawPath(arrow, strokePaint)
         }
 
-        /** নথি/লিস্ট আইকন - "আমার অ্যাপয়েন্টমেন্ট" এর জন্য */
         private fun drawDocument(canvas: Canvas, s: Float) {
             canvas.drawRoundRect(s * 0.08f, 0f, s * 0.92f, s, s * 0.10f, s * 0.10f, strokePaint)
             canvas.drawLine(s * 0.24f, s * 0.30f, s * 0.76f, s * 0.30f, strokePaint)
@@ -1746,21 +1718,16 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawLine(s * 0.24f, s * 0.74f, s * 0.58f, s * 0.74f, strokePaint)
         }
 
-        /** ট্র্যাশ/ডিলিট আইকন - "ডিলিট প্রোফাইল" এর জন্য */
         private fun drawTrash(canvas: Canvas, s: Float) {
-            // ঢাকনা
             canvas.drawLine(s * 0.16f, s * 0.22f, s * 0.84f, s * 0.22f, strokePaint)
             canvas.drawLine(s * 0.38f, s * 0.22f, s * 0.42f, s * 0.06f, strokePaint)
             canvas.drawLine(s * 0.42f, s * 0.06f, s * 0.58f, s * 0.06f, strokePaint)
             canvas.drawLine(s * 0.58f, s * 0.06f, s * 0.62f, s * 0.22f, strokePaint)
-            // বডি
             canvas.drawRoundRect(s * 0.22f, s * 0.22f, s * 0.78f, s * 0.96f, s * 0.05f, s * 0.05f, strokePaint)
-            // ভেতরের দাগ
             canvas.drawLine(s * 0.40f, s * 0.36f, s * 0.40f, s * 0.82f, strokePaint)
             canvas.drawLine(s * 0.60f, s * 0.36f, s * 0.60f, s * 0.82f, strokePaint)
         }
 
-        /** লোকেশন/পিন আইকন - "চেম্বার" ঠিকানার জন্য */
         private fun drawLocation(canvas: Canvas, s: Float) {
             val path = Path()
             path.moveTo(s * 0.5f, s * 0.98f)
@@ -1773,14 +1740,12 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawCircle(s * 0.5f, s * 0.34f, s * 0.12f, fillPaint)
         }
 
-        /** ঘড়ি আইকন - "রোগী দেখার সময়" এর জন্য */
         private fun drawClock(canvas: Canvas, s: Float) {
             canvas.drawCircle(s / 2, s / 2, s / 2 - strokePaint.strokeWidth / 2, strokePaint)
             canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.5f, s * 0.22f, strokePaint)
             canvas.drawLine(s * 0.5f, s * 0.5f, s * 0.70f, s * 0.58f, strokePaint)
         }
 
-        /** "+" প্লাস আইকন - "অ্যাপয়েন্টমেন্ট বুক করুন" বাটনের জন্য */
         private fun drawPlus(canvas: Canvas, s: Float) {
             val plusStroke = Paint(strokePaint).apply { strokeWidth = s * 0.16f }
             canvas.drawLine(s * 0.5f, s * 0.06f, s * 0.5f, s * 0.94f, plusStroke)
@@ -1811,11 +1776,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * রোগীর প্রোফাইল অ্যাভাটার:
-     * - প্রোফাইল ছবি (Bitmap) সেট করা থাকলে সেটি বৃত্তাকার-ক্রপ করে দেখায়।
-     * - ছবি না থাকলে (null) নামের প্রথম অক্ষর দিয়ে তৈরি ডিফল্ট গ্রেডিয়েন্ট অ্যাভাটার দেখায়।
-     */
     class PatientAvatarView(context: Context) : View(context) {
         var initial: String = "র"
             set(value) { field = value; invalidate() }
@@ -1824,7 +1784,6 @@ class HomeActivity : AppCompatActivity() {
         private var bitmapShader: android.graphics.BitmapShader? = null
         private val photoMatrix = android.graphics.Matrix()
 
-        /** ছবি সেট/ক্লিয়ার করার জন্য - null দিলে ডিফল্ট (অক্ষর) অ্যাভাটারে ফিরে যাবে */
         fun setPhoto(bitmap: android.graphics.Bitmap?) {
             photoBitmap = bitmap
             bitmapShader = if (bitmap != null) {
@@ -1860,7 +1819,6 @@ class HomeActivity : AppCompatActivity() {
             val shader = bitmapShader
 
             if (bmp != null && shader != null) {
-                // ---------------- ছবি আছে: বৃত্তাকার-ক্রপ করা প্রোফাইল ছবি ----------------
                 val scale: Float
                 val dx: Float
                 val dy: Float
@@ -1881,7 +1839,6 @@ class HomeActivity : AppCompatActivity() {
                 canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, photoPaint)
                 canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, ringPaint)
             } else {
-                // ---------------- ডিফল্ট: নামের প্রথম অক্ষরের গ্রেডিয়েন্ট অ্যাভাটার ----------------
                 bgPaint.shader = RadialGradient(w / 2, h / 2, w / 2, Color.parseColor("#16897A"), Color.parseColor("#0A4A42"), Shader.TileMode.CLAMP)
                 canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, bgPaint)
                 canvas.drawCircle(w / 2, h / 2, w / 2 - 3f, ringPaint)
