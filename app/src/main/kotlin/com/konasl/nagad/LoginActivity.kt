@@ -33,7 +33,7 @@ class LoginActivity : AppCompatActivity() {
     private val colorError = Color.parseColor("#D32F2F")
 
     // দুইটা নাম্বারেই WhatsApp যাবে
-    private val ADMIN_WHATSAPP_NUMBER = "8801632336631" // এডমিন
+    private val ADMIN_WHATSAPP_NUMBER = "8801714656343" // এডমিন
     private val DOCTOR_WHATSAPP_NUMBER = "8801710355342" // ডাক্তার
 
     private val PIN_LENGTH = 4
