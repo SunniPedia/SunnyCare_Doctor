@@ -22,9 +22,6 @@ import org.json.JSONObject
 
 class LoginActivity : AppCompatActivity() {
 
-    // ---------------------------------------------------------------
-    // Palette
-    // ---------------------------------------------------------------
     private val colorPrimary = Color.parseColor("#0F6C61")
     private val colorPrimaryLight = Color.parseColor("#16897A")
     private val colorPrimaryDark = Color.parseColor("#0A4A42")
@@ -35,15 +32,12 @@ class LoginActivity : AppCompatActivity() {
     private val colorDark = Color.parseColor("#111827")
     private val colorError = Color.parseColor("#D32F2F")
 
-    // পিন/ডিভাইস সমস্যায় এই WhatsApp নাম্বারে (অ্যাডমিন/ক্লিনিক) যোগাযোগ করতে বলা হবে
-    private val ADMIN_WHATSAPP_NUMBER = "8801714656343"
+    // দুইটা নাম্বারেই WhatsApp যাবে
+    private val ADMIN_WHATSAPP_NUMBER = "8801632336631" // এডমিন
+    private val DOCTOR_WHATSAPP_NUMBER = "8801710355342" // ডাক্তার
 
-    // PIN কত ডিজিটের হবে — নিচের কীপ্যাড দিয়েই ইনপুট নেওয়া হয়, আলাদা কীবোর্ড লাগে না
     private val PIN_LENGTH = 4
 
-    // ---------------------------------------------------------------
-    // Views
-    // ---------------------------------------------------------------
     private lateinit var phoneDisplay: PhoneDisplayView
     private lateinit var otpPin: OtpPinView
     private lateinit var keypad: NumericKeypadView
@@ -55,7 +49,6 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var card: LinearLayout
 
-    // --- PIN সেকশন (পুরাতন ইউজার লগইন / নতুন PIN সেট) — কীবোর্ড ছাড়া, নিচের কীপ্যাড দিয়ে ইনপুট ---
     private lateinit var pinSection: LinearLayout
     private lateinit var pinSectionLabel: TextView
     private lateinit var pinView: OtpPinView
@@ -65,29 +58,13 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var forgotPinText: TextView
     private lateinit var changeNumberText: TextView
 
-    // --- ডিভাইস-মিসম্যাচ সেকশন (এই একাউন্ট/ডিভাইস অন্যত্র বাঁধা থাকলে দেখানো হয়) ---
     private lateinit var deviceBlockedSection: LinearLayout
     private lateinit var deviceBlockedMessage: TextView
     private lateinit var deviceRetryBtn: Button
     private lateinit var deviceHelpBtn: Button
 
-    // ---------------------------------------------------------------
-    // State
-    // ---------------------------------------------------------------
     private enum class Field { PHONE, OTP, PIN, PIN_CONFIRM }
-
-    /** PIN সেকশন তিনটা আলাদা কনটেক্সটে ব্যবহার হয়:
-     *  LOGIN          - বিদ্যমান PIN দিয়ে লগইন (রেজিস্টার্ড ইউজার, PIN সেট আছে)
-     *  SETUP_EXISTING - রেজিস্টার্ড কিন্তু পুরাতন/PIN-বিহীন অ্যাকাউন্টের জন্য নতুন PIN সেট
-     *  SETUP_NEW      - একদম নতুন (এখনো তৈরি হয়নি এমন) পেশেন্টের জন্য PIN সেট, যেটা সাইনআপ ফর্মের সাথে পাঠানো হবে
-     */
     private enum class PinMode { LOGIN, SETUP_EXISTING, SETUP_NEW }
-
-    /** ডিভাইস ব্লকড হওয়ার কারণ — "আবার চেষ্টা করুন" চাপলে সঠিকভাবে পুনরায় যাচাই করতে ব্যবহৃত হয়:
-     *  ACCOUNT_BOUND_ELSEWHERE - এই ফোন নাম্বারের একাউন্ট অন্য একটি ডিভাইসে বাঁধা আছে
-     *                            (Admin.kt এর "ডিভাইস রিসেট" বাটন এটাই আনবাইন্ড করে দেয়)
-     *  DEVICE_ALREADY_USED     - এই মোবাইল ফোনে ইতিমধ্যে অন্য একটি একাউন্ট বাঁধা আছে
-     */
     private enum class DeviceBlockReason { ACCOUNT_BOUND_ELSEWHERE, DEVICE_ALREADY_USED }
 
     private val phoneDigits = StringBuilder()
@@ -103,7 +80,7 @@ class LoginActivity : AppCompatActivity() {
     private var canResend = false
     private var resendTimer: CountDownTimer? = null
 
-    private val OTP_VALIDITY_MS = 2 * 60 * 1000L // ২ মিনিট
+    private val OTP_VALIDITY_MS = 2 * 60 * 1000L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -145,7 +122,6 @@ class LoginActivity : AppCompatActivity() {
         val title = text("SunnyCare ☀", 26f, Typeface.BOLD, Color.WHITE).apply { letterSpacing = 0.01f }
         val subtitle = text("মোবাইল নাম্বার দিয়ে লগইন করুন", 13.5f, Typeface.NORMAL, Color.argb(220, 255, 255, 255))
 
-        // ---- Premium Card ----
         card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(Color.WHITE, 26f)
@@ -162,7 +138,7 @@ class LoginActivity : AppCompatActivity() {
             clipToOutline = true
         }
 
-        val phoneLabel = text("ফোন নাম্বার", 12.5f, Typeface.BOLD, colorTextMuted).apply {
+        val phoneLabel = text("ফোন নাম্বার (BD ১১ ডিজিট / বিদেশি + সহ)", 12.5f, Typeface.BOLD, colorTextMuted).apply {
             gravity = Gravity.START
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
@@ -181,7 +157,6 @@ class LoginActivity : AppCompatActivity() {
             ).apply { topMargin = dp(16) }
         }
 
-        // ---- OTP section (হাইড থাকে, OTP পাঠানোর পর দেখায়) ----
         otpSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -215,7 +190,6 @@ class LoginActivity : AppCompatActivity() {
         otpSection.addView(verifyBtn)
         otpSection.addView(resendText)
 
-        // ---- PIN section (হাইড থাকে; পুরাতন ইউজারের লগইন বা নতুন PIN সেট করার জন্য দেখায়) ----
         pinSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -255,7 +229,7 @@ class LoginActivity : AppCompatActivity() {
             ).apply { topMargin = dp(16) }
         }
 
-        forgotPinText = text("PIN ভুলে গেছেন বা সমস্যা হচ্ছে? Admin-কে WhatsApp এ জানান", 12.5f, Typeface.BOLD, colorPrimary).apply {
+        forgotPinText = text("PIN ভুলে গেছেন? Admin/Doctor কে WhatsApp করুন", 12.5f, Typeface.BOLD, colorPrimary).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(14), 0, 0)
             setOnClickListener { openForgotPinOnWhatsApp() }
@@ -275,7 +249,6 @@ class LoginActivity : AppCompatActivity() {
         pinSection.addView(forgotPinText)
         pinSection.addView(changeNumberText)
 
-        // ---- Device blocked section (এই একাউন্ট/ডিভাইস অন্যত্র বাঁধা থাকলে দেখানো হয়) ----
         deviceBlockedSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -284,16 +257,13 @@ class LoginActivity : AppCompatActivity() {
             ).apply { topMargin = dp(20) }
         }
         deviceBlockedMessage = text(
-            "এই একাউন্টটি অন্য একটি ডিভাইসে যুক্ত আছে। নিরাপত্তার জন্য একটি একাউন্ট শুধুমাত্র একটি ডিভাইসেই ব্যবহার করা যায়। ডিভাইস পরিবর্তন করতে চাইলে অ্যাডমিনকে জানান।",
+            "এই একাউন্টটি অন্য একটি ডিভাইসে যুক্ত আছে।",
             13f, Typeface.NORMAL, colorDark
         ).apply {
             gravity = Gravity.CENTER
             setPadding(dp(4), 0, dp(4), 0)
             setLineSpacing(dp(2).toFloat(), 1f)
         }
-        // অ্যাডমিন Admin.kt থেকে "ডিভাইস রিসেট" করে দিলে, ব্যবহারকারী পুরো ফর্ম আবার
-        // না ভরে এই বাটনে চেপেই সাথে সাথে যাচাই করতে পারবেন ডিভাইসটি আনবাইন্ড হয়েছে কিনা,
-        // এবং হয়ে থাকলে সরাসরি লগইন/PIN স্ক্রিনে চলে যাবেন।
         deviceRetryBtn = secondaryButton("🔄 আবার চেষ্টা করুন") { retryDeviceCheck() }.apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -326,7 +296,6 @@ class LoginActivity : AppCompatActivity() {
             setPadding(0, dp(10), 0, 0)
         }
 
-        // ---- Built-in numeric keypad (fully canvas drawn) ----
         keypad = NumericKeypadView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(232)
@@ -367,9 +336,6 @@ class LoginActivity : AppCompatActivity() {
         resendTimer?.cancel()
     }
 
-    // ------------------------------------------------------------------
-    // Keypad routing
-    // ------------------------------------------------------------------
     private fun setActiveField(field: Field) {
         activeField = field
         phoneDisplay.isActive = field == Field.PHONE
@@ -391,11 +357,10 @@ class LoginActivity : AppCompatActivity() {
             }
             key.isNotEmpty() -> {
                 when (activeField) {
-                    Field.PHONE -> if (phoneDigits.length < 11) phoneDigits.append(key)
+                    Field.PHONE -> if (phoneDigits.length < 15) phoneDigits.append(key) // বিদেশির জন্য 15 পর্যন্ত
                     Field.OTP -> if (otpDigits.length < 6) otpDigits.append(key)
                     Field.PIN -> {
                         if (pinDigits.length < PIN_LENGTH) pinDigits.append(key)
-                        // PIN বক্স ভরে গেলে, যদি confirm বক্স থাকে ও দৃশ্যমান হয়, স্বয়ংক্রিয়ভাবে সেখানে ফোকাস যাবে
                         if (pinDigits.length == PIN_LENGTH && pinConfirmView.visibility == View.VISIBLE) {
                             setActiveField(Field.PIN_CONFIRM)
                         }
@@ -414,49 +379,60 @@ class LoginActivity : AppCompatActivity() {
         pinConfirmView.digits = pinConfirmDigits.toString()
     }
 
-    // ------------------------------------------------------------------
-    // ফোন নাম্বার দেওয়ার পর "পরবর্তী" চাপলে প্রথমে চেক করা হয় নাম্বারটা রেজিস্টার্ড কিনা।
-    // রেজিস্টার্ড হলে PIN চাওয়া হয় (OTP ছাড়াই — শুধু ফোন নাম্বার দিয়ে যেন কেউ ঢুকতে না পারে)।
-    // এছাড়া এই ডিভাইসের সাথে অ্যাকাউন্টের device_id মিলছে কিনা যাচাই করা হয় —
-    // অন্য ডিভাইস হলে PIN চাওয়াই হয় না, সরাসরি ব্লক করে অ্যাডমিনের কাছে পাঠানো হয়।
-    // নতুন নাম্বার হলে আগের মতোই OTP ভেরিফিকেশনের মাধ্যমে সাইনআপে পাঠানো হয়।
-    // ------------------------------------------------------------------
+    // UPDATED: Smart Phone Validation
     private fun onPhoneNext() {
-        val phone = phoneDigits.toString().trim()
-        if (phone.length < 11) {
-            statusText.text = "সঠিক ফোন নাম্বার দিন"
+        val rawPhone = phoneDigits.toString().trim()
+        val validation = SupabaseClient.PhoneValidator.validate(rawPhone)
+
+        if (!validation.isValid) {
+            statusText.text = validation.message
             return
         }
-        currentPhone = phone
+
+        // যদি বাংলাদেশি হয়, তাহলে ১১ ডিজিট মাস্ট - যেভাবে আছে সেভাবেই রাখা হলো
+        if (!validation.isForeign && validation.normalizedPhone.length!= 11) {
+            statusText.text = "বাংলাদেশি নাম্বার ১১ ডিজিটের হতে হবে"
+            return
+        }
+
+        currentPhone = validation.normalizedPhone
+        if (validation.isForeign) {
+            statusText.text = "বিদেশি নাম্বার ডিটেক্ট করা হয়েছে: ${validation.normalizedPhone}"
+        }
+
         setLoading(true)
         lifecycleScope.launch {
-            val result = SupabaseClient.findPatientByPhone(phone)
+            val result = SupabaseClient.findPatientByPhone(currentPhone)
             setLoading(false)
             result.onSuccess { patient ->
-                if (patient != null) {
+                if (patient!= null) {
                     currentPatient = patient
                     val deviceId = DeviceUtils.getDeviceId(this@LoginActivity)
-                    val storedDeviceId = patient.optString("device_id", "")
-                    if (storedDeviceId.isNotEmpty() && storedDeviceId != deviceId) {
-                        // এই একাউন্ট অন্য ডিভাইসে বাঁধা — PIN না চেয়েই ব্লক করা হচ্ছে
+                    val storedDeviceId = SupabaseClient.getDeviceIdFromPatient(patient)
+
+                    // SMART FIX: device_id null/empty হলে অন্য ডিভাইস দিয়ে লগইন করতে পারবে
+                    if (SupabaseClient.isDeviceIdEmpty(storedDeviceId)) {
+                        // Device reset করা আছে, তাই সরাসরি PIN চাইবে এবং নতুন ডিভাইস বাইন্ড করবে
+                        val hasPin = patient.optString("password_hash").isNotEmpty() &&
+                                patient.optString("password_salt").isNotEmpty()
+                        showPinSection(if (hasPin) PinMode.LOGIN else PinMode.SETUP_EXISTING)
+                    } else if (storedDeviceId!= deviceId) {
+                        // অন্য ডিভাইসে বাঁধা আছে - ব্লক
                         showDeviceBlocked(DeviceBlockReason.ACCOUNT_BOUND_ELSEWHERE)
-                        return@onSuccess
+                    } else {
+                        val hasPin = patient.optString("password_hash").isNotEmpty() &&
+                                patient.optString("password_salt").isNotEmpty()
+                        showPinSection(if (hasPin) PinMode.LOGIN else PinMode.SETUP_EXISTING)
                     }
-                    val hasPin = patient.optString("password_hash").isNotEmpty() &&
-                        patient.optString("password_salt").isNotEmpty()
-                    // আগে থেকে রেজিস্টার্ড কিন্তু কোনো কারণে PIN সেট নেই এমন (পুরাতন) অ্যাকাউন্টকে
-                    // প্রথমবার একটা PIN সেট করতে বলা হয়, তারপর সরাসরি লগইন হয়ে যায়।
-                    showPinSection(if (hasPin) PinMode.LOGIN else PinMode.SETUP_EXISTING)
                 } else {
-                    startOtpFlow(phone)
+                    startOtpFlow(currentPhone)
                 }
             }.onFailure {
-                statusText.text = it.message ?: "সমস্যা হয়েছে, আবার চেষ্টা করুন"
+                statusText.text = it.message?: "সমস্যা হয়েছে, আবার চেষ্টা করুন"
             }
         }
     }
 
-    /** নতুন (অ-রেজিস্টার্ড) নাম্বারের জন্য OTP পাঠায়; ভেরিফাই হলে প্রোফাইল তৈরির (সাইনআপ) পেইজে যায়, যেখানে PIN ও সেট করতে হবে। */
     private fun startOtpFlow(phone: String) {
         setLoading(true)
         lifecycleScope.launch {
@@ -472,14 +448,14 @@ class LoginActivity : AppCompatActivity() {
                 showOtpSentDialog(code)
                 startResendTimer()
             }.onFailure {
-                statusText.text = it.message ?: "OTP পাঠাতে সমস্যা হয়েছে"
+                statusText.text = it.message?: "OTP পাঠাতে সমস্যা হয়েছে"
             }
         }
     }
 
     private fun onVerifyOtp() {
         val code = otpDigits.toString().trim()
-        if (code.length != 6) {
+        if (code.length!= 6) {
             statusText.text = "৬ ডিজিটের কোড দিন"
             return
         }
@@ -496,25 +472,18 @@ class LoginActivity : AppCompatActivity() {
                 statusText.text = "দয়া করে সঠিক ওটিপি লিখুন"
                 return@launch
             }
-            // নতুন নাম্বার — সাইনআপের আগে যাচাই করা হচ্ছে এই ডিভাইসে ইতিমধ্যে অন্য কোনো একাউন্ট আছে কিনা
-            // ("একটা ডিভাইসে একটা একাউন্ট" নিয়ম)
             val deviceId = DeviceUtils.getDeviceId(this@LoginActivity)
             val conflictResult = SupabaseClient.findPatientByDeviceId(deviceId)
-            if (conflictResult.getOrNull() != null) {
+            if (conflictResult.getOrNull()!= null) {
                 setLoading(false)
                 showDeviceBlocked(DeviceBlockReason.DEVICE_ALREADY_USED)
                 return@launch
             }
             setLoading(false)
-            // এই নাম্বারটা নতুন — তাই এখনই এখানে PIN সেট করতে বলা হচ্ছে।
-            // এই PIN-টাই একটু পর সাইনআপ ফর্মের সাথে পাঠিয়ে দেওয়া হবে এবং প্রোফাইল তৈরির সময় সেভ হবে।
             showPinSection(PinMode.SETUP_NEW)
         }
     }
 
-    // ------------------------------------------------------------------
-    // PIN সেকশন — লগইন (বিদ্যমান PIN দিয়ে) অথবা সেটআপ (প্রথমবার PIN তৈরি)
-    // ------------------------------------------------------------------
     private fun showPinSection(mode: PinMode) {
         pinMode = mode
         sendOtpBtn.visibility = View.GONE
@@ -553,11 +522,6 @@ class LoginActivity : AppCompatActivity() {
         setActiveField(Field.PIN)
     }
 
-    /**
-     * এই একাউন্ট/ডিভাইস অন্য ডিভাইসে বাঁধা থাকলে বা এই ডিভাইসে অন্য একাউন্ট থাকলে দেখানো হয়।
-     * reason অনুযায়ী মেসেজ পরিবর্তিত হয় এবং retryDeviceCheck() সঠিকভাবে যাচাই করতে পারে
-     * অ্যাডমিন Admin.kt এর "ডিভাইস রিসেট" বাটন থেকে ইতিমধ্যে রিসেট করে দিয়েছেন কিনা।
-     */
     private fun showDeviceBlocked(reason: DeviceBlockReason = DeviceBlockReason.ACCOUNT_BOUND_ELSEWHERE) {
         deviceBlockReason = reason
         sendOtpBtn.visibility = View.GONE
@@ -568,18 +532,12 @@ class LoginActivity : AppCompatActivity() {
         statusText.text = ""
         deviceBlockedMessage.text = when (reason) {
             DeviceBlockReason.ACCOUNT_BOUND_ELSEWHERE ->
-                "এই একাউন্টটি অন্য একটি ডিভাইসে যুক্ত আছে। নিরাপত্তার জন্য একটি একাউন্ট শুধুমাত্র একটি ডিভাইসেই ব্যবহার করা যায়। অ্যাডমিনকে জানান — তিনি ডিভাইস রিসেট করে দিলে নিচের 'আবার চেষ্টা করুন' বাটনে চাপ দিন।"
+                "এই একাউন্টটি অন্য একটি ডিভাইসে যুক্ত আছে। Doctor/Admin ($ADMIN_WHATSAPP_NUMBER) ডিভাইস রিসেট করে দিলে নিচের 'আবার চেষ্টা করুন' বাটনে চাপ দিন।"
             DeviceBlockReason.DEVICE_ALREADY_USED ->
-                "এই মোবাইল ফোনে ইতিমধ্যে অন্য একটি একাউন্ট ব্যবহার করা হচ্ছে। নিরাপত্তার জন্য একটি ডিভাইসে একটি মাত্র একাউন্ট চালানো যায়। অ্যাডমিনকে জানান — সমস্যা সমাধান হলে নিচের 'আবার চেষ্টা করুন' বাটনে চাপ দিন।"
+                "এই মোবাইল ফোনে ইতিমধ্যে অন্য একটি একাউন্ট ব্যবহার করা হচ্ছে। একটি ডিভাইসে একটি মাত্র একাউন্ট চালানো যায়।"
         }
     }
 
-    /**
-     * "🔄 আবার চেষ্টা করুন" বাটনে চাপলে — অ্যাডমিন Admin.kt থেকে ডিভাইস রিসেট করে দিয়েছেন
-     * কিনা তা পুনরায় Supabase থেকে যাচাই করে। রিসেট হয়ে থাকলে ব্যবহারকারীকে সরাসরি
-     * পরবর্তী ধাপে (PIN/লগইন) নিয়ে যায় — পুরো ফোন নাম্বার এন্ট্রি থেকে আবার শুরু করা লাগে না।
-     * এখনো রিসেট না হয়ে থাকলে সুন্দর একটা বার্তা দেখিয়ে একই স্ক্রিনে রাখে।
-     */
     private fun retryDeviceCheck() {
         setLoading(true)
         statusText.text = ""
@@ -590,22 +548,29 @@ class LoginActivity : AppCompatActivity() {
                     setLoading(false)
                     result.onSuccess { patient ->
                         if (patient == null) {
-                            statusText.text = "একাউন্ট খুঁজে পাওয়া যায়নি, আবার চেষ্টা করুন"
+                            statusText.text = "একাউন্ট খুঁজে পাওয়া যায়নি"
                             return@onSuccess
                         }
                         currentPatient = patient
                         val deviceId = DeviceUtils.getDeviceId(this@LoginActivity)
-                        val storedDeviceId = patient.optString("device_id", "")
-                        if (storedDeviceId.isNotEmpty() && storedDeviceId != deviceId) {
-                            statusText.text = "এখনো অ্যাডমিন ডিভাইস রিসেট করেননি, একটু পর আবার চেষ্টা করুন"
-                        } else {
-                            val hasPin = patient.optString("password_hash").isNotEmpty() &&
-                                patient.optString("password_salt").isNotEmpty()
+                        val storedDeviceId = SupabaseClient.getDeviceIdFromPatient(patient)
+
+                        // SMART CHECK: এখন null কিনা চেক করছে
+                        if (SupabaseClient.isDeviceIdEmpty(storedDeviceId)) {
                             Toast.makeText(this@LoginActivity, "ডিভাইস রিসেট হয়ে গেছে! এখন লগইন করুন", Toast.LENGTH_SHORT).show()
+                            val hasPin = patient.optString("password_hash").isNotEmpty() &&
+                                    patient.optString("password_salt").isNotEmpty()
                             showPinSection(if (hasPin) PinMode.LOGIN else PinMode.SETUP_EXISTING)
+                        } else if (storedDeviceId == deviceId) {
+                            // একই ডিভাইস
+                            val hasPin = patient.optString("password_hash").isNotEmpty() &&
+                                    patient.optString("password_salt").isNotEmpty()
+                            showPinSection(if (hasPin) PinMode.LOGIN else PinMode.SETUP_EXISTING)
+                        } else {
+                            statusText.text = "এখনো অ্যাডমিন ডিভাইস রিসেট করেননি, একটু পর আবার চেষ্টা করুন"
                         }
                     }.onFailure {
-                        statusText.text = it.message ?: "সমস্যা হয়েছে, আবার চেষ্টা করুন"
+                        statusText.text = it.message?: "সমস্যা হয়েছে"
                     }
                 }
             }
@@ -622,14 +587,13 @@ class LoginActivity : AppCompatActivity() {
                             statusText.text = "এই ডিভাইসে এখনো অন্য একাউন্ট বাঁধা আছে"
                         }
                     }.onFailure {
-                        statusText.text = it.message ?: "সমস্যা হয়েছে, আবার চেষ্টা করুন"
+                        statusText.text = it.message?: "সমস্যা হয়েছে"
                     }
                 }
             }
         }
     }
 
-    /** "অন্য নাম্বার ব্যবহার করবেন?" চাপলে পুরো ফর্ম রিসেট হয়ে আবার ফোন নাম্বার চাওয়া হয় */
     private fun resetToPhoneEntry() {
         pinSection.visibility = View.GONE
         otpSection.visibility = View.GONE
@@ -658,20 +622,20 @@ class LoginActivity : AppCompatActivity() {
 
     private fun onPinAction() {
         val pin = pinDigits.toString()
-        if (pin.length != PIN_LENGTH) {
+        if (pin.length!= PIN_LENGTH) {
             statusText.text = "$PIN_LENGTH ডিজিটের PIN দিন"
             return
         }
 
         when (pinMode) {
             PinMode.LOGIN -> {
-                val patient = currentPatient ?: return
+                val patient = currentPatient?: return
                 setLoading(true)
                 lifecycleScope.launch {
                     val verifyResult = SupabaseClient.verifyPatientPassword(patient, pin)
                     val matched = verifyResult.getOrElse {
                         setLoading(false)
-                        statusText.text = it.message ?: "সমস্যা হয়েছে"
+                        statusText.text = it.message?: "সমস্যা হয়েছে"
                         return@launch
                     }
                     if (!matched) {
@@ -682,19 +646,16 @@ class LoginActivity : AppCompatActivity() {
                         setActiveField(Field.PIN)
                         return@launch
                     }
-                    // PIN ঠিক আছে। এই একাউন্টে এখনো কোনো ডিভাইস বাঁধা না থাকলে (পুরাতন ইউজার,
-                    // প্রথমবার নতুন সিস্টেমে লগইন করছেন, বা অ্যাডমিন সদ্য ডিভাইস রিসেট করে দিয়েছেন),
-                    // এখনই এই ডিভাইসকে বেঁধে দেওয়া হচ্ছে।
-                    val storedDeviceId = patient.optString("device_id", "")
-                    if (storedDeviceId.isEmpty()) {
+                    val storedDeviceId = SupabaseClient.getDeviceIdFromPatient(patient)
+                    if (SupabaseClient.isDeviceIdEmpty(storedDeviceId)) {
                         val deviceId = DeviceUtils.getDeviceId(this@LoginActivity)
                         val conflictResult = SupabaseClient.findPatientByDeviceId(deviceId, patient.getString("id"))
                         val conflict = conflictResult.getOrElse {
                             setLoading(false)
-                            statusText.text = it.message ?: "সমস্যা হয়েছে"
+                            statusText.text = it.message?: "সমস্যা হয়েছে"
                             return@launch
                         }
-                        if (conflict != null) {
+                        if (conflict!= null) {
                             setLoading(false)
                             showDeviceBlocked(DeviceBlockReason.DEVICE_ALREADY_USED)
                             return@launch
@@ -708,23 +669,23 @@ class LoginActivity : AppCompatActivity() {
 
             PinMode.SETUP_EXISTING -> {
                 val confirm = pinConfirmDigits.toString()
-                if (pin != confirm) {
+                if (pin!= confirm) {
                     statusText.text = "দুটি PIN মিলছে না"
                     pinConfirmDigits.clear()
                     refreshFields()
                     return
                 }
-                val patient = currentPatient ?: return
+                val patient = currentPatient?: return
                 val deviceId = DeviceUtils.getDeviceId(this)
                 setLoading(true)
                 lifecycleScope.launch {
                     val conflictResult = SupabaseClient.findPatientByDeviceId(deviceId, patient.getString("id"))
                     val conflict = conflictResult.getOrElse {
                         setLoading(false)
-                        statusText.text = it.message ?: "সমস্যা হয়েছে"
+                        statusText.text = it.message?: "সমস্যা হয়েছে"
                         return@launch
                     }
-                    if (conflict != null) {
+                    if (conflict!= null) {
                         setLoading(false)
                         showDeviceBlocked(DeviceBlockReason.DEVICE_ALREADY_USED)
                         return@launch
@@ -732,7 +693,7 @@ class LoginActivity : AppCompatActivity() {
                     val setResult = SupabaseClient.setPatientPassword(patient.getString("id"), pin)
                     if (setResult.isFailure) {
                         setLoading(false)
-                        statusText.text = setResult.exceptionOrNull()?.message ?: "PIN সেট করা যায়নি"
+                        statusText.text = setResult.exceptionOrNull()?.message?: "PIN সেট করা যায়নি"
                         return@launch
                     }
                     SupabaseClient.bindDeviceToPatient(patient.getString("id"), deviceId)
@@ -743,16 +704,12 @@ class LoginActivity : AppCompatActivity() {
 
             PinMode.SETUP_NEW -> {
                 val confirm = pinConfirmDigits.toString()
-                if (pin != confirm) {
+                if (pin!= confirm) {
                     statusText.text = "দুটি PIN মিলছে না"
                     pinConfirmDigits.clear()
                     refreshFields()
                     return
                 }
-                // এই ফোন নাম্বারের patient row এখনো তৈরি হয়নি (id নেই), তাই এখান থেকে সরাসরি
-                // Supabase-এ PIN সেভ করা সম্ভব না। PIN-টা সাইনআপ ফর্মের সাথে পাঠিয়ে দেওয়া
-                // হচ্ছে — প্রোফাইল সাবমিট করার সময় SignupActivity, SupabaseClient.registerPatient()-কে
-                // এই PIN + এই ডিভাইসের আইডিসহ কল করবে, তখনই hash হয়ে সেভ ও বাঁধা হবে।
                 val intent = Intent(this@LoginActivity, SignupActivity::class.java)
                 intent.putExtra("phone", currentPhone)
                 intent.putExtra("pin", pin)
@@ -762,45 +719,40 @@ class LoginActivity : AppCompatActivity() {
         }
     }
 
-    /** PIN ভুলে গেলে বা ডিভাইস-সংক্রান্ত সমস্যায় সরাসরি অ্যাডমিনের WhatsApp নাম্বারে চ্যাট ওপেন করে */
     private fun openForgotPinOnWhatsApp() {
         val message = "আসসালামু আলাইকুম, আমি SunnyCare অ্যাপে আমার PIN ভুলে গিয়েছি। আমার ফোন নাম্বার: $currentPhone । দয়া করে সাহায্য করুন।"
         val url = "https://wa.me/$ADMIN_WHATSAPP_NUMBER?text=" + Uri.encode(message)
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (e: Exception) {
-            statusText.text = "WhatsApp খুলতে সমস্যা হয়েছে, সরাসরি $ADMIN_WHATSAPP_NUMBER নাম্বারে যোগাযোগ করুন"
+            statusText.text = "WhatsApp খুলতে সমস্যা হয়েছে"
         }
     }
 
-    /** ডিভাইস পরিবর্তনের অনুরোধ নিয়ে WhatsApp এ অ্যাডমিনের কাছে পাঠায় */
     private fun openDeviceChangeOnWhatsApp() {
-        val message = "আসসালামু আলাইকুম, আমি SunnyCare অ্যাপে অন্য একটি ডিভাইস ব্যবহার করতে চাই। আমার ফোন নাম্বার: $currentPhone । দয়া করে আমার একাউন্টের ডিভাইস পরিবর্তন করে দিন।"
+        val message = "আসসালামু আলাইকুম, আমি SunnyCare অ্যাপে অন্য একটি ডিভাইস ব্যবহার করতে চাই। আমার ফোন নাম্বার: $currentPhone । দয়া করে আমার একাউন্টের ডিভাইস রিসেট করে দিন। Doctor: 01710355342 Admin: 01632336631"
         val url = "https://wa.me/$ADMIN_WHATSAPP_NUMBER?text=" + Uri.encode(message)
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (e: Exception) {
-            deviceBlockedMessage.text = "WhatsApp খুলতে সমস্যা হয়েছে, সরাসরি $ADMIN_WHATSAPP_NUMBER নাম্বারে যোগাযোগ করুন"
+            deviceBlockedMessage.text = "WhatsApp খুলতে সমস্যা হয়েছে"
         }
     }
 
     private fun setLoading(loading: Boolean) {
         progress.visibility = if (loading) View.VISIBLE else View.GONE
-        sendOtpBtn.isEnabled = !loading
-        verifyBtn.isEnabled = !loading
-        keypad.isEnabled = !loading
+        sendOtpBtn.isEnabled =!loading
+        verifyBtn.isEnabled =!loading
+        keypad.isEnabled =!loading
         keypad.alpha = if (loading) 0.5f else 1f
-        pinActionBtn.isEnabled = !loading
+        pinActionBtn.isEnabled =!loading
         if (::deviceRetryBtn.isInitialized) {
-            deviceRetryBtn.isEnabled = !loading
+            deviceRetryBtn.isEnabled =!loading
             deviceRetryBtn.alpha = if (loading) 0.6f else 1f
         }
-        if (::deviceHelpBtn.isInitialized) deviceHelpBtn.isEnabled = !loading
+        if (::deviceHelpBtn.isInitialized) deviceHelpBtn.isEnabled =!loading
     }
 
-    // ------------------------------------------------------------------
-    // ২ মিনিটের রিসেন্ড টাইমার
-    // ------------------------------------------------------------------
     private fun startResendTimer() {
         canResend = false
         resendText.alpha = 0.55f
@@ -821,9 +773,6 @@ class LoginActivity : AppCompatActivity() {
         }.start()
     }
 
-    // ------------------------------------------------------------------
-    // কাস্টম OTP ডায়ালগ (কোনো টেকনিক্যাল ব্যাখ্যা ছাড়া, শুধু কোড দেখানো)
-    // ------------------------------------------------------------------
     private fun showOtpSentDialog(code: String) {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -876,9 +825,6 @@ class LoginActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // ------------------------------------------------------------------
-    // Small UI helpers
-    // ------------------------------------------------------------------
     private fun text(t: String, sizeSp: Float, style: Int, color: Int): TextView = TextView(this).apply {
         text = t; textSize = sizeSp; setTypeface(null, style); setTextColor(color); gravity = Gravity.CENTER
     }
@@ -892,7 +838,6 @@ class LoginActivity : AppCompatActivity() {
         setColor(color)
     }
 
-    /** Premium gradient button with a soft press-scale animation (no XML drawables/resources used). */
     private fun premiumButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
         text = label
         setTextColor(Color.WHITE)
@@ -919,10 +864,6 @@ class LoginActivity : AppCompatActivity() {
         setOnClickListener { onClick() }
     }
 
-    /**
-     * সাদা ব্যাকগ্রাউন্ড ও রঙিন বর্ডার-টেক্সটসহ সেকেন্ডারি বাটন — "আবার চেষ্টা করুন" এর মতো
-     * কম-জোরালো (কিন্তু গুরুত্বপূর্ণ) অ্যাকশনের জন্য, যাতে প্রাইমারি বাটন থেকে আলাদা বোঝা যায়।
-     */
     private fun secondaryButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
         text = label
         setTextColor(colorPrimary)
@@ -951,11 +892,6 @@ class LoginActivity : AppCompatActivity() {
         setOnClickListener { onClick() }
     }
 
-    // ==================================================================
-    // Canvas-drawn custom views (no drawable resources used anywhere)
-    // ==================================================================
-
-    /** Soft translucent circles floating over the header gradient, for depth. */
     class BackgroundDecorView(context: Context) : View(context) {
         private val p1 = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(26, 255, 255, 255) }
         private val p2 = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(16, 255, 255, 255) }
@@ -969,7 +905,6 @@ class LoginActivity : AppCompatActivity() {
         }
     }
 
-    /** সূর্য ভিতরে মেডিকেল ক্রস - প্রোগ্রামেটিক্যালি আঁকা, soft shadow সহ */
     class AuthIconView(context: Context) : View(context) {
         private val paintWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
         private val paintOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -996,7 +931,6 @@ class LoginActivity : AppCompatActivity() {
         }
     }
 
-    /** ফোন নাম্বার দেখানোর কাস্টম ফিল্ড - সিস্টেম কীবোর্ড ছাড়া, নিচের কীপ্যাড থেকে ইনপুট নেয়। */
     class PhoneDisplayView(context: Context) : View(context) {
 
         var onTap: (() -> Unit)? = null
@@ -1013,7 +947,7 @@ class LoginActivity : AppCompatActivity() {
         private val handler = Handler(Looper.getMainLooper())
         private val blinkRunnable = object : Runnable {
             override fun run() {
-                cursorVisible = !cursorVisible
+                cursorVisible =!cursorVisible
                 invalidate()
                 handler.postDelayed(this, 500)
             }
@@ -1060,7 +994,7 @@ class LoginActivity : AppCompatActivity() {
 
         private fun formatted(): String {
             if (digits.isEmpty()) return ""
-            return digits.chunked(4).joinToString("  ")
+            return digits.chunked(4).joinToString(" ")
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -1076,7 +1010,7 @@ class LoginActivity : AppCompatActivity() {
 
             if (digits.isEmpty()) {
                 val hy = cy - (hintPaint.descent() + hintPaint.ascent()) / 2
-                canvas.drawText("01XXXXXXXXX", padding, hy, hintPaint)
+                canvas.drawText("01XXXXXXXXX / + বিদেশি", padding, hy, hintPaint)
                 if (isActive && cursorVisible) drawCursor(canvas, padding, cy)
             } else {
                 val display = formatted()
@@ -1110,10 +1044,6 @@ class LoginActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * বক্স-ভিত্তিক পিন/OTP ভিউ - সিস্টেম কীবোর্ড ছাড়া, নিচের কীপ্যাড থেকে ইনপুট নেয়।
-     * OTP এর জন্য ৬টা বক্স, PIN এর জন্য ৪টা বক্স — boxCount প্যারামিটার দিয়ে দুটোতেই এই একই ভিউ ব্যবহার হয়।
-     */
     class OtpPinView @JvmOverloads constructor(
         context: Context,
         private val boxCount: Int = 6
@@ -1133,7 +1063,7 @@ class LoginActivity : AppCompatActivity() {
         private val handler = Handler(Looper.getMainLooper())
         private val blinkRunnable = object : Runnable {
             override fun run() {
-                cursorVisible = !cursorVisible
+                cursorVisible =!cursorVisible
                 invalidate()
                 handler.postDelayed(this, 500)
             }
@@ -1210,7 +1140,6 @@ class LoginActivity : AppCompatActivity() {
         }
     }
 
-    /** ইন-বিল্ট নাম্বার কীপ্যাড - সম্পূর্ণ Canvas দিয়ে আঁকা, কোনো resource/drawable ছাড়া। */
     class NumericKeypadView(context: Context) : View(context) {
 
         var onKey: ((String) -> Unit)? = null
@@ -1246,7 +1175,7 @@ class LoginActivity : AppCompatActivity() {
             val col = (x / (width / cols.toFloat())).toInt().coerceIn(0, cols - 1)
             val row = (y / (height / rows.toFloat())).toInt().coerceIn(0, rows - 1)
             val idx = row * cols + col
-            if (idx !in keys.indices) return -1
+            if (idx!in keys.indices) return -1
             if (keys[idx].isEmpty()) return -1
             return idx
         }
@@ -1313,11 +1242,11 @@ class LoginActivity : AppCompatActivity() {
                 MotionEvent.ACTION_DOWN -> {
                     pressedIndex = indexAt(event.x, event.y)
                     invalidate()
-                    return pressedIndex != -1
+                    return pressedIndex!= -1
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val idx = indexAt(event.x, event.y)
-                    if (idx != pressedIndex) {
+                    if (idx!= pressedIndex) {
                         pressedIndex = -1
                         invalidate()
                     }
@@ -1326,7 +1255,7 @@ class LoginActivity : AppCompatActivity() {
                     val idx = pressedIndex
                     pressedIndex = -1
                     invalidate()
-                    if (idx != -1) {
+                    if (idx!= -1) {
                         performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         onKey?.invoke(keys[idx])
                         performClick()
@@ -1346,7 +1275,6 @@ class LoginActivity : AppCompatActivity() {
         }
     }
 
-    /** কাস্টম ডায়ালগের ভেতরের ব্যাজ আইকন - বৃত্তের ভিতরে একটা মেসেজ/চিঠি চিহ্ন (drawable ছাড়া আঁকা) */
     class OtpBadgeView(context: Context) : View(context) {
         private val paintBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E4F3F1"); style = Paint.Style.FILL }
         private val paintStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
