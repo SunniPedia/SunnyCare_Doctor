@@ -1,5 +1,10 @@
 package com.konasl.nagad
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -10,15 +15,20 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.text.InputType
+import android.util.LruCache
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -28,9 +38,14 @@ import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -44,7 +59,8 @@ import java.util.Locale
  * 3. New messages are received through Supabase Realtime Postgres Changes.
  * 4. Initial history is loaded once through the existing SupabaseClient REST API.
  * 5. Sending a message uses the existing SupabaseClient.sendMessage().
- * 6. The realtime subscription is owned by this Activity and is removed with the Activity.
+ * 6. The realtime subscription is owned by this Activity and is removed with the Activity,
+ *    and is re-created whenever the Activity comes back to the foreground.
  *
  * Required database setup:
  * - public.messages must be enabled in the supabase_realtime publication.
@@ -54,6 +70,10 @@ import java.util.Locale
  * - supabase-kt 2.5.1
  * - realtime-kt 2.5.1
  * - a Ktor Android engine compatible with the project's supabase-kt version
+ *
+ * Required AndroidManifest.xml entries: see AndroidManifest_ADDITIONS.xml
+ * (INTERNET, CAMERA permissions, FileProvider, and
+ * android:windowSoftInputMode="adjustResize" on this Activity).
  */
 class ChatActivity : AppCompatActivity() {
 
@@ -90,6 +110,13 @@ class ChatActivity : AppCompatActivity() {
     private var realtimeChannel: RealtimeChannel? = null
     private var realtimeStarted = false
 
+    // In-memory cache so attachment images are not re-downloaded on every
+    // RecyclerView rebind / scroll.
+    private val imageCache = LruCache<String, Bitmap>(24)
+
+    // Holds the destination Uri while the camera app is capturing a photo.
+    private var pendingCameraUri: Uri? = null
+
     /*
      * These values mirror the existing SupabaseClient because the uploaded
      * SupabaseClient currently keeps them private.
@@ -113,16 +140,43 @@ class ChatActivity : AppCompatActivity() {
 
     private val documentPicker =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) handleSelectedAttachment(uri, "document")
+            if (uri != null) uploadAndSendAttachment(uri, null)
         }
 
     private val imagePicker =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            if (uri != null) handleSelectedAttachment(uri, "image")
+            if (uri != null) uploadAndSendAttachment(uri, "image/*".let { contentResolver.getType(uri) } ?: "image/jpeg")
+        }
+
+    private val cameraPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                launchCamera()
+            } else {
+                Toast.makeText(
+                    this,
+                    "ছবি তুলতে ক্যামেরা পারমিশন প্রয়োজন",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+    private val cameraCaptureLauncher =
+        registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+            val uri = pendingCameraUri
+            if (success && uri != null) {
+                uploadAndSendAttachment(uri, "image/jpeg")
+            }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Belt-and-suspenders fix for the keyboard covering the input box.
+        // The primary fix is android:windowSoftInputMode="adjustResize" on
+        // this Activity in AndroidManifest.xml (see AndroidManifest_ADDITIONS.xml).
+        @Suppress("DEPRECATION")
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
         appointmentId = intent.getStringExtra("appointment_id").orEmpty()
         patientId =
@@ -271,8 +325,9 @@ class ChatActivity : AppCompatActivity() {
         recyclerView.adapter = adapter
         root.addView(recyclerView)
 
-        val quickActions = buildQuickActions()
-        root.addView(quickActions)
+        // NOTE: The quick-action row (প্রেসক্রিপশন/রিপোর্ট/অ্যাপয়েন্টমেন্ট) that used to
+        // sit directly above the composer has been removed per request, so the
+        // chat list sits right above the message box.
 
         val composer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -324,78 +379,6 @@ class ChatActivity : AppCompatActivity() {
         root.addView(composer)
 
         setContentView(root)
-    }
-
-    private fun buildQuickActions(): View {
-        val horizontal = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            setBackgroundColor(Color.WHITE)
-        }
-
-        if (myRole == "doctor") {
-            addQuickAction(horizontal, "প্রেসক্রিপশন", IconType.PRESCRIPTION) {
-                insertQuickText("প্রেসক্রিপশন সম্পর্কে বিস্তারিত জানাতে চাই।")
-            }
-            addQuickAction(horizontal, "রিপোর্ট", IconType.REPORT) {
-                insertQuickText("আপনার রিপোর্টটি এখানে পাঠাতে পারেন।")
-            }
-            addQuickAction(horizontal, "অ্যাপয়েন্টমেন্ট", IconType.CALENDAR) {
-                insertQuickText("অ্যাপয়েন্টমেন্টের সময় সম্পর্কে আলোচনা করি।")
-            }
-        } else {
-            addQuickAction(horizontal, "প্রেসক্রিপশন", IconType.PRESCRIPTION) {
-                insertQuickText("আমার প্রেসক্রিপশন সম্পর্কে জানতে চাই।")
-            }
-            addQuickAction(horizontal, "রিপোর্ট", IconType.REPORT) {
-                showAttachmentOptions()
-            }
-            addQuickAction(horizontal, "অ্যাপয়েন্টমেন্ট", IconType.CALENDAR) {
-                insertQuickText("অ্যাপয়েন্টমেন্ট সম্পর্কে জানতে চাই।")
-            }
-        }
-
-        return horizontal
-    }
-
-    private fun addQuickAction(
-        parent: LinearLayout,
-        label: String,
-        icon: IconType,
-        action: () -> Unit
-    ) {
-        val item = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(7), dp(3), dp(7), dp(3))
-            background = roundedBackground(Color.WHITE, 10f, colorBorder)
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { action() }
-        }
-
-        val iconView = IconButtonView(this, icon).apply {
-            setColor(colorPrimary)
-            isClickable = false
-        }
-
-        val text = TextView(this).apply {
-            this.text = label
-            textSize = 9f
-            setTextColor(colorText)
-            gravity = Gravity.CENTER
-        }
-
-        item.addView(iconView, LinearLayout.LayoutParams(dp(30), dp(28)))
-        item.addView(text)
-
-        parent.addView(
-            item,
-            LinearLayout.LayoutParams(dp(96), dp(52)).apply {
-                marginEnd = dp(6)
-            }
-        )
     }
 
     private fun openConversation() {
@@ -452,8 +435,14 @@ class ChatActivity : AppCompatActivity() {
     /**
      * The ONLY realtime listener for this chat.
      *
-     * It listens directly to public.messages and filters by conversation_id.
-     * No REST reload is performed after an INSERT.
+     * It listens directly to public.messages (table filter set below) and
+     * additionally filters by conversation_id locally.
+     *
+     * IMPORTANT FIX: earlier this flow was created WITHOUT a `table` filter,
+     * so Supabase never matched any postgres_changes event to this
+     * subscription and no realtime INSERT ever arrived — messages only
+     * appeared after leaving and reopening the Activity (which reloads
+     * history via REST). Setting `table = "messages"` fixes this.
      */
     private fun startRealtime() {
         if (realtimeStarted) return
@@ -475,19 +464,20 @@ class ChatActivity : AppCompatActivity() {
                 realtimeChannel = realtimeChannelLocal
 
                 /*
-                 * Keep this subscription intentionally broad for maximum
-                 * compatibility with supabase-kt 2.5.1.
+                 * Table filter is REQUIRED here. Without it Supabase Realtime
+                 * does not know which table's changes to stream to this
+                 * channel and the collect{} below never receives anything.
                  *
-                 * We filter conversation_id locally in handleRealtimeInsert/
-                 * handleRealtimeUpdate/handleRealtimeDelete().
-                 *
-                 * This avoids depending on the PostgresChangeFilter DSL,
-                 * which differs between supabase-kt versions.
+                 * conversation_id is still filtered locally in
+                 * handleRealtimeInsert/Update/Delete for extra safety and for
+                 * compatibility across supabase-kt column-filter DSL versions.
                  */
                 val changes =
                     realtimeChannelLocal.postgresChangeFlow<PostgresAction>(
                         schema = "public"
-                    )
+                    ) {
+                        table = "messages"
+                    }
 
                 /*
                  * Subscribe from the SAME coroutine that owns the channel.
@@ -698,11 +688,7 @@ class ChatActivity : AppCompatActivity() {
             IconType.CAMERA
         ) {
             dialog.dismiss()
-            Toast.makeText(
-                this,
-                "ক্যামেরা সংযুক্ত করতে Camera permission ও camera flow যোগ করতে হবে",
-                Toast.LENGTH_SHORT
-            ).show()
+            openCamera()
         }
 
         addDialogAction(
@@ -757,33 +743,110 @@ class ChatActivity : AppCompatActivity() {
         parent.addView(row)
     }
 
-    private fun handleSelectedAttachment(uri: Uri, type: String) {
-        val name = getFileName(uri)
+    // ------------------------------------------------------------------
+    // CAMERA CAPTURE
+    // ------------------------------------------------------------------
 
-        val message =
-            if (type == "image") {
-                "রিপোর্ট/ছবি সংযুক্ত করার জন্য নির্বাচিত: $name"
-            } else {
-                "মেডিকেল ডকুমেন্ট সংযুক্ত করার জন্য নির্বাচিত: $name"
+    private fun openCamera() {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            launchCamera()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun launchCamera() {
+        try {
+            val photoFile = File(
+                cacheDir,
+                "chat_photo_${System.currentTimeMillis()}.jpg"
+            )
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                photoFile
+            )
+            pendingCameraUri = uri
+            cameraCaptureLauncher.launch(uri)
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "ক্যামেরা চালু করা যায়নি: ${e.message ?: "অজানা সমস্যা"}",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // ATTACHMENT UPLOAD + SEND (real implementation)
+    // ------------------------------------------------------------------
+
+    private fun uploadAndSendAttachment(uri: Uri, mimeTypeHint: String?) {
+        val id = conversationId
+        if (id.isNullOrBlank()) {
+            Toast.makeText(
+                this,
+                "চ্যাট এখনো প্রস্তুত হয়নি",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        val fileName = getFileName(uri)
+        val mimeType = mimeTypeHint
+            ?: contentResolver.getType(uri)
+            ?: "application/octet-stream"
+
+        Toast.makeText(this, "আপলোড হচ্ছে...", Toast.LENGTH_SHORT).show()
+
+        lifecycleScope.launch {
+            try {
+                val bytes = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw IllegalStateException("ফাইল পড়া যায়নি")
+                }
+
+                if (bytes.size > 25 * 1024 * 1024) {
+                    Toast.makeText(
+                        this@ChatActivity,
+                        "সর্বোচ্চ ২৫ MB ফাইল পাঠানো যাবে",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@launch
+                }
+
+                val attachment = SupabaseClient.uploadChatAttachment(
+                    id,
+                    mySenderId,
+                    fileName,
+                    mimeType,
+                    bytes
+                ).getOrThrow()
+
+                /*
+                 * Do not manually insert into the RecyclerView here — the
+                 * Supabase Realtime INSERT event (fixed above) delivers this
+                 * message to this same screen, same as a normal text message.
+                 */
+                SupabaseClient.sendAttachmentMessage(
+                    id,
+                    mySenderId,
+                    myRole,
+                    attachment
+                ).getOrThrow()
+
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@ChatActivity,
+                    "ফাইল পাঠানো যায়নি: ${e.message ?: "অজানা সমস্যা"}",
+                    Toast.LENGTH_LONG
+                ).show()
             }
-
-        /*
-         * The current uploaded SupabaseClient only exposes generic report
-         * upload, not a chat-attachment table/storage method.
-         * Therefore this Activity does not pretend that the attachment has
-         * been uploaded to the chat.
-         *
-         * The selected filename is placed in the composer so the user can
-         * continue without silently losing the selection.
-         */
-        inputField.setText(message)
-        inputField.setSelection(inputField.text.length)
-
-        Toast.makeText(
-            this,
-            "ফাইল নির্বাচিত: $name",
-            Toast.LENGTH_SHORT
-        ).show()
+        }
     }
 
     private fun getFileName(uri: Uri): String {
@@ -805,6 +868,89 @@ class ChatActivity : AppCompatActivity() {
         }
 
         return result
+    }
+
+    // ------------------------------------------------------------------
+    // ATTACHMENT VIEWING (image thumbnail loading + open in external app)
+    // ------------------------------------------------------------------
+
+    private fun parseAttachment(raw: String): JSONObject? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty() || !trimmed.startsWith("{")) return null
+        return try {
+            val obj = JSONObject(trimmed)
+            if (obj.optString("kind") == "attachment") obj else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun loadAttachmentImage(url: String, target: ImageView) {
+        val cached = imageCache.get(url)
+        if (cached != null) {
+            target.setImageBitmap(cached)
+            return
+        }
+
+        target.setImageDrawable(null)
+        target.tag = url
+
+        lifecycleScope.launch {
+            val bitmap = withContext(Dispatchers.IO) { downloadBitmap(url) }
+            if (target.tag == url && bitmap != null) {
+                imageCache.put(url, bitmap)
+                target.setImageBitmap(bitmap)
+            }
+        }
+    }
+
+    private fun downloadBitmap(urlString: String): Bitmap? {
+        return try {
+            val connection = URL(urlString).openConnection() as HttpURLConnection
+            connection.connectTimeout = 15000
+            connection.readTimeout = 15000
+            connection.doInput = true
+            connection.connect()
+            connection.inputStream.use { input ->
+                BitmapFactory.decodeStream(input)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun openAttachmentUrl(url: String, mimeType: String) {
+        if (url.isBlank()) {
+            Toast.makeText(this, "ফাইল লিংক পাওয়া যায়নি", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            val intent = Intent(Intent.ACTION_VIEW)
+            intent.setDataAndType(Uri.parse(url), mimeType.ifBlank { "*/*" })
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            } catch (e2: Exception) {
+                Toast.makeText(
+                    this,
+                    "ফাইল খোলার মতো অ্যাপ পাওয়া যায়নি",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private fun formatFileSize(bytes: Long): String {
+        if (bytes <= 0) return "0 KB"
+        val kb = bytes / 1024.0
+        return if (kb < 1024) {
+            "%.0f KB".format(kb)
+        } else {
+            "%.1f MB".format(kb / 1024.0)
+        }
     }
 
     private fun showChatInfo() {
@@ -892,6 +1038,19 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        /*
+         * Re-establish the realtime subscription if the Activity comes back
+         * to the foreground after onStop() tore it down (e.g. user switched
+         * apps or the screen was turned off and back on) and the
+         * conversation is already known.
+         */
+        if (!conversationId.isNullOrBlank() && !realtimeStarted) {
+            startRealtime()
+        }
+    }
+
     override fun onStop() {
         stopRealtime()
         super.onStop()
@@ -927,9 +1086,14 @@ class ChatActivity : AppCompatActivity() {
                 } catch (_: Exception) {
                 }
 
-                try {
-                } catch (_: Exception) {
-                }
+                /*
+                 * NOTE: supabase-kt's RealtimeChannel/Realtime API for fully
+                 * removing a channel object differs across 2.x point
+                 * releases. unsubscribe() above already stops the socket
+                 * subscription (which is what matters for this Activity's
+                 * lifecycle), so we intentionally do not call an
+                 * uncertain/unstable removeChannel() API here.
+                 */
             }
         }
     }
@@ -1344,7 +1508,7 @@ class ChatActivity : AppCompatActivity() {
                 val senderId =
                     message.optString("sender_id", "")
 
-                val text =
+                val rawText =
                     message.optString("message", "")
 
                 val createdAt =
@@ -1352,6 +1516,8 @@ class ChatActivity : AppCompatActivity() {
 
                 val mine =
                     senderId == currentUserId
+
+                val attachment = parseAttachment(rawText)
 
                 val bubble = LinearLayout(this@ChatActivity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -1368,13 +1534,18 @@ class ChatActivity : AppCompatActivity() {
                     )
                 }
 
-                val messageText = TextView(this@ChatActivity).apply {
-                    this.text = text
-                    textSize = 14f
-                    setTextColor(
-                        if (mine) Color.WHITE else colorText
-                    )
-                    setPadding(0, 0, 0, dp(3))
+                if (attachment != null) {
+                    bindAttachment(bubble, attachment, mine)
+                } else {
+                    val messageText = TextView(this@ChatActivity).apply {
+                        this.text = rawText
+                        textSize = 14f
+                        setTextColor(
+                            if (mine) Color.WHITE else colorText
+                        )
+                        setPadding(0, 0, 0, dp(3))
+                    }
+                    bubble.addView(messageText)
                 }
 
                 val time = TextView(this@ChatActivity).apply {
@@ -1390,7 +1561,6 @@ class ChatActivity : AppCompatActivity() {
                         if (mine) Gravity.END else Gravity.START
                 }
 
-                bubble.addView(messageText)
                 bubble.addView(time)
 
                 val params =
@@ -1403,6 +1573,95 @@ class ChatActivity : AppCompatActivity() {
                     }
 
                 container.addView(bubble, params)
+            }
+
+            private fun bindAttachment(
+                bubble: LinearLayout,
+                attachment: JSONObject,
+                mine: Boolean
+            ) {
+                val fileName = attachment.optString("file_name", "ফাইল")
+                val mimeType = attachment.optString("mime_type", "application/octet-stream")
+                val fileSize = attachment.optLong("file_size", 0L)
+                val url = attachment.optString("url", "")
+
+                if (mimeType.startsWith("image/")) {
+                    val imageView = ImageView(this@ChatActivity).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        background = roundedBackground(
+                            Color.parseColor("#E5E7EB"),
+                            12f,
+                            Color.TRANSPARENT
+                        )
+                        layoutParams = LinearLayout.LayoutParams(dp(180), dp(180))
+                        isClickable = true
+                        setOnClickListener { openAttachmentUrl(url, mimeType) }
+                    }
+                    bubble.addView(imageView)
+                    if (url.isNotBlank()) {
+                        loadAttachmentImage(url, imageView)
+                    }
+
+                    val caption = TextView(this@ChatActivity).apply {
+                        this.text = fileName
+                        textSize = 11f
+                        setTextColor(
+                            if (mine) Color.argb(220, 255, 255, 255) else colorMuted
+                        )
+                        setPadding(0, dp(4), 0, 0)
+                    }
+                    bubble.addView(caption)
+                } else {
+                    val row = LinearLayout(this@ChatActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        isClickable = true
+                        setOnClickListener { openAttachmentUrl(url, mimeType) }
+                    }
+
+                    val icon = IconButtonView(this@ChatActivity, IconType.DOCUMENT).apply {
+                        setColor(if (mine) Color.WHITE else colorPrimary)
+                        isClickable = false
+                    }
+
+                    val textColumn = LinearLayout(this@ChatActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(
+                            0,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            1f
+                        ).apply {
+                            marginStart = dp(8)
+                        }
+                    }
+
+                    val nameText = TextView(this@ChatActivity).apply {
+                        this.text = fileName
+                        textSize = 13f
+                        setTextColor(if (mine) Color.WHITE else colorText)
+                        typeface = Typeface.DEFAULT_BOLD
+                        maxLines = 2
+                    }
+
+                    val sizeText = TextView(this@ChatActivity).apply {
+                        this.text = formatFileSize(fileSize) + " • ফাইল দেখতে ট্যাপ করুন"
+                        textSize = 10f
+                        setTextColor(
+                            if (mine) Color.argb(220, 255, 255, 255) else colorMuted
+                        )
+                    }
+
+                    textColumn.addView(nameText)
+                    textColumn.addView(sizeText)
+
+                    row.addView(icon, LinearLayout.LayoutParams(dp(34), dp(34)))
+                    row.addView(textColumn)
+
+                    bubble.addView(
+                        row,
+                        LinearLayout.LayoutParams(dp(210), ViewGroup.LayoutParams.WRAP_CONTENT)
+                    )
+                }
             }
         }
     }
