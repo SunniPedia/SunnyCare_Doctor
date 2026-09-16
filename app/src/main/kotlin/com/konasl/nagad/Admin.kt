@@ -50,13 +50,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
 
-/**
- * UPDATED (this revision): loadPatients() এখন SupabaseClient.adminGetAllPatientsWithReportFlag()
- * ব্যবহার করে, যা `patients_with_reports` ভিউ থেকে ডেটা আনে এবং প্রতিটি রোগীর
- * সাথে একটি `has_report` বুলিয়ান ফ্ল্যাগ দেয়। buildPatientCard() এখন এই
- * ফ্ল্যাগ চেক করে "রোগীর রিপোর্ট দেখুন" বাটনটি শুধুমাত্র তখনই দেখায় যখন
- * রোগীর সত্যিকারের কোনো রিপোর্ট আপলোড করা আছে। বাকি সব ফিচার ও UI অপরিবর্তিত।
- */
 class AdminActivity : AppCompatActivity() {
 
     private val colorPrimary = Color.parseColor("#0F6C61")
@@ -92,6 +85,10 @@ class AdminActivity : AppCompatActivity() {
 
     private var allAppointments: List<JSONObject> = emptyList()
     private var allPatients: List<JSONObject> = emptyList()
+
+    // FIX: এই সেটে শুধুমাত্র সেই patient_id গুলো থাকবে যাদের কমপক্ষে একটি বৈধ (non-null/non-empty) report_url আছে।
+    // "রোগীর রিপোর্ট দেখুন" বাটনটি শুধুমাত্র এই সেটে থাকা রোগীদের জন্যই দেখানো হবে।
+    private var patientsWithReports: Set<String> = emptySet()
 
     private data class NavItemViews(
         val root: LinearLayout,
@@ -392,7 +389,6 @@ class AdminActivity : AppCompatActivity() {
 
         if (searchBarView != null) {
             val searchToggleBtn = ImageView(this).apply {
-                // FIX: added .toFloat() — dp(2f) returns Int, constructor expects Float
                 setImageDrawable(SearchIconDrawable(Color.WHITE, dp(2f).toFloat()))
                 background = roundedBg(Color.argb(46, 255, 255, 255), 30f)
                 layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginStart = dp(10) }
@@ -431,7 +427,6 @@ class AdminActivity : AppCompatActivity() {
             elevation = dp(1f).toFloat()
         }
         val searchIcon = ImageView(this).apply {
-            // FIX: added .toFloat() — dp(1.8f) returns Int, constructor expects Float
             setImageDrawable(SearchIconDrawable(colorTextMuted, dp(1.8f).toFloat()))
             layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
         }
@@ -509,6 +504,15 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
+    // FIX: appointment এর report_url থেকে বৈধ (non-blank) URL গুলো বের করে দেয়।
+    // "null" স্ট্রিং, খালি স্ট্রিং, শুধু কমা/স্পেস — এসব ক্ষেত্রে খালি লিস্ট রিটার্ন করবে।
+    private fun extractValidReportUrls(rawReportUrl: String): List<String> {
+        if (rawReportUrl.isBlank() || rawReportUrl.equals("null", ignoreCase = true)) return emptyList()
+        return rawReportUrl.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
+    }
+
     private fun buildAppointmentCard(obj: JSONObject): LinearLayout {
         val id = obj.optString("id", "")
         val name = obj.optString("patient_name", "")
@@ -525,6 +529,10 @@ class AdminActivity : AppCompatActivity() {
         val bloodPressure = obj.optString("blood_pressure", "")
         val reportUrl = obj.optString("report_url", "")
         val patientId = obj.optString("patient_id", "")
+
+        // FIX: শুধু "reportUrl.isNotBlank()" চেক করলে "null" স্ট্রিং বা খালি কমা সহ ভুল করে বাটন দেখানো হতে পারত।
+        // এখন বৈধ URL গুলো আগে থেকেই বের করে নেওয়া হচ্ছে, তারপর সেই লিস্ট অনুযায়ী বাটন দেখানো/লুকানো হবে।
+        val validReportUrls = extractValidReportUrls(reportUrl)
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -622,15 +630,11 @@ class AdminActivity : AppCompatActivity() {
             }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
             addView(commRow)
 
-            if (reportUrl.isNotBlank()) {
+            // FIX: শুধু বৈধ report URL থাকলেই "রিপোর্ট দেখুন" বাটন দেখাবে
+            if (validReportUrls.isNotEmpty()) {
                 addView(space(dp(8)))
                 addView(smallActionButton("এই অ্যাপয়েন্টমেন্টের রিপোর্ট দেখুন", colorInfo) {
-                    val urls = reportUrl.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                    if (urls.isEmpty()) {
-                        Toast.makeText(this@AdminActivity, "কোনো রিপোর্ট পাওয়া যায়নি", Toast.LENGTH_SHORT).show()
-                    } else {
-                        renderReportsListDialog(name.ifEmpty { "রোগী" }, urls)
-                    }
+                    renderReportsListDialog(name.ifEmpty { "রোগী" }, validReportUrls)
                 }.apply {
                     layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 })
@@ -768,15 +772,32 @@ class AdminActivity : AppCompatActivity() {
         patientsContainer.removeAllViews()
         patientsContainer.addView(loadingText())
         lifecycleScope.launch {
-            // 🆕 UPDATED: patients_with_reports ভিউ থেকে ডেটা আনা হচ্ছে, যাতে
-            // প্রতিটি রোগীর অবজেক্টে সরাসরি "has_report" ফ্ল্যাগ পাওয়া যায়।
-            // (এই ভিউটি তৈরি করতে supabase_migration_patients_with_reports.sql
-            // Supabase SQL Editor-এ একবার রান করে নিতে হবে।)
-            val result = SupabaseClient.adminGetAllPatientsWithReportFlag()
-            result.onSuccess { rows ->
+            val patientsResult = SupabaseClient.adminGetAllPatients()
+            // FIX: রোগীর তালিকার সাথে সাথে সব appointment ও লোড করা হচ্ছে, যাতে বোঝা যায় কোন রোগীর
+            // আসলেই কোনো বৈধ রিপোর্ট আপলোড করা আছে কিনা। এর ভিত্তিতেই "রোগীর রিপোর্ট দেখুন" বাটনটি
+            // দেখানো বা লুকানো হবে।
+            val appointmentsResult = SupabaseClient.adminGetAllAppointments()
+
+            patientsResult.onSuccess { rows ->
                 val list = mutableListOf<JSONObject>()
                 for (i in 0 until rows.length()) list.add(rows.getJSONObject(i))
                 allPatients = list
+
+                val reportSet = mutableSetOf<String>()
+                appointmentsResult.onSuccess { apptRows ->
+                    for (i in 0 until apptRows.length()) {
+                        val apptObj = apptRows.getJSONObject(i)
+                        val pid = apptObj.optString("patient_id", "")
+                        val rawReportUrl = apptObj.optString("report_url", "")
+                        if (pid.isNotBlank() && extractValidReportUrls(rawReportUrl).isNotEmpty()) {
+                            reportSet.add(pid)
+                        }
+                    }
+                }
+                // appointmentsResult ব্যর্থ হলেও রোগীর তালিকা দেখাতে সমস্যা নেই — শুধু সেক্ষেত্রে
+                // সেফটির জন্য কোনো রোগীর জন্যই রিপোর্ট বাটন দেখানো হবে না, যতক্ষণ না রিলোড করা হয়।
+                patientsWithReports = reportSet
+
                 renderPatients(patientSearchInput.text?.toString().orEmpty())
             }.onFailure {
                 patientsContainer.removeAllViews()
@@ -810,9 +831,10 @@ class AdminActivity : AppCompatActivity() {
         val gender = obj.optString("gender", "")
         val blood = obj.optString("blood_group", "")
         val deviceId = obj.optString("device_id", "")
-        // 🆕 patients_with_reports ভিউ থেকে আসা ফ্ল্যাগ: এই রোগীর অন্তত একটি
-        // অ্যাপয়েন্টমেন্টে বৈধ report_url আছে কিনা।
-        val hasReport = obj.optBoolean("has_report", false)
+
+        // FIX: এই রোগীর কমপক্ষে একটি appointment-এ বৈধ report_url আছে কিনা তা চেক করা হচ্ছে।
+        // না থাকলে নিচে "রোগীর রিপোর্ট দেখুন" বাটনটি একদমই যোগ হবে না।
+        val hasReport = patientsWithReports.contains(id)
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -865,19 +887,17 @@ class AdminActivity : AppCompatActivity() {
             }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
             addView(actionsRow)
 
-            addView(space(dp(8)))
-
-            // 🆕 FIX: শুধুমাত্র hasReport সত্য হলেই "রোগীর রিপোর্ট দেখুন" বাটন দেখানো হবে।
-            // আগে এই বাটনটি শর্তহীনভাবে সব রোগীর কার্ডে দেখানো হতো, ফলে রিপোর্ট
-            // আপলোড না থাকা রোগীর ক্ষেত্রেও বাটন দেখা যেত।
+            // FIX: শুধুমাত্র বৈধ রিপোর্ট থাকলেই এই বাটন ও তার আগের স্পেসিং যোগ হবে
             if (hasReport) {
+                addView(space(dp(8)))
                 addView(smallActionButton("রোগীর রিপোর্ট দেখুন", colorPrimary) {
                     showPatientReportsDialog(id, name.ifEmpty { "রোগী" })
                 }.apply {
                     layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 })
-                addView(space(dp(8)))
             }
+
+            addView(space(dp(8)))
 
             addView(smallActionButton("ডিভাইস রিসেট", colorInfo) {
                 confirmDialog(
@@ -1197,9 +1217,7 @@ class AdminActivity : AppCompatActivity() {
                 for (i in 0 until rows.length()) {
                     val obj = rows.getJSONObject(i)
                     val raw = obj.optString("report_url", "")
-                    if (raw.isNotBlank() && raw != "null") {
-                        raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { reportUrls.add(it) }
-                    }
+                    reportUrls.addAll(extractValidReportUrls(raw))
                 }
             }
             if (result.isFailure) {
