@@ -27,13 +27,17 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Setup Gradle 8.5
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.5
+
+      - name: Accept Android Licenses
+        run: |
+          yes | sdkmanager --licenses || true
+          mkdir -p $ANDROID_HOME/licenses
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $ANDROID_HOME/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" > $ANDROID_HOME/licenses/android-sdk-preview-license
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
@@ -42,24 +46,18 @@ jobs:
         run: |
           NEW_PACKAGE="${{ inputs.package_name }}"
           echo "Renaming package to: $NEW_PACKAGE"
-          
-          # 1. app/build.gradle (Groovy) এর applicationId এবং namespace চেঞ্জ
           if [ -f app/build.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"$NEW_PACKAGE\"/" app/build.gradle
             sed -i "s/namespace '.*'/namespace '$NEW_PACKAGE'/" app/build.gradle
             sed -i "s/namespace \".*\"/namespace \"$NEW_PACKAGE\"/" app/build.gradle
           fi
-
-          # 2. app/build.gradle.kts (Kotlin DSL) এর applicationId এবং namespace চেঞ্জ
           if [ -f app/build.gradle.kts ]; then
             sed -i "s/applicationId = \".*\"/applicationId = \"$NEW_PACKAGE\"/" app/build.gradle.kts
             sed -i "s/namespace = \".*\"/namespace = \"$NEW_PACKAGE\"/" app/build.gradle.kts
           fi
-          
-          echo "Package renamed successfully"
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Rename APK file
         run: |
