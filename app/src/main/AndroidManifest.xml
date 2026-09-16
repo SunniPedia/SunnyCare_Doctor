@@ -34,6 +34,9 @@
 		<activity android:name=".VideocallActivity" android:exported="false" />
 		<activity android:name=".AudiocallActivity" android:exported="false" />
 		<activity
+    		android:name=".PrescriptionActivity"
+    		android:exported="false" />
+		<activity
             android:name=".LoginActivity"
             android:exported="false" />
         <activity
