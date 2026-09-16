@@ -134,14 +134,14 @@ class ChatActivity : AppCompatActivity() {
     private var pendingCameraUri: Uri? = null
 
     // FIX: আগে যে Thread.UncaughtExceptionHandler বসানো ছিল তা ধরে রাখা হয়,
-    // যাতে রিয়েলটাইম সকেট ছাড়া অন্য যেকোনো ক্র্যাশ আগের মতোই রিপোর্ট হয়।
+    // যাতে রিয়েলটাইম সকেট ছাড়া অন্য যেকোনো ক্র্যাশ আগের মতোই স্বাভাবিকভাবে রিপোর্ট হয়।
     private var previousUncaughtExceptionHandler: Thread.UncaughtExceptionHandler? = null
 
     // FIX: WhatsApp-স্টাইল আপলোড — কোনো পেন্ডিং আপলোড ব্যর্থ হলে সেই আপলোডটা
     // আবার শুরু করার জন্য (retry-on-tap) local_id দিয়ে রাখা রিট্রাই অ্যাকশন।
     private val pendingRetryActions = mutableMapOf<String, () -> Unit>()
 
-    /*
+    /**
      * These values mirror the existing SupabaseClient because the uploaded
      * SupabaseClient currently keeps them private.
      *
@@ -169,7 +169,7 @@ class ChatActivity : AppCompatActivity() {
 
     private val imagePicker =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            if (uri != null) uploadAndSendAttachment(uri, "image/*".let { contentResolver.getType(uri) } ?: "image/jpeg")
+            if (uri != null) uploadAndSendAttachment(uri, "image/".let { contentResolver.getType(uri) } ?: "image/jpeg")
         }
 
     private val cameraPermissionLauncher =
@@ -491,7 +491,7 @@ class ChatActivity : AppCompatActivity() {
                 val realtimeChannelLocal: RealtimeChannel = realtimeSupabase.channel(channelName)
                 realtimeChannel = realtimeChannelLocal
 
-                /*
+                /**
                  * Table filter is REQUIRED here. Without it Supabase Realtime
                  * does not know which table's changes to stream to this
                  * channel and the collect{} below never receives anything.
@@ -507,7 +507,7 @@ class ChatActivity : AppCompatActivity() {
                         table = "messages"
                     }
 
-                /*
+                /**
                  * Subscribe from the SAME coroutine that owns the channel.
                  * subscribe() is suspend in supabase-kt.
                  */
@@ -535,7 +535,7 @@ class ChatActivity : AppCompatActivity() {
                 }
 
             } catch (e: kotlinx.coroutines.CancellationException) {
-                /*
+                /**
                  * Normal when Activity stops/destroys or realtimeJob is
                  * cancelled. Do not show an error Toast.
                  */
@@ -634,7 +634,7 @@ class ChatActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                /*
+                /**
                  * Do not add an optimistic row here.
                  * The INSERT from Supabase Realtime is the single source
                  * that inserts the message into the RecyclerView.
@@ -833,7 +833,7 @@ class ChatActivity : AppCompatActivity() {
             ?: "application/octet-stream"
         val isImage = mimeType.startsWith("image/")
 
-        val localId = "local_${System.currentTimeMillis()}_${(1000..9999).random()}"
+        val localId = "local_${System.currentTimeMillis()}${(1000..9999).random()}"
 
         if (isImage) {
             val preview = decodeSampledBitmap(uri, 480)
@@ -911,7 +911,7 @@ class ChatActivity : AppCompatActivity() {
                         env.put("progress", 100)
                     }
 
-                    /*
+                    /**
                      * The Supabase Realtime INSERT event also delivers this
                      * same message to this screen; containsMessageId() below
                      * prevents it from being added twice.
@@ -1050,15 +1050,24 @@ class ChatActivity : AppCompatActivity() {
     // ATTACHMENT VIEWING (image thumbnail loading + PDF/image in-app viewers)
     // ------------------------------------------------------------------
 
-    private fun parseAttachment(raw: String): JSONObject? {
+    // FIX: এই সাধারণ JSON envelope পার্সারটাই মূল কম্পাইল-ব্রেকিং বাগ ছিল —
+    // findPendingIndexByLocalId/updatePendingEnvelope pending_attachment
+    // envelope পড়ার জন্য parseEnvelope() কল করত, কিন্তু ফাংশনটাই সংজ্ঞায়িত
+    // ছিল না। parseAttachment() নিচে এখন এটাই পুনরায় ব্যবহার করে, শুধু
+    // kind == "attachment" ফিল্টার করে রাখে।
+    private fun parseEnvelope(raw: String): JSONObject? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty() || !trimmed.startsWith("{")) return null
         return try {
-            val obj = JSONObject(trimmed)
-            if (obj.optString("kind") == "attachment") obj else null
+            JSONObject(trimmed)
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun parseAttachment(raw: String): JSONObject? {
+        val envelope = parseEnvelope(raw) ?: return null
+        return if (envelope.optString("kind") == "attachment") envelope else null
     }
 
     private fun loadAttachmentImage(url: String, target: ImageView) {
@@ -1348,7 +1357,7 @@ class ChatActivity : AppCompatActivity() {
         if (connection.responseCode !in 200..299) {
             val errorBody = try {
                 connection.errorStream?.bufferedReader()?.use { it.readText() }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 null
             }
             connection.disconnect()
@@ -1710,10 +1719,10 @@ class ChatActivity : AppCompatActivity() {
                         try {
                             realtimeStarted = false
                             startRealtime()
-                        } catch (_: Exception) {
+                        } catch (e: Exception) {
                         }
                     }
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                 }
             } else {
                 previousUncaughtExceptionHandler?.uncaughtException(thread, throwable)
@@ -1755,7 +1764,7 @@ class ChatActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        /*
+        /**
          * Re-establish the realtime subscription if the Activity comes back
          * to the foreground after onStop() tore it down (e.g. user switched
          * apps or the screen was turned off and back on) and the
@@ -1783,7 +1792,7 @@ class ChatActivity : AppCompatActivity() {
     private fun stopRealtime() {
         realtimeStarted = false
 
-        /*
+        /**
          * Cancel the collector first. This prevents the old realtime flow
          * from continuing after the Activity has stopped.
          */
@@ -1794,7 +1803,7 @@ class ChatActivity : AppCompatActivity() {
         realtimeChannel = null
 
         if (channel != null) {
-            /*
+            /**
              * Both unsubscribe() and removeChannel() are suspend functions
              * in supabase-kt 2.x, so they MUST run inside a coroutine.
              */
@@ -1804,7 +1813,7 @@ class ChatActivity : AppCompatActivity() {
                 } catch (_: Exception) {
                 }
 
-                /*
+                /**
                  * NOTE: supabase-kt's RealtimeChannel/Realtime API for fully
                  * removing a channel object differs across 2.x point
                  * releases. unsubscribe() above already stops the socket
