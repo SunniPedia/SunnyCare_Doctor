@@ -1,8 +1,10 @@
 package com.konasl.nagad
 
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapShader
@@ -116,6 +118,12 @@ class BookAppointmentActivity : AppCompatActivity() {
     private lateinit var confirmBtn: LinearLayout
     private lateinit var totalFeeText: TextView
 
+    // পেমেন্টে সিলেক্টেড অপশনের আসল (ইংরেজি সংখ্যার) মার্চেন্ট নাম্বার — UI-তে সবসময় বাংলা সংখ্যায় দেখানো হয়,
+    // কিন্তু "কপি" বাটনে চাপলে এই raw (ইংরেজি সংখ্যার) নাম্বারটাই ক্লিপবোর্ডে যায়। কারণ bKash/Nagad অ্যাপ বা
+    // ডায়াল প্যাডে বাংলা সংখ্যা পেস্ট করলে সেটা কাজ না করার ঝুঁকি থাকে — তাই ফাংশনালিটি ঠিক রাখতে এই আলাদা
+    // ভ্যারিয়েবলে ইংরেজি সংখ্যার নাম্বারটা সংরক্ষণ করা হয়, UI ডিসপ্লে থেকে সম্পূর্ণ আলাদাভাবে।
+    private var currentMerchantNumberRaw: String = bkashMerchantNumber
+
     // ---------------- একাধিক টেস্ট রিপোর্ট আপলোড ----------------
     private lateinit var reportPickRow: LinearLayout
     private lateinit var reportPickText: TextView
@@ -123,6 +131,13 @@ class BookAppointmentActivity : AppCompatActivity() {
     private lateinit var reportListContainer: LinearLayout
     private lateinit var reportPickLauncher: ActivityResultLauncher<Array<String>>
     private val selectedReports = mutableListOf<Pair<Uri, String>>()
+
+    // ---------------- আপলোড প্রগ্রেস ডায়ালগ (ফাইল সাইজ ১ MB-এর বেশি হলে দেখানো হয়) ----------------
+    private var uploadProgressDialog: Dialog? = null
+    private lateinit var uploadProgressBar: ProgressBar
+    private lateinit var uploadProgressPercentText: TextView
+    private lateinit var uploadProgressFileText: TextView
+    private val UPLOAD_PROGRESS_DIALOG_THRESHOLD_BYTES = 1L * 1024 * 1024 // ১ MB
 
     private val paymentRowViews = mutableListOf<PaymentRowRefs>()
 
@@ -148,7 +163,7 @@ class BookAppointmentActivity : AppCompatActivity() {
                         contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     } catch (e: Exception) { /* কিছু ডকুমেন্ট প্রোভাইডার persistable permission সাপোর্ট করে না, সমস্যা নেই */ }
                     if (selectedReports.none { it.first == uri }) {
-                        val name = queryDisplayName(uri) ?: "ডকুমেন্ট ${selectedReports.size + 1}"
+                        val name = queryDisplayName(uri) ?: "ডকুমেন্ট ${toBnDigits(selectedReports.size + 1)}"
                         selectedReports.add(uri to name)
                     }
                 }
@@ -245,7 +260,8 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
         feeLeftCol.addView(text("কনসালটেশন ফি", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START))
         feeLeftCol.addView(
-            text("৳ $appointmentFee", 21f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
+            // ফি-এর সংখ্যা সব জায়গায় বাংলা সংখ্যায় দেখানো হয় (toBnDigits ব্যবহার করে)
+            text("৳ ${toBnDigits(appointmentFee)}", 21f, Typeface.BOLD, colorPrimary, Gravity.START).apply {
                 setPadding(0, dp(2), 0, 0)
             }
         )
@@ -313,12 +329,12 @@ class BookAppointmentActivity : AppCompatActivity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minLines = 2
         }
-        // নতুন: বর্তমান ওজন — সংখ্যাসূচক (দশমিকসহ), ঐচ্ছিক
-        weightInput = styledInput("যেমন: 65 (কেজি)", "").apply {
+        // নতুন: বর্তমান ওজন — সংখ্যাসূচক (দশমিকসহ), ঐচ্ছিক। হিন্ট উদাহরণের সংখ্যাও বাংলায় দেখানো হচ্ছে।
+        weightInput = styledInput("যেমন: ${toBnDigits(65)} (কেজি)", "").apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
-        // নতুন: রক্তচাপ — "সিস্টোলিক/ডায়াস্টোলিক" ফরম্যাটে (যেমন 120/80) লেখার জন্য সাধারণ টেক্সট ইনপুট, ঐচ্ছিক
-        bloodPressureInput = styledInput("যেমন: 120/80 mmHg", "")
+        // নতুন: রক্তচাপ — "সিস্টোলিক/ডায়াস্টোলিক" ফরম্যাটে (যেমন ১২০/৮০) লেখার জন্য সাধারণ টেক্সট ইনপুট, ঐচ্ছিক
+        bloodPressureInput = styledInput("যেমন: ${toBnDigits(120)}/${toBnDigits(80)} mmHg", "")
 
         infoCard.addView(fieldLabel("নাম"))
         infoCard.addView(nameInput)
@@ -388,7 +404,8 @@ class BookAppointmentActivity : AppCompatActivity() {
                 setMargins(0, dp(14), 0, dp(14))
             }
         }
-        manualPayNumberText = text("01XXXXXXXXX", 16f, Typeface.BOLD, colorDark, Gravity.START).apply {
+        // মার্চেন্ট নাম্বার UI-তে সবসময় বাংলা সংখ্যায় দেখানো হয় (toBnDigits দিয়ে রূপান্তরিত)
+        manualPayNumberText = text(toBnDigits(bkashMerchantNumber), 16f, Typeface.BOLD, colorDark, Gravity.START).apply {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val copyBtn = LinearLayout(this).apply {
@@ -406,8 +423,10 @@ class BookAppointmentActivity : AppCompatActivity() {
                 setPadding(dp(6), 0, 0, 0)
             })
             setOnClickListener {
+                // ক্লিপবোর্ডে সবসময় আসল (ইংরেজি সংখ্যার) নাম্বারটাই কপি হয়, যাতে bKash/Nagad
+                // অ্যাপে পেস্ট করার সময় সঠিকভাবে কাজ করে — UI-তে দেখানো বাংলা সংখ্যার টেক্সট নয়
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("Payment Number", manualPayNumberText.text.toString()))
+                clipboard.setPrimaryClip(ClipData.newPlainText("Payment Number", currentMerchantNumberRaw))
                 Toast.makeText(this@BookAppointmentActivity, "নাম্বার কপি হয়েছে", Toast.LENGTH_SHORT).show()
             }
         }
@@ -423,7 +442,7 @@ class BookAppointmentActivity : AppCompatActivity() {
         manualPayCard.addView(trxIdInput)
 
         // ---------------- CONFIRM BUTTON ----------------
-        totalFeeText = text("সর্বমোট: ৳ $appointmentFee", 13f, Typeface.BOLD, colorDark, Gravity.START)
+        totalFeeText = text("সর্বমোট: ৳ ${toBnDigits(appointmentFee)}", 13f, Typeface.BOLD, colorDark, Gravity.START)
         val confirmWrap = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(22), dp(18), 0)
@@ -478,6 +497,15 @@ class BookAppointmentActivity : AppCompatActivity() {
         // আজকের সবগুলো স্লট একসাথে পার হয়ে গেলে এই টিকারই আজকের তারিখটা তালিকা থেকে বাদ দিয়ে
         // আগামীকালের তারিখ অটো-সিলেক্ট করে দেয় (দেখুন removeExpiredSlotsFromGrid নিচে)।
         startSlotExpiryTicker()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Activity বন্ধ হয়ে গেলে আপলোড প্রগ্রেস ডায়ালগ খোলা থাকলে সেটাও বন্ধ করে দেওয়া হয়,
+        // যাতে window leak না হয়
+        try {
+            if (uploadProgressDialog?.isShowing == true) uploadProgressDialog?.dismiss()
+        } catch (e: Exception) { /* Activity ইতিমধ্যে finish হয়ে গেলে dismiss ব্যর্থ হতে পারে, সমস্যা নেই */ }
     }
 
     // ------------------------------------------------------------------
@@ -942,7 +970,8 @@ class BookAppointmentActivity : AppCompatActivity() {
             reportPickRow.background = roundedBgStroke(Color.parseColor("#F8FBFA"), colorFieldBorder, 12f, 1)
         } else {
             reportPickText.text = "আরও ডকুমেন্ট যোগ করুন"
-            reportPickSubtext.text = "${selectedReports.size}টি ফাইল সিলেক্ট করা হয়েছে"
+            // ফাইলের সংখ্যা বাংলা সংখ্যায় দেখানো হচ্ছে
+            reportPickSubtext.text = "${toBnDigits(selectedReports.size)}টি ফাইল সিলেক্ট করা হয়েছে"
             reportPickSubtext.setTextColor(colorPrimary)
             reportPickRow.background = roundedBgStroke(Color.parseColor("#E4F3F1"), colorPrimary, 12f, 1)
         }
@@ -994,6 +1023,116 @@ class BookAppointmentActivity : AppCompatActivity() {
         }
     } catch (e: Exception) {
         null
+    }
+
+    /** কনটেন্ট রিসোলভার থেকে কোনো URI-এর আসল ফাইল সাইজ (বাইটে) জানার চেষ্টা করে; জানা না গেলে null রিটার্ন করে */
+    private fun queryFileSize(uri: Uri): Long? = try {
+        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val idx = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (idx >= 0 && cursor.moveToFirst() && !cursor.isNull(idx)) cursor.getLong(idx) else null
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * সিলেক্ট করা সব রিপোর্ট ফাইলের সম্মিলিত সাইজ ১ MB-এর বেশি হলে true রিটার্ন করে — তখনই আপলোডের
+     * সময় কাস্টম প্রগ্রেসবার-সহ ডায়ালগ দেখানো হবে। কারণ বড় ফাইল আপলোডে সাধারণ ছোট ফাইলের চেয়ে
+     * বেশি সময় লাগে, আর সেটা ব্যাকগ্রাউন্ডে চলার কারণে ইউজার বুঝতে বা দেখতে পারে না — এই ডায়ালগ
+     * সেই সময়টুকু স্পষ্টভাবে ইউজারকে জানিয়ে রাখে যে রিপোর্ট আপলোড হচ্ছে, অ্যাপ আটকে যায়নি।
+     */
+    private fun shouldShowUploadProgressDialog(reports: List<Pair<Uri, String>>): Boolean {
+        if (reports.isEmpty()) return false
+        val totalBytes = reports.sumOf { (uri, _) -> queryFileSize(uri) ?: 0L }
+        return totalBytes > UPLOAD_PROGRESS_DIALOG_THRESHOLD_BYTES
+    }
+
+    /**
+     * ফাইল আপলোডের সময় দেখানোর জন্য কাস্টম প্রগ্রেস ডায়ালগ তৈরি করে — শিরোনাম, একটা প্রগ্রেসবার,
+     * শতকরা অগ্রগতি (বাংলা সংখ্যায়) ও কতগুলো ফাইলের মধ্যে কোনটা আপলোড হচ্ছে তা দেখায়। ডায়ালগটা
+     * ব্যাক বাটনে বা বাইরে ট্যাপ করে বন্ধ করা যায় না, যাতে আপলোড চলাকালীন হুট করে বন্ধ হয়ে না যায়।
+     */
+    private fun buildUploadProgressDialog(totalFiles: Int): Dialog {
+        val dialog = Dialog(this)
+        dialog.setCancelable(false)
+        dialog.setCanceledOnTouchOutside(false)
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = roundedBg(Color.WHITE, 20f)
+            setPadding(dp(28), dp(28), dp(28), dp(26))
+            layoutParams = LinearLayout.LayoutParams(dp(260), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+
+        val iconWrap = ImageView(this).apply {
+            setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.DOCUMENT, colorPrimary, dp(22)))
+            background = roundedBg(Color.parseColor("#E4F3F1"), 16f)
+            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52))
+            setPadding(dp(13), dp(13), dp(13), dp(13))
+        }
+
+        val titleText = text("রিপোর্ট আপলোড হচ্ছে", 15f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
+            setPadding(0, dp(14), 0, dp(4))
+        }
+        val subtitleText = text(
+            "অনুগ্রহ করে অপেক্ষা করুন, ফাইলের আকার অনুযায়ী কিছুটা সময় লাগতে পারে",
+            11f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER
+        ).apply {
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(0, 0, 0, dp(18))
+        }
+
+        uploadProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            isIndeterminate = false
+            layoutParams = LinearLayout.LayoutParams(dp(200), dp(8))
+            progressTintList = ColorStateList.valueOf(colorPrimary)
+            progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#E7ECEA"))
+        }
+
+        val progressRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(12)
+            }
+        }
+        uploadProgressPercentText = text("০%", 12.5f, Typeface.BOLD, colorPrimary, Gravity.START)
+        uploadProgressFileText = text(
+            "ফাইল ১ এর ${toBnDigits(totalFiles)}",
+            11f, Typeface.NORMAL, colorTextMuted, Gravity.END
+        ).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        progressRow.addView(uploadProgressPercentText)
+        progressRow.addView(uploadProgressFileText)
+
+        container.addView(iconWrap)
+        container.addView(titleText)
+        container.addView(subtitleText)
+        container.addView(uploadProgressBar)
+        container.addView(progressRow)
+
+        dialog.setContentView(container)
+        dialog.window?.setBackgroundDrawable(GradientDrawable().apply { setColor(Color.TRANSPARENT) })
+        dialog.window?.setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        return dialog
+    }
+
+    /**
+     * বর্তমানে কোন ফাইলটা আপলোড হচ্ছে এবং সামগ্রিক অগ্রগতি (%) কাস্টম প্রগ্রেস ডায়ালগে দেখায় (সবই বাংলা সংখ্যায়)।
+     * percentOverride না দিলে "কতগুলো ফাইল শেষ হলো / মোট কতগুলো ফাইল" অনুযায়ী শতকরা হার হিসাব করা হয়।
+     */
+    private fun updateUploadProgressUi(currentFileNumber: Int, totalFiles: Int, fileName: String, percentOverride: Int? = null) {
+        if (!::uploadProgressBar.isInitialized) return
+        val percent = (percentOverride ?: if (totalFiles > 0) (currentFileNumber - 1) * 100 / totalFiles else 0).coerceIn(0, 100)
+        uploadProgressBar.progress = percent
+        uploadProgressPercentText.text = "${toBnDigits(percent)}%"
+        uploadProgressFileText.text = "ফাইল ${toBnDigits(currentFileNumber)} এর ${toBnDigits(totalFiles)}: $fileName"
     }
 
     /** সিলেক্ট করা একটা ফাইল পড়ে Supabase Storage-এ আপলোড করে, পাবলিক URL রিটার্ন করে */
@@ -1078,9 +1217,12 @@ class BookAppointmentActivity : AppCompatActivity() {
 
     /** bKash/Nagad যেটাই সিলেক্ট করা হোক, মার্চেন্ট নাম্বার + লোগো + TrxID ইনপুট দেখায় */
     private fun updateManualPayCard(option: PaymentOption) {
-        manualPayNumberText.text = option.merchantNumber
+        // ক্লিপবোর্ডে কপি করার জন্য আসল (ইংরেজি সংখ্যার) নাম্বার সংরক্ষণ করা হয়
+        currentMerchantNumberRaw = option.merchantNumber
+        // UI-তে সবসময় বাংলা সংখ্যায় দেখানো হয়
+        manualPayNumberText.text = toBnDigits(option.merchantNumber)
         manualPayInstructionText.text =
-            "${option.label}-এ (Send Money) ৳$appointmentFee পাঠিয়ে Transaction ID টি নিচে লিখুন"
+            "${option.label}-এ (Send Money) ৳${toBnDigits(appointmentFee)} পাঠিয়ে Transaction ID টি নিচে লিখুন"
         manualPayLogoView.borderColor = option.brandColor
         loadNetworkImage(option.logoUrl, manualPayLogoView)
         manualPayCard.visibility = View.VISIBLE
@@ -1137,15 +1279,28 @@ class BookAppointmentActivity : AppCompatActivity() {
 
         confirmBtn.isEnabled = false
         val reportsToUpload = selectedReports.toList()
+
+        // ফাইলগুলোর সম্মিলিত সাইজ ১ MB-এর বেশি হলে কাস্টম প্রগ্রেস ডায়ালগ দেখানো হয়, যাতে আপলোডে
+        // সময় লাগলেও ইউজার স্পষ্টভাবে বুঝতে পারে রিপোর্ট আপলোড চলছে — অ্যাপ আটকে যায়নি।
+        // ছোট ফাইল (বা কোনো ফাইলই না) হলে আগের মতোই একটা সাধারণ Toast দেখানো হয়।
+        val showUploadDialog = shouldShowUploadProgressDialog(reportsToUpload)
         if (reportsToUpload.isNotEmpty()) {
-            Toast.makeText(this, "রিপোর্ট আপলোড হচ্ছে (${reportsToUpload.size}টি ফাইল)...", Toast.LENGTH_SHORT).show()
+            if (showUploadDialog) {
+                uploadProgressDialog = buildUploadProgressDialog(reportsToUpload.size)
+                uploadProgressDialog?.show()
+            } else {
+                Toast.makeText(this, "রিপোর্ট আপলোড হচ্ছে (${toBnDigits(reportsToUpload.size)}টি ফাইল)...", Toast.LENGTH_SHORT).show()
+            }
         }
+
         lifecycleScope.launch {
             // শেষ মুহূর্তে আরেকজন একই সময় বুক করে ফেলেছে কিনা, বা সময় নিজেই পার হয়ে গেছে কিনা তা নিশ্চিত করার জন্য একবার আবার যাচাই করা হয়
             val recheck = SupabaseClient.getBookedTimes(selectedDate!!.isoDate)
             val nowBooked = recheck.getOrNull()?.toSet() ?: emptySet()
             val stillPast = selectedTime24?.let { isPastTimeSlot(it) } == true
             if (nowBooked.contains(selectedTime24) || stillPast) {
+                uploadProgressDialog?.dismiss()
+                uploadProgressDialog = null
                 confirmBtn.isEnabled = true
                 bookedTimesForDate = nowBooked.toMutableSet()
                 renderTimeSlotsForDate(selectedDate!!.isoDate)
@@ -1158,9 +1313,15 @@ class BookAppointmentActivity : AppCompatActivity() {
             }
 
             val uploadedUrls = mutableListOf<String>()
-            for ((uri, fileName) in reportsToUpload) {
+            reportsToUpload.forEachIndexed { index, pair ->
+                val (uri, fileName) = pair
+                if (showUploadDialog) {
+                    updateUploadProgressUi(index + 1, reportsToUpload.size, fileName)
+                }
                 val uploadResult = uploadSelectedReport(uri, fileName)
                 if (uploadResult.isFailure) {
+                    uploadProgressDialog?.dismiss()
+                    uploadProgressDialog = null
                     confirmBtn.isEnabled = true
                     Toast.makeText(
                         this@BookAppointmentActivity,
@@ -1170,7 +1331,19 @@ class BookAppointmentActivity : AppCompatActivity() {
                     return@launch
                 }
                 uploadResult.getOrNull()?.let { uploadedUrls.add(it) }
+                if (showUploadDialog) {
+                    updateUploadProgressUi(
+                        index + 1,
+                        reportsToUpload.size,
+                        fileName,
+                        percentOverride = (index + 1) * 100 / reportsToUpload.size
+                    )
+                }
             }
+
+            // সব ফাইল আপলোড সম্পন্ন হলে প্রগ্রেস ডায়ালগ বন্ধ করে দেওয়া হয়
+            uploadProgressDialog?.dismiss()
+            uploadProgressDialog = null
 
             val result = SupabaseClient.createAppointment(
                 patientId = patientId,
