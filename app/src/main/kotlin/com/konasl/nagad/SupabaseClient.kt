@@ -775,3 +775,4 @@ suspend fun sendMessage(conversationId: String, senderId: String, senderRole: St
     } catch (e: Exception) {}
     return rows.getJSONObject(0)
 }
+}
