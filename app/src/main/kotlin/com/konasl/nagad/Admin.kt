@@ -48,6 +48,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
 import java.net.URL
 
 class AdminActivity : AppCompatActivity() {
@@ -64,6 +65,11 @@ class AdminActivity : AppCompatActivity() {
     private val colorDanger = Color.parseColor("#DC2626")
     private val colorSuccess = Color.parseColor("#16A34A")
     private val colorInfo = Color.parseColor("#2563EB")
+
+    // FIX: PDF "বড় ফাইল" থ্রেশহোল্ড — এর যেকোনো একটি শর্ত (পেইজ সংখ্যা বা সাইজ) না মিললে
+    // সরাসরি in-app viewer এ খুলবে, দুটো শর্তই মিললে তবেই চুজার ডায়ালগ দেখাবে।
+    private val PDF_LARGE_PAGE_THRESHOLD = 10
+    private val PDF_LARGE_SIZE_BYTES = 4L * 1024 * 1024 // 4 MB
 
     private enum class Tab { APPOINTMENTS, PATIENTS, SLOTS, OTP }
     private var currentTab = Tab.APPOINTMENTS
@@ -1281,7 +1287,9 @@ class AdminActivity : AppCompatActivity() {
             })
             row.setOnClickListener {
                 dialog.dismiss()
-                if (isPdf) openPdfViewer(url, "রিপোর্ট ${index + 1}") else openImageViewer(url = url, title = "রিপোর্ট ${index + 1}")
+                // FIX: PDF ফাইলে ক্লিক করলে এখন সরাসরি ভিউয়ারে না গিয়ে স্মার্ট চেক হয় —
+                // পেইজ সংখ্যা ১০+ এবং সাইজ ৪MB+ হলে "In app" বা "Open in browser" বেছে নেওয়ার কাস্টম ডায়ালগ দেখাবে।
+                if (isPdf) openPdfSmart(url, "রিপোর্ট ${index + 1}") else openImageViewer(url = url, title = "রিপোর্ট ${index + 1}")
             }
             card.addView(row)
         }
@@ -1312,88 +1320,213 @@ class AdminActivity : AppCompatActivity() {
         return connection.getInputStream().use { it.readBytes() }
     }
 
-    private fun openImageViewer(bitmap: Bitmap? = null, url: String? = null, title: String = "ছবি") {
-        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.BLACK))
+    // FIX: HEAD রিকোয়েস্ট দিয়ে ফাইল ডাউনলোড না করেই সাইজ (বাইটে) জানার চেষ্টা করে।
+    // সার্ভার Content-Length না দিলে বা কোনো কারণে রিকোয়েস্ট ব্যর্থ হলে -1 রিটার্ন করবে,
+    // তখন ডাউনলোড করেই আসল সাইজ যাচাই করা হবে (openPdfSmart এর else ব্রাঞ্চে)।
+    private fun getRemoteFileSizeBytes(url: String): Long {
+        var connection: HttpURLConnection? = null
+        return try {
+            connection = URL(url).openConnection() as HttpURLConnection
+            connection.requestMethod = "HEAD"
+            connection.connectTimeout = 8000
+            connection.readTimeout = 8000
+            connection.connect()
+            connection.contentLengthLong
+        } catch (e: Exception) {
+            -1L
+        } finally {
+            try { connection?.disconnect() } catch (e: Exception) { }
+        }
+    }
 
-        val root = FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    // FIX: PDF ফাইলটি ডাউনলোড করে ক্যাশ ডিরেক্টরিতে একটি টেম্প ফাইল হিসেবে সংরক্ষণ করে।
+    private fun downloadToTempFile(url: String): File {
+        val bytes = downloadBytes(url)
+        val file = File(cacheDir, "admin_report_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(file).use { it.write(bytes) }
+        return file
+    }
+
+    // FIX: লোকাল ফাইল থেকে শুধু পেইজ সংখ্যা বের করে (রেন্ডার না করেই), পরে renderer বন্ধ করে দেয়।
+    private fun getPdfPageCount(file: File): Int {
+        var pfd: ParcelFileDescriptor? = null
+        var renderer: PdfRenderer? = null
+        return try {
+            pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            renderer = PdfRenderer(pfd)
+            renderer.pageCount
+        } catch (e: Exception) {
+            -1
+        } finally {
+            try { renderer?.close() } catch (e: Exception) { }
+            try { pfd?.close() } catch (e: Exception) { }
         }
-        val zoomImage = ZoomableImageView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
-        val progress = ProgressBar(this).apply {
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.CENTER
+    }
+
+    // FIX: PDF ক্লিকের মূল ডিসিশন ফাংশন —
+    // ১) আগে HEAD দিয়ে সাইজ যাচাই করে, ৪MB এর কম নিশ্চিত হলে সরাসরি in-app viewer এ খোলে।
+    // ২) সাইজ অজানা বা ৪MB+ হলে ফাইল ডাউনলোড করে পেইজ সংখ্যা ও আসল সাইজ যাচাই করে।
+    // ৩) পেইজ ১০+ এবং সাইজ ৪MB+ দুটো শর্তই পূরণ হলে — "In app" / "Open in browser" কাস্টম ডায়ালগ দেখায়।
+    // ৪) অন্যথায় সরাসরি ইতিমধ্যে ডাউনলোড করা ফাইল দিয়েই in-app viewer এ রেন্ডার করে (re-download লাগে না)।
+    private fun openPdfSmart(url: String, title: String = "ডকুমেন্ট") {
+        lifecycleScope.launch {
+            val remoteSize = withContext(Dispatchers.IO) { getRemoteFileSizeBytes(url) }
+
+            if (remoteSize in 0 until PDF_LARGE_SIZE_BYTES) {
+                openPdfViewer(url, title)
+                return@launch
             }
-            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
-            visibility = if (bitmap != null) View.GONE else View.VISIBLE
-        }
-        val topBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(34), dp(14), dp(14))
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.argb(190, 0, 0, 0), Color.TRANSPARENT))
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.TOP
-            }
-        }
-        val closeBtn = ImageView(this).apply {
-            setImageDrawable(CloseIconDrawable(Color.WHITE, dp(2).toFloat()))
-            background = roundedBg(Color.argb(60, 255, 255, 255), 30f)
-            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
-            val pad = dp(9)
-            setPadding(pad, pad, pad, pad)
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { dialog.dismiss() }
-        }
-        val titleText = text(title, 14f, Typeface.BOLD, Color.WHITE, Gravity.START).apply {
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.MIDDLE
-        }
-        topBar.addView(closeBtn)
-        topBar.addView(titleText)
 
-        root.addView(zoomImage)
-        root.addView(progress)
-        root.addView(topBar)
-        dialog.setContentView(root)
-        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        dialog.show()
+            Toast.makeText(this@AdminActivity, "ফাইল পরীক্ষা করা হচ্ছে...", Toast.LENGTH_SHORT).show()
+            try {
+                val file = withContext(Dispatchers.IO) { downloadToTempFile(url) }
+                val pageCount = withContext(Dispatchers.IO) { getPdfPageCount(file) }
+                val actualSize = file.length()
 
-        fun applyBitmap(bmp: Bitmap) {
-            progress.visibility = View.GONE
-            zoomImage.setImageBitmap(bmp)
-            zoomImage.resetZoomFit()
-        }
-
-        if (bitmap != null) {
-            applyBitmap(bitmap)
-        } else if (url != null) {
-            lifecycleScope.launch {
-                try {
-                    val bytes = withContext(Dispatchers.IO) { downloadBytes(url) }
-                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    if (bmp != null) applyBitmap(bmp) else {
-                        progress.visibility = View.GONE
-                        Toast.makeText(this@AdminActivity, "ছবি লোড করা যায়নি", Toast.LENGTH_SHORT).show()
-                    }
-                } catch (e: Exception) {
-                    progress.visibility = View.GONE
-                    Toast.makeText(this@AdminActivity, "ছবি লোড ব্যর্থ: ${e.message}", Toast.LENGTH_SHORT).show()
+                if (pageCount >= PDF_LARGE_PAGE_THRESHOLD && actualSize >= PDF_LARGE_SIZE_BYTES) {
+                    showPdfOpenOptionsDialog(url, title, file, pageCount, actualSize)
+                } else {
+                    renderPdfFromLocalFile(file, title)
                 }
+            } catch (e: Exception) {
+                Toast.makeText(this@AdminActivity, "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
+    // FIX: বড় PDF এর জন্য "In app" নাকি "Open in browser" — এই দুটির মধ্যে বেছে নেওয়ার কাস্টম ডায়ালগ।
+    private fun showPdfOpenOptionsDialog(url: String, title: String, localFile: File, pageCount: Int, sizeBytes: Long) {
+        val sizeMB = sizeBytes / (1024f * 1024f)
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(Color.WHITE, 22f)
+            setPadding(dp(22), dp(24), dp(22), dp(20))
+        }
+        card.addView(ImageView(this).apply {
+            setImageDrawable(HomeActivity.VectorIconDrawable(HomeActivity.VectorIconDrawable.IconType.DOCUMENT, colorPrimary, dp(22)))
+            background = roundedBg(Color.parseColor("#E4F3F1"), 14f)
+            layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+        })
+        card.addView(text("বড় ডকুমেন্ট", 16f, Typeface.BOLD, colorDark, Gravity.START).apply {
+            setPadding(0, dp(12), 0, 0)
+        })
+        card.addView(text(
+            "এই ফাইলে $pageCount টি পৃষ্ঠা আছে এবং সাইজ প্রায় ${"%.1f".format(sizeMB)} MB। কিভাবে দেখতে চান?",
+            12.5f, Typeface.NORMAL, colorTextMuted, Gravity.START
+        ).apply {
+            setPadding(0, dp(6), 0, dp(18))
+            setLineSpacing(dp(2).toFloat(), 1f)
+        })
+
+        card.addView(dialogButton("অ্যাপে দেখুন (In App)", Color.WHITE, colorPrimary) {
+            dialog.dismiss()
+            renderPdfFromLocalFile(localFile, title)
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        })
+        card.addView(space(dp(10)))
+        card.addView(dialogButton("ব্রাউজারে খুলুন (Open in Browser)", colorPrimary, Color.parseColor("#E4F3F1")) {
+            dialog.dismiss()
+            try { localFile.delete() } catch (e: Exception) { }
+            openPdfInBrowser(url)
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        })
+        card.addView(space(dp(10)))
+        card.addView(dialogButton("বাতিল", colorTextMuted, Color.parseColor("#F1F3F2")) {
+            dialog.dismiss()
+            try { localFile.delete() } catch (e: Exception) { }
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        })
+
+        dialog.setContentView(card)
+        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.86).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.setCancelable(true)
+        dialog.setOnCancelListener {
+            try { localFile.delete() } catch (e: Exception) { }
+        }
+        dialog.show()
+    }
+
+    // FIX: ডিভাইসের ডিফল্ট ব্রাউজার/PDF হ্যান্ডলার দিয়ে URL টি সরাসরি ওপেন করে।
+    private fun openPdfInBrowser(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "ব্রাউজার খোলা যায়নি", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // FIX: এখন এটি শুধু URL থেকে ডাউনলোড করে renderPdfFromLocalFile কে কল করে —
+    // মূল রেন্ডারিং লজিকটি আলাদা ফাংশনে সরানো হয়েছে যাতে openPdfSmart এ আগে থেকে
+    // ডাউনলোড করা ফাইল থাকলে সেটি পুনরায় ডাউনলোড না করেই সরাসরি রেন্ডার করা যায়।
     private fun openPdfViewer(url: String, title: String = "ডকুমেন্ট") {
         val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         val bgColor = Color.parseColor("#1A1A1A")
         dialog.window?.setBackgroundDrawable(ColorDrawable(bgColor))
 
+        val (root, scrollView, pagesContainer, progress, loadingLabel, titleText, closeBtn) = buildPdfViewerViews(bgColor, title)
+        closeBtn.setOnClickListener { dialog.dismiss() }
+        dialog.setContentView(root)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        dialog.show()
+
+        lifecycleScope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) { downloadToTempFile(url) }
+                renderPdfPagesIntoContainer(file, pagesContainer, progress, loadingLabel, titleText, title, deleteFileAfter = true)
+            } catch (e: Exception) {
+                progress.visibility = View.GONE
+                loadingLabel.visibility = View.GONE
+                Toast.makeText(this@AdminActivity, "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // FIX: ইতিমধ্যে ডাউনলোড করা একটি লোকাল PDF ফাইল সরাসরি ফুল-স্ক্রিন ভিউয়ারে রেন্ডার করে।
+    // openPdfSmart এবং showPdfOpenOptionsDialog "In app" চাপলে এটি ব্যবহার করে, তাই re-download লাগে না।
+    private fun renderPdfFromLocalFile(file: File, title: String = "ডকুমেন্ট") {
+        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val bgColor = Color.parseColor("#1A1A1A")
+        dialog.window?.setBackgroundDrawable(ColorDrawable(bgColor))
+
+        val (root, scrollView, pagesContainer, progress, loadingLabel, titleText, closeBtn) = buildPdfViewerViews(bgColor, title)
+        closeBtn.setOnClickListener { dialog.dismiss() }
+        dialog.setContentView(root)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        dialog.show()
+
+        lifecycleScope.launch {
+            try {
+                renderPdfPagesIntoContainer(file, pagesContainer, progress, loadingLabel, titleText, title, deleteFileAfter = true)
+            } catch (e: Exception) {
+                progress.visibility = View.GONE
+                loadingLabel.visibility = View.GONE
+                Toast.makeText(this@AdminActivity, "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private data class PdfViewerViews(
+        val root: FrameLayout,
+        val scrollView: NestedScrollView,
+        val pagesContainer: LinearLayout,
+        val progress: ProgressBar,
+        val loadingLabel: TextView,
+        val titleText: TextView,
+        val closeBtn: ImageView
+    )
+
+    // FIX: PDF ফুল-স্ক্রিন ভিউয়ারের UI কাঠামো তৈরি করে — openPdfViewer ও renderPdfFromLocalFile দুটোই এটি শেয়ার করে।
+    // closeBtn টি রিটার্ন করা হয় যাতে কলার নিজের Dialog রেফারেন্স দিয়ে ক্লিক লিসেনার সেট করতে পারে।
+    private fun buildPdfViewerViews(bgColor: Int, title: String): PdfViewerViews {
         val root = FrameLayout(this).apply {
             setBackgroundColor(bgColor)
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -1439,7 +1572,6 @@ class AdminActivity : AppCompatActivity() {
             setPadding(pad, pad, pad, pad)
             isClickable = true
             isFocusable = true
-            setOnClickListener { dialog.dismiss() }
         }
         val titleText = text(title, 14f, Typeface.BOLD, Color.WHITE, Gravity.START).apply {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
@@ -1453,70 +1585,69 @@ class AdminActivity : AppCompatActivity() {
         root.addView(progress)
         root.addView(loadingLabel)
         root.addView(topBar)
-        dialog.setContentView(root)
-        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        dialog.show()
 
-        lifecycleScope.launch {
-            var tempFile: File? = null
-            var pfd: ParcelFileDescriptor? = null
-            var renderer: PdfRenderer? = null
-            try {
-                val bytes = withContext(Dispatchers.IO) { downloadBytes(url) }
-                tempFile = withContext(Dispatchers.IO) {
-                    File(cacheDir, "admin_report_${System.currentTimeMillis()}.pdf").apply {
-                        FileOutputStream(this).use { it.write(bytes) }
+        return PdfViewerViews(root, scrollView, pagesContainer, progress, loadingLabel, titleText, closeBtn)
+    }
+
+    // FIX: একটি লোকাল PDF ফাইল থেকে পেইজগুলো রেন্ডার করে pagesContainer এ যোগ করে, লোডিং UI আপডেট করে।
+    private suspend fun renderPdfPagesIntoContainer(
+        file: File,
+        pagesContainer: LinearLayout,
+        progress: ProgressBar,
+        loadingLabel: TextView,
+        titleText: TextView,
+        title: String,
+        deleteFileAfter: Boolean
+    ) {
+        var pfd: ParcelFileDescriptor? = null
+        var renderer: PdfRenderer? = null
+        try {
+            pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            renderer = PdfRenderer(pfd)
+            val pageCount = renderer.pageCount
+
+            progress.visibility = View.GONE
+            loadingLabel.visibility = View.GONE
+            titleText.text = "$title ($pageCount পৃষ্ঠা)"
+
+            val screenWidthPx = resources.displayMetrics.widthPixels
+            for (i in 0 until pageCount) {
+                val page = renderer.openPage(i)
+                val rawScale = (screenWidthPx.toFloat() / page.width.toFloat()) * 2f
+                val safeScale = rawScale.coerceIn(1f, 4f)
+                val outW = (page.width * safeScale).toInt().coerceAtLeast(1)
+                val outH = (page.height * safeScale).toInt().coerceAtLeast(1)
+                val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+                Canvas(bmp).drawColor(Color.WHITE)
+                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                page.close()
+
+                val pageIndexForClick = i
+                val pageImage = ImageView(this@AdminActivity).apply {
+                    setImageBitmap(bmp)
+                    adjustViewBounds = true
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        setMargins(dp(8), dp(6), dp(8), dp(6))
+                    }
+                    background = roundedBg(Color.WHITE, 4f)
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        openImageViewer(bitmap = bmp, title = "পৃষ্ঠা ${pageIndexForClick + 1}/$pageCount")
                     }
                 }
-                pfd = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
-                renderer = PdfRenderer(pfd)
-                val pageCount = renderer.pageCount
-
-                progress.visibility = View.GONE
-                loadingLabel.visibility = View.GONE
-                titleText.text = "$title ($pageCount পৃষ্ঠা)"
-
-                val screenWidthPx = resources.displayMetrics.widthPixels
-                for (i in 0 until pageCount) {
-                    val page = renderer.openPage(i)
-                    val rawScale = (screenWidthPx.toFloat() / page.width.toFloat()) * 2f
-                    val safeScale = rawScale.coerceIn(1f, 4f)
-                    val outW = (page.width * safeScale).toInt().coerceAtLeast(1)
-                    val outH = (page.height * safeScale).toInt().coerceAtLeast(1)
-                    val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
-                    Canvas(bmp).drawColor(Color.WHITE)
-                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    page.close()
-
-                    val pageIndexForClick = i
-                    val pageImage = ImageView(this@AdminActivity).apply {
-                        setImageBitmap(bmp)
-                        adjustViewBounds = true
-                        scaleType = ImageView.ScaleType.FIT_CENTER
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                            setMargins(dp(8), dp(6), dp(8), dp(6))
-                        }
-                        background = roundedBg(Color.WHITE, 4f)
-                        isClickable = true
-                        isFocusable = true
-                        setOnClickListener {
-                            openImageViewer(bitmap = bmp, title = "পৃষ্ঠা ${pageIndexForClick + 1}/$pageCount")
-                        }
-                    }
-                    pagesContainer.addView(pageImage)
-                    pagesContainer.addView(text("পৃষ্ঠা ${i + 1}/$pageCount", 10.5f, Typeface.NORMAL, Color.parseColor("#B0B0B0"), Gravity.CENTER).apply {
-                        setPadding(0, 0, 0, dp(10))
-                    })
-                }
-            } catch (e: Exception) {
-                progress.visibility = View.GONE
-                loadingLabel.visibility = View.GONE
-                Toast.makeText(this@AdminActivity, "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}", Toast.LENGTH_SHORT).show()
-            } finally {
-                withContext(Dispatchers.IO) {
-                    try { renderer?.close() } catch (e: Exception) { }
-                    try { pfd?.close() } catch (e: Exception) { }
-                    try { tempFile?.delete() } catch (e: Exception) { }
+                pagesContainer.addView(pageImage)
+                pagesContainer.addView(text("পৃষ্ঠা ${i + 1}/$pageCount", 10.5f, Typeface.NORMAL, Color.parseColor("#B0B0B0"), Gravity.CENTER).apply {
+                    setPadding(0, 0, 0, dp(10))
+                })
+            }
+        } finally {
+            withContext(Dispatchers.IO) {
+                try { renderer?.close() } catch (e: Exception) { }
+                try { pfd?.close() } catch (e: Exception) { }
+                if (deleteFileAfter) {
+                    try { file.delete() } catch (e: Exception) { }
                 }
             }
         }
@@ -1976,6 +2107,83 @@ class AdminActivity : AppCompatActivity() {
                 imgMatrix.postScale(scale, scale)
                 imgMatrix.postTranslate((vw - dw * scale) / 2f, (vh - dh * scale) / 2f)
                 imageMatrix = imgMatrix
+            }
+        }
+    }
+
+    private fun openImageViewer(bitmap: Bitmap? = null, url: String? = null, title: String = "ছবি") {
+        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.BLACK))
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        val zoomImage = ZoomableImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        val progress = ProgressBar(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER
+            }
+            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            visibility = if (bitmap != null) View.GONE else View.VISIBLE
+        }
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(34), dp(14), dp(14))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.argb(190, 0, 0, 0), Color.TRANSPARENT))
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.TOP
+            }
+        }
+        val closeBtn = ImageView(this).apply {
+            setImageDrawable(CloseIconDrawable(Color.WHITE, dp(2).toFloat()))
+            background = roundedBg(Color.argb(60, 255, 255, 255), 30f)
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+            val pad = dp(9)
+            setPadding(pad, pad, pad, pad)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { dialog.dismiss() }
+        }
+        val titleText = text(title, 14f, Typeface.BOLD, Color.WHITE, Gravity.START).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+        }
+        topBar.addView(closeBtn)
+        topBar.addView(titleText)
+
+        root.addView(zoomImage)
+        root.addView(progress)
+        root.addView(topBar)
+        dialog.setContentView(root)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        dialog.show()
+
+        fun applyBitmap(bmp: Bitmap) {
+            progress.visibility = View.GONE
+            zoomImage.setImageBitmap(bmp)
+            zoomImage.resetZoomFit()
+        }
+
+        if (bitmap != null) {
+            applyBitmap(bitmap)
+        } else if (url != null) {
+            lifecycleScope.launch {
+                try {
+                    val bytes = withContext(Dispatchers.IO) { downloadBytes(url) }
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) applyBitmap(bmp) else {
+                        progress.visibility = View.GONE
+                        Toast.makeText(this@AdminActivity, "ছবি লোড করা যায়নি", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    progress.visibility = View.GONE
+                    Toast.makeText(this@AdminActivity, "ছবি লোড ব্যর্থ: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
