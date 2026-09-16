@@ -2,6 +2,7 @@ package com.konasl.nagad
 
 import android.app.Dialog
 import android.content.Context
+import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -58,10 +59,13 @@ import java.net.URL
  * সুন্দরভাবে সাজানো অবস্থায় দেখতে, আপডেট করতে ও ডিলিট করতে পারেন:
  *
  *  ট্যাব ১ — অ্যাপয়েন্টমেন্ট: সব রোগীর সব অ্যাপয়েন্টমেন্ট, status/payment_status/
- *            slot_open/fee এডিট করা ও ডিলিট করা যায়
+ *            slot_open/fee এডিট করা ও ডিলিট করা যায়। উপরে সার্চ টগল আইকন দিয়ে
+ *            নাম/নাম্বার দিয়ে সার্চ করা যায়, এবং প্রতিটি কার্ডে সরাসরি সেই
+ *            রোগীর সাথে Chat / Video Call / Audio Call শুরু করা যায়।
  *  ট্যাব ২ — রোগী: সব রোগীর প্রোফাইল তথ্য দেখা, এডিট করা, PIN রিসেট করা,
  *            ডিভাইস রিসেট করা (সিম/মোবাইল হারালে নতুন ডিভাইসে লগইনের জন্য),
- *            রোগীর সব টেস্ট রিপোর্ট (ছবি/PDF) দেখা, অ্যাকাউন্ট ডিলিট করা যায়
+ *            রোগীর সব টেস্ট রিপোর্ট (ছবি/PDF) দেখা, অ্যাকাউন্ট ডিলিট করা যায়।
+ *            উপরে সার্চ টগল আইকন দিয়ে নাম/নাম্বার দিয়ে সার্চ করা যায়।
  *  ট্যাব ৩ — টাইম স্লট: প্রতিটি সময়-স্লট গ্লোবালি চালু/বন্ধ করা যায়, এবং
  *            নির্দিষ্ট তারিখের জন্য আলাদা ওভাররাইডও দেওয়া যায়
  *  ট্যাব ৪ — OTP পুল: available/assigned/verified কোডের সংখ্যা দেখা, নতুন কোড
@@ -69,6 +73,12 @@ import java.net.URL
  *
  * নতুন সংযোজন:
  *  • সব "←" ব্যাক বাটন এখন ইমুজি/ফন্ট-ক্যারেক্টার নয়, সম্পূর্ণ Canvas-ভেক্টর আইকন
+ *  • অ্যাপয়েন্টমেন্ট ও রোগী সেকশনের টপ-বারে সার্চ toggle ভেক্টর-আইকন — নাম/নাম্বার
+ *    দিয়ে লাইভ সার্চ/ফিল্টার করা যায়
+ *  • প্রতিটি অ্যাপয়েন্টমেন্ট কার্ডে Chat / Video Call / Audio Call — তিনটা আলাদা
+ *    ভেক্টর-আইকন বাটন, যা যথাক্রমে ChatActivity / VideocallActivity /
+ *    AudiocallActivity কে Intent দিয়ে ওপেন করে (পরে ওই একটিভিটিগুলোর ভেতরের
+ *    লজিক আলাদাভাবে তৈরি করা হবে)
  *  • রোগীর কার্ডে "রিপোর্ট দেখুন" বাটন — তার সব অ্যাপয়েন্টমেন্ট থেকে জমা দেওয়া
  *    টেস্ট রিপোর্টের (ছবি/PDF) লিস্ট দেখায়
  *  • সম্পূর্ণ built-in, কোনো তৃতীয়-পক্ষ লাইব্রেরি ছাড়াই হাই-কোয়ালিটি ImageViewer
@@ -103,6 +113,16 @@ class AdminActivity : AppCompatActivity() {
     private lateinit var patientsContainer: LinearLayout
     private lateinit var slotsContainer: LinearLayout
     private lateinit var otpStatsContainer: LinearLayout
+
+    // নতুন — সার্চ বার ও ইনপুট রেফারেন্স (অ্যাপয়েন্টমেন্ট ও রোগী সেকশন)
+    private lateinit var appointmentSearchBar: LinearLayout
+    private lateinit var appointmentSearchInput: EditText
+    private lateinit var patientSearchBar: LinearLayout
+    private lateinit var patientSearchInput: EditText
+
+    // নতুন — সার্ভার থেকে আসা পূর্ণ তালিকা মেমরিতে রাখা, যাতে সার্চ ফিল্টার লোকালি করা যায়
+    private var allAppointments: List<JSONObject> = emptyList()
+    private var allPatients: List<JSONObject> = emptyList()
 
     private data class NavItemViews(
         val root: LinearLayout,
@@ -161,7 +181,18 @@ class AdminActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, dp(110))
         }
-        apptContent.addView(panelTopBar("এডমিন প্যানেল", "সব অ্যাপয়েন্টমেন্ট পর্যবেক্ষণ ও ম্যানেজমেন্ট"))
+
+        // নতুন — সার্চ বার তৈরি করে টপ-বারে toggle আইকনের সাথে যুক্ত করা হচ্ছে
+        val (apptSearchBarView, apptSearchInputView) = buildSearchBar("রোগীর নাম বা নাম্বার দিয়ে সার্চ করুন") { query ->
+            renderAppointments(query)
+        }
+        appointmentSearchBar = apptSearchBarView
+        appointmentSearchInput = apptSearchInputView
+        appointmentSearchBar.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(16), dp(14), dp(16), dp(2))
+        }
+        apptContent.addView(panelTopBar("এডমিন প্যানেল", "সব অ্যাপয়েন্টমেন্ট পর্যবেক্ষণ ও ম্যানেজমেন্ট", appointmentSearchBar))
+        apptContent.addView(appointmentSearchBar)
         appointmentsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), 0)
@@ -180,7 +211,18 @@ class AdminActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, dp(110))
         }
-        patientContent.addView(panelTopBar("রোগীর তালিকা", "সব রোগীর প্রোফাইল ও রিপোর্ট দেখুন ও ম্যানেজ করুন"))
+
+        // নতুন — রোগী সেকশনের জন্যও একই ধরনের সার্চ বার
+        val (patientSearchBarView, patientSearchInputView) = buildSearchBar("রোগীর নাম বা নাম্বার দিয়ে সার্চ করুন") { query ->
+            renderPatients(query)
+        }
+        patientSearchBar = patientSearchBarView
+        patientSearchInput = patientSearchInputView
+        patientSearchBar.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(16), dp(14), dp(16), dp(2))
+        }
+        patientContent.addView(panelTopBar("রোগীর তালিকা", "সব রোগীর প্রোফাইল ও রিপোর্ট দেখুন ও ম্যানেজ করুন", patientSearchBar))
+        patientContent.addView(patientSearchBar)
         patientsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), 0)
@@ -347,7 +389,11 @@ class AdminActivity : AppCompatActivity() {
         return NavItemViews(itemRoot, pill, icon, drawable, labelView)
     }
 
-    private fun panelTopBar(titleText: String, subtitle: String): View {
+    /**
+     * প্যানেলের টপ-বার। searchBarView পাস করলে ব্যাক বাটনের পাশে একটা সার্চ
+     * toggle ভেক্টর-আইকন দেখানো হয়, যা ট্যাপ করলে সেই সার্চ-বারটি দেখানো/লুকানো হয়।
+     */
+    private fun panelTopBar(titleText: String, subtitle: String, searchBarView: View? = null): View {
         val container = FrameLayout(this).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
@@ -387,9 +433,92 @@ class AdminActivity : AppCompatActivity() {
         })
         row.addView(backBtn)
         row.addView(textCol)
+
+        // নতুন — সার্চ toggle আইকন, শুধুমাত্র যেসব প্যানেলে সার্চ বার আছে সেখানে দেখানো হয়
+        if (searchBarView != null) {
+            val searchToggleBtn = ImageView(this).apply {
+                setImageDrawable(SearchIconDrawable(Color.WHITE, dp(2f)))
+                background = roundedBg(Color.argb(46, 255, 255, 255), 30f)
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginStart = dp(10) }
+                val pad = dp(8)
+                setPadding(pad, pad, pad, pad)
+                isClickable = true
+                isFocusable = true
+                contentDescription = "সার্চ করুন"
+                setOnClickListener {
+                    val bar = searchBarView as LinearLayout
+                    val input = bar.getChildAt(1) as? EditText
+                    if (bar.visibility == View.VISIBLE) {
+                        bar.visibility = View.GONE
+                        input?.setText("")
+                    } else {
+                        bar.visibility = View.VISIBLE
+                        input?.requestFocus()
+                    }
+                }
+            }
+            row.addView(searchToggleBtn)
+        }
+
         inner.addView(row)
         container.addView(inner)
         return container
+    }
+
+    // ==================================================================
+    // নতুন — সার্চ বার ও ফিল্টার সংক্রান্ত হেল্পার
+    // ==================================================================
+
+    /** সার্চ toggle-এর নিচে দেখানো ইনপুট বার — নাম/নাম্বার দিয়ে লাইভ ফিল্টার করার জন্য */
+    private fun buildSearchBar(hint: String, onQueryChange: (String) -> Unit): Pair<LinearLayout, EditText> {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedBgStroke(Color.WHITE, colorFieldBorder, 14f, 1)
+            setPadding(dp(14), dp(2), dp(10), dp(2))
+            visibility = View.GONE
+            elevation = dp(1f).toFloat()
+        }
+        val searchIcon = ImageView(this).apply {
+            setImageDrawable(SearchIconDrawable(colorTextMuted, dp(1.8f)))
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
+        }
+        val input = EditText(this).apply {
+            this.hint = hint
+            setHintTextColor(colorTextMuted)
+            setTextColor(colorDark)
+            textSize = 13f
+            background = null
+            maxLines = 1
+            inputType = InputType.TYPE_CLASS_TEXT
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(0, dp(11), 0, dp(11))
+        }
+        input.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                onQueryChange(s?.toString().orEmpty())
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+        val clearBtn = ImageView(this).apply {
+            setImageDrawable(CloseIconDrawable(colorTextMuted, dp(1.6f).toFloat()))
+            layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { input.setText("") }
+        }
+        bar.addView(searchIcon)
+        bar.addView(input)
+        bar.addView(clearBtn)
+        return bar to input
+    }
+
+    /** নাম বা ফোন নাম্বার — যেকোনো একটাতে মিলে গেলেই true (query খালি থাকলে সব দেখাবে) */
+    private fun matchesQuery(name: String, phone: String, query: String): Boolean {
+        if (query.isBlank()) return true
+        val q = query.trim().lowercase()
+        return name.lowercase().contains(q) || phone.replace(" ", "").contains(q.replace(" ", ""))
     }
 
     // ==================================================================
@@ -400,20 +529,33 @@ class AdminActivity : AppCompatActivity() {
         appointmentsContainer.addView(loadingText())
         lifecycleScope.launch {
             val result = SupabaseClient.adminGetAllAppointments()
-            appointmentsContainer.removeAllViews()
             result.onSuccess { rows ->
-                if (rows.length() == 0) {
-                    appointmentsContainer.addView(emptyStateCard("এখনো কোনো অ্যাপয়েন্টমেন্ট বুক হয়নি"))
-                    return@onSuccess
-                }
-                for (i in 0 until rows.length()) {
-                    val obj = rows.getJSONObject(i)
-                    appointmentsContainer.addView(buildAppointmentCard(obj))
-                    appointmentsContainer.addView(space(dp(10)))
-                }
+                val list = mutableListOf<JSONObject>()
+                for (i in 0 until rows.length()) list.add(rows.getJSONObject(i))
+                allAppointments = list
+                renderAppointments(appointmentSearchInput.text?.toString().orEmpty())
             }.onFailure {
+                appointmentsContainer.removeAllViews()
                 appointmentsContainer.addView(errorText("অ্যাপয়েন্টমেন্ট লোড করা যায়নি"))
             }
+        }
+    }
+
+    /** allAppointments থেকে সার্চ query অনুযায়ী ফিল্টার করে কার্ড রেন্ডার করে */
+    private fun renderAppointments(query: String) {
+        appointmentsContainer.removeAllViews()
+        val filtered = allAppointments.filter {
+            matchesQuery(it.optString("patient_name", ""), it.optString("phone", ""), query)
+        }
+        if (filtered.isEmpty()) {
+            appointmentsContainer.addView(emptyStateCard(
+                if (query.isBlank()) "এখনো কোনো অ্যাপয়েন্টমেন্ট বুক হয়নি" else "কোনো ফলাফল পাওয়া যায়নি"
+            ))
+            return
+        }
+        filtered.forEach { obj ->
+            appointmentsContainer.addView(buildAppointmentCard(obj))
+            appointmentsContainer.addView(space(dp(10)))
         }
     }
 
@@ -432,6 +574,7 @@ class AdminActivity : AppCompatActivity() {
         val weight = obj.optString("weight", "")
         val bloodPressure = obj.optString("blood_pressure", "")
         val reportUrl = obj.optString("report_url", "")
+        val patientId = obj.optString("patient_id", "")
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -498,6 +641,40 @@ class AdminActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
             addView(actionsRow)
+
+            // নতুন — এই নির্দিষ্ট রোগীর সাথে সরাসরি Chat / Video Call / Audio Call শুরু করার বাটন।
+            // আপাতত শুধু ChatActivity / VideocallActivity / AudiocallActivity কে Intent দিয়ে
+            // ওপেন করা হচ্ছে, প্রয়োজনীয় extras (appointment_id, patient_id, patient_name,
+            // patient_phone) সহ পাঠানো হয় যাতে ওই একটিভিটিগুলো তৈরি করার সময় সরাসরি ব্যবহার করা যায়।
+            addView(space(dp(8)))
+            val commRow = LinearLayout(this@AdminActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            commRow.addView(communicationButton("চ্যাট", ChatIconDrawable(colorInfo, dp(1.6f).toFloat()), colorInfo) {
+                startActivity(Intent(this@AdminActivity, ChatActivity::class.java).apply {
+                    putExtra("appointment_id", id)
+                    putExtra("patient_id", patientId)
+                    putExtra("patient_name", name)
+                    putExtra("patient_phone", phone)
+                })
+            }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
+            commRow.addView(space(dp(8)))
+            commRow.addView(communicationButton("ভিডিও কল", VideoCallIconDrawable(colorSuccess), colorSuccess) {
+                startActivity(Intent(this@AdminActivity, VideocallActivity::class.java).apply {
+                    putExtra("appointment_id", id)
+                    putExtra("patient_id", patientId)
+                    putExtra("patient_name", name)
+                    putExtra("patient_phone", phone)
+                })
+            }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
+            commRow.addView(space(dp(8)))
+            commRow.addView(communicationButton("অডিও কল", AudioCallIconDrawable(colorAccent), colorAccent) {
+                startActivity(Intent(this@AdminActivity, AudiocallActivity::class.java).apply {
+                    putExtra("appointment_id", id)
+                    putExtra("patient_id", patientId)
+                    putExtra("patient_name", name)
+                    putExtra("patient_phone", phone)
+                })
+            }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
+            addView(commRow)
 
             // এই অ্যাপয়েন্টমেন্টের সাথে যদি টেস্ট রিপোর্ট (ছবি/PDF) যুক্ত থাকে, সরাসরি এখান থেকেই দেখা যাবে
             if (reportUrl.isNotBlank()) {
@@ -653,20 +830,33 @@ class AdminActivity : AppCompatActivity() {
         patientsContainer.addView(loadingText())
         lifecycleScope.launch {
             val result = SupabaseClient.adminGetAllPatients()
-            patientsContainer.removeAllViews()
             result.onSuccess { rows ->
-                if (rows.length() == 0) {
-                    patientsContainer.addView(emptyStateCard("এখনো কোনো রোগী রেজিস্ট্রেশন করেননি"))
-                    return@onSuccess
-                }
-                for (i in 0 until rows.length()) {
-                    val obj = rows.getJSONObject(i)
-                    patientsContainer.addView(buildPatientCard(obj))
-                    patientsContainer.addView(space(dp(10)))
-                }
+                val list = mutableListOf<JSONObject>()
+                for (i in 0 until rows.length()) list.add(rows.getJSONObject(i))
+                allPatients = list
+                renderPatients(patientSearchInput.text?.toString().orEmpty())
             }.onFailure {
+                patientsContainer.removeAllViews()
                 patientsContainer.addView(errorText("রোগীর তালিকা লোড করা যায়নি"))
             }
+        }
+    }
+
+    /** allPatients থেকে সার্চ query অনুযায়ী ফিল্টার করে কার্ড রেন্ডার করে */
+    private fun renderPatients(query: String) {
+        patientsContainer.removeAllViews()
+        val filtered = allPatients.filter {
+            matchesQuery(it.optString("full_name", ""), it.optString("phone", ""), query)
+        }
+        if (filtered.isEmpty()) {
+            patientsContainer.addView(emptyStateCard(
+                if (query.isBlank()) "এখনো কোনো রোগী রেজিস্ট্রেশন করেননি" else "কোনো ফলাফল পাওয়া যায়নি"
+            ))
+            return
+        }
+        filtered.forEach { obj ->
+            patientsContainer.addView(buildPatientCard(obj))
+            patientsContainer.addView(space(dp(10)))
         }
     }
 
@@ -1438,6 +1628,24 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
+    /** নতুন — Chat/Video Call/Audio Call বাটনের জন্য আইকন + লেবেল সহ কম্প্যাক্ট বাটন */
+    private fun communicationButton(label: String, icon: Drawable, color: Int, onClick: () -> Unit): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = roundedBg(Color.argb(24, Color.red(color), Color.green(color), Color.blue(color)), 12f)
+            setPadding(dp(6), dp(11), dp(6), dp(11))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+            addView(ImageView(this@AdminActivity).apply {
+                setImageDrawable(icon)
+                layoutParams = LinearLayout.LayoutParams(dp(15), dp(15)).apply { marginEnd = dp(5) }
+            })
+            addView(text(label, 11f, Typeface.BOLD, color, Gravity.CENTER))
+        }
+    }
+
     private fun chipButton(label: String, selected: Boolean): TextView {
         return TextView(this).apply {
             text = label
@@ -1630,6 +1838,152 @@ class AdminActivity : AppCompatActivity() {
             val inset = minOf(w, h) * 0.28f
             canvas.drawLine(b.left + inset, b.top + inset, b.right - inset, b.bottom - inset, paint)
             canvas.drawLine(b.right - inset, b.top + inset, b.left + inset, b.bottom - inset, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // SearchIconDrawable — সার্চ toggle বাটনের জন্য ম্যাগনিফায়ার-গ্লাস ভেক্টর আইকন,
+    // সম্পূর্ণ Canvas/Paint দিয়ে আঁকা (কোনো ইমুজি/ফন্ট-ক্যারেক্টার নয়)।
+    // ------------------------------------------------------------------
+    private class SearchIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = strokeWidthPx
+            strokeCap = Paint.Cap.ROUND
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val radius = minOf(w, h) * 0.30f
+            val cx = b.left + w * 0.42f
+            val cy = b.top + h * 0.42f
+            canvas.drawCircle(cx, cy, radius, paint)
+            val angleOffset = radius * 0.72f
+            canvas.drawLine(cx + angleOffset, cy + angleOffset, b.left + w * 0.86f, b.top + h * 0.86f, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // ChatIconDrawable — স্পিচ-বাবল + তিনটা টাইপিং-ডট, চ্যাট বাটনের জন্য সম্পূর্ণ ভেক্টর আইকন
+    // ------------------------------------------------------------------
+    private class ChatIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
+        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = strokeWidthPx
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = iconColor
+        }
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val rect = android.graphics.RectF(b.left + w * 0.08f, b.top + h * 0.12f, b.right - w * 0.08f, b.top + h * 0.70f)
+            canvas.drawRoundRect(rect, w * 0.16f, w * 0.16f, strokePaint)
+            val tail = android.graphics.Path().apply {
+                moveTo(b.left + w * 0.30f, rect.bottom - h * 0.02f)
+                lineTo(b.left + w * 0.24f, b.top + h * 0.90f)
+                lineTo(b.left + w * 0.46f, rect.bottom - h * 0.02f)
+                close()
+            }
+            canvas.drawPath(tail, fillPaint)
+            val dotR = w * 0.035f
+            val dotY = (rect.top + rect.bottom) / 2f
+            canvas.drawCircle(rect.left + rect.width() * 0.28f, dotY, dotR, fillPaint)
+            canvas.drawCircle(rect.left + rect.width() * 0.5f, dotY, dotR, fillPaint)
+            canvas.drawCircle(rect.left + rect.width() * 0.72f, dotY, dotR, fillPaint)
+        }
+
+        override fun setAlpha(alpha: Int) { strokePaint.alpha = alpha; fillPaint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { strokePaint.colorFilter = colorFilter; fillPaint.colorFilter = colorFilter }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // VideoCallIconDrawable — ক্যামেরা-বডি + লেন্স ত্রিভুজ, ভিডিও কল বাটনের ভেক্টর আইকন
+    // ------------------------------------------------------------------
+    private class VideoCallIconDrawable(iconColor: Int) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val bodyRect = android.graphics.RectF(b.left + w * 0.08f, b.top + h * 0.22f, b.left + w * 0.62f, b.top + h * 0.78f)
+            canvas.drawRoundRect(bodyRect, w * 0.10f, w * 0.10f, paint)
+            val lens = android.graphics.Path().apply {
+                moveTo(bodyRect.right, b.top + h * 0.34f)
+                lineTo(b.right - w * 0.06f, b.top + h * 0.20f)
+                lineTo(b.right - w * 0.06f, b.top + h * 0.80f)
+                lineTo(bodyRect.right, b.top + h * 0.66f)
+                close()
+            }
+            canvas.drawPath(lens, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // AudioCallIconDrawable — ক্লাসিক ফোন-হ্যান্ডসেট সিলুয়েট, অডিও কল বাটনের ভেক্টর আইকন
+    // (Bezier কার্ভ দিয়ে আঁকা, কোনো র‍্যাস্টার/ইমুজি নয়)
+    // ------------------------------------------------------------------
+    private class AudioCallIconDrawable(iconColor: Int) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val path = android.graphics.Path().apply {
+                moveTo(b.left + w * 0.20f, b.top + h * 0.12f)
+                cubicTo(b.left + w * 0.05f, b.top + h * 0.20f, b.left + w * 0.05f, b.top + h * 0.40f, b.left + w * 0.20f, b.top + h * 0.55f)
+                cubicTo(b.left + w * 0.35f, b.top + h * 0.70f, b.left + w * 0.50f, b.top + h * 0.80f, b.left + w * 0.65f, b.top + h * 0.85f)
+                cubicTo(b.left + w * 0.80f, b.top + h * 0.90f, b.left + w * 0.90f, b.top + h * 0.75f, b.left + w * 0.88f, b.top + h * 0.68f)
+                cubicTo(b.left + w * 0.86f, b.top + h * 0.62f, b.left + w * 0.72f, b.top + h * 0.55f, b.left + w * 0.65f, b.top + h * 0.60f)
+                cubicTo(b.left + w * 0.60f, b.top + h * 0.63f, b.left + w * 0.55f, b.top + h * 0.60f, b.left + w * 0.48f, b.top + h * 0.52f)
+                cubicTo(b.left + w * 0.42f, b.top + h * 0.45f, b.left + w * 0.40f, b.top + h * 0.40f, b.left + w * 0.42f, b.top + h * 0.34f)
+                cubicTo(b.left + w * 0.46f, b.top + h * 0.27f, b.left + w * 0.38f, b.top + h * 0.14f, b.left + w * 0.32f, b.top + h * 0.12f)
+                cubicTo(b.left + w * 0.28f, b.top + h * 0.10f, b.left + w * 0.24f, b.top + h * 0.10f, b.left + w * 0.20f, b.top + h * 0.12f)
+                close()
+            }
+            canvas.drawPath(path, paint)
         }
 
         override fun setAlpha(alpha: Int) { paint.alpha = alpha }
