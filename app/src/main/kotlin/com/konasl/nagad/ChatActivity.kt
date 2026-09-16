@@ -326,7 +326,7 @@ class ChatActivity : AppCompatActivity() {
             val tv = bubbleLayout.getChildAt(0) as TextView
             tv.text = message
 
-            val params = bubbleLayout.layoutParams as LinearLayout.LayoutParams
+            // FIX: RecyclerView er child er LayoutParams RecyclerView.LayoutParams hoy, LinearLayout.LayoutParams na
             val tvParams = tv.layoutParams as LinearLayout.LayoutParams
 
             if (isMe) {
