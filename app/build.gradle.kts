@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.konasl.nagad"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.konasl.nagad"
