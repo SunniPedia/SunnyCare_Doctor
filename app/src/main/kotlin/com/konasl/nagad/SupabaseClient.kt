@@ -779,6 +779,170 @@ suspend fun sendMessage(conversationId: String, senderId: String, senderRole: St
 }
 
     // ------------------------------------------------------------------
+    // SUPABASE REALTIME — ADMIN APPOINTMENTS
+    // Listens to every INSERT / UPDATE / DELETE on appointments.
+    // No 5-second REST polling: the WebSocket stays connected while the
+    // admin screen is visible and the UI performs a REST reload only after
+    // an actual database change arrives.
+    // ------------------------------------------------------------------
+    private val adminRealtimeClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    private val adminRealtimeHeartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var adminRealtimeHeartbeatRunnable: Runnable? = null
+    private var adminAppointmentsRealtimeSocket: WebSocket? = null
+    private var adminAppointmentsRealtimeGeneration = 0L
+    private var adminRealtimeReconnectRunnable: Runnable? = null
+
+    @Synchronized
+    fun startAdminAppointmentsRealtime(
+        onAppointmentChanged: (eventType: String, record: JSONObject?) -> Unit
+    ): WebSocket? {
+        stopAdminAppointmentsRealtime()
+
+        val generation = ++adminAppointmentsRealtimeGeneration
+        val realtimeBase = SUPABASE_URL
+            .removePrefix("https://")
+            .removePrefix("http://")
+            .trimEnd('/')
+        val realtimeUrl =
+            "wss://$realtimeBase/realtime/v1/websocket?apikey=${enc(SUPABASE_ANON_KEY)}&vsn=1.0.0"
+        val topic = "realtime:admin_appointments"
+
+        fun scheduleReconnect() {
+            if (generation != adminAppointmentsRealtimeGeneration) return
+            adminRealtimeReconnectRunnable?.let { adminRealtimeHeartbeatHandler.removeCallbacks(it) }
+            val runnable = Runnable {
+                if (generation == adminAppointmentsRealtimeGeneration && adminAppointmentsRealtimeSocket == null) {
+                    startAdminAppointmentsRealtime(onAppointmentChanged)
+                }
+            }
+            adminRealtimeReconnectRunnable = runnable
+            adminRealtimeHeartbeatHandler.postDelayed(runnable, 3000L)
+        }
+
+        val request = Request.Builder().url(realtimeUrl).build()
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+                if (generation != adminAppointmentsRealtimeGeneration) {
+                    webSocket.cancel()
+                    return
+                }
+                adminAppointmentsRealtimeSocket = webSocket
+                adminRealtimeReconnectRunnable?.let { adminRealtimeHeartbeatHandler.removeCallbacks(it) }
+                adminRealtimeReconnectRunnable = null
+
+                val joinPayload = JSONObject().apply {
+                    put("topic", topic)
+                    put("event", "phx_join")
+                    put("ref", "1")
+                    put("payload", JSONObject().apply {
+                        put("config", JSONObject().apply {
+                            put("broadcast", JSONObject().put("self", false))
+                            put("presence", JSONObject().put("key", ""))
+                            put("postgres_changes", JSONArray().put(
+                                JSONObject().apply {
+                                    put("event", "*")
+                                    put("schema", "public")
+                                    put("table", "appointments")
+                                }
+                            ))
+                        })
+                        put("access_token", SUPABASE_ANON_KEY)
+                    })
+                }
+                webSocket.send(joinPayload.toString())
+                startAdminRealtimeHeartbeat(webSocket, generation)
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (generation != adminAppointmentsRealtimeGeneration) return
+                try {
+                    val message = JSONObject(text)
+                    val event = message.optString("event", "")
+                    val payload = message.optJSONObject("payload")
+                    val data = payload?.optJSONObject("data")
+                    if (event == "postgres_changes" && data != null) {
+                        val eventType = data.optString("event_type", "").uppercase(Locale.US)
+                        val record = data.optJSONObject("record")
+                        if (eventType == "INSERT" || eventType == "UPDATE" || eventType == "DELETE") {
+                            onAppointmentChanged(eventType, record)
+                        }
+                    }
+                } catch (_: Exception) {
+                    // Ignore heartbeat / transport messages.
+                }
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                if (generation == adminAppointmentsRealtimeGeneration) {
+                    adminAppointmentsRealtimeSocket = null
+                    stopAdminRealtimeHeartbeat()
+                }
+                webSocket.close(code, reason)
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (generation == adminAppointmentsRealtimeGeneration) {
+                    adminAppointmentsRealtimeSocket = null
+                    stopAdminRealtimeHeartbeat()
+                    scheduleReconnect()
+                }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+                if (generation == adminAppointmentsRealtimeGeneration) {
+                    adminAppointmentsRealtimeSocket = null
+                    stopAdminRealtimeHeartbeat()
+                    scheduleReconnect()
+                }
+            }
+        }
+
+        return adminRealtimeClient.newWebSocket(request, listener).also {
+            adminAppointmentsRealtimeSocket = it
+        }
+    }
+
+    private fun startAdminRealtimeHeartbeat(webSocket: WebSocket, generation: Long) {
+        stopAdminRealtimeHeartbeat()
+        val runnable = object : Runnable {
+            override fun run() {
+                if (generation != adminAppointmentsRealtimeGeneration || adminAppointmentsRealtimeSocket !== webSocket) return
+                val heartbeat = JSONObject().apply {
+                    put("topic", "phoenix")
+                    put("event", "heartbeat")
+                    put("payload", JSONObject())
+                    put("ref", System.currentTimeMillis().toString())
+                }
+                webSocket.send(heartbeat.toString())
+                adminRealtimeHeartbeatHandler.postDelayed(this, 25_000L)
+            }
+        }
+        adminRealtimeHeartbeatRunnable = runnable
+        adminRealtimeHeartbeatHandler.postDelayed(runnable, 25_000L)
+    }
+
+    @Synchronized
+    fun stopAdminAppointmentsRealtime() {
+        adminAppointmentsRealtimeGeneration++
+        adminAppointmentsRealtimeSocket?.close(1000, "Admin screen paused")
+        adminAppointmentsRealtimeSocket?.cancel()
+        adminAppointmentsRealtimeSocket = null
+        stopAdminRealtimeHeartbeat()
+        adminRealtimeReconnectRunnable?.let { adminRealtimeHeartbeatHandler.removeCallbacks(it) }
+        adminRealtimeReconnectRunnable = null
+    }
+
+    private fun stopAdminRealtimeHeartbeat() {
+        adminRealtimeHeartbeatRunnable?.let { adminRealtimeHeartbeatHandler.removeCallbacks(it) }
+        adminRealtimeHeartbeatRunnable = null
+    }
+
+    // ------------------------------------------------------------------
     // SUPABASE REALTIME — APPOINTMENTS
     // Listens to every INSERT / UPDATE / DELETE for the current patient.
     // The REST API remains the source used to reload the complete list after

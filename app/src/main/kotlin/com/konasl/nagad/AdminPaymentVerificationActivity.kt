@@ -26,6 +26,9 @@ class AdminPaymentVerificationActivity : AppCompatActivity() {
 
     private lateinit var listContainer: LinearLayout
 
+    // Realtime: fixed-interval polling নেই; appointments table change হলেই refresh হবে।
+    private var adminRealtimeStarted = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -89,21 +92,49 @@ class AdminPaymentVerificationActivity : AppCompatActivity() {
         setContentView(root)
 
         loadPendingPayments()
+        startAdminRealtime()
     }
 
     override fun onResume() {
         super.onResume()
+        startAdminRealtime()
         loadPendingPayments()
     }
 
-    // ------------------------------------------------------------------
-    private fun loadPendingPayments() {
-        listContainer.removeAllViews()
-        listContainer.addView(
-            text("লোড হচ্ছে...", 12.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER).apply {
-                setPadding(0, dp(20), 0, dp(20))
+    override fun onPause() {
+        super.onPause()
+        stopAdminRealtime()
+    }
+
+    private fun startAdminRealtime() {
+        if (adminRealtimeStarted) return
+        adminRealtimeStarted = true
+        SupabaseClient.startAdminAppointmentsRealtime { _, _ ->
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                // Payment list is filtered by payment_status=pending_verification,
+                // so INSERT/UPDATE/DELETE all need a fresh list.
+                loadPendingPayments(showLoading = false)
             }
-        )
+        }
+    }
+
+    private fun stopAdminRealtime() {
+        if (!adminRealtimeStarted) return
+        adminRealtimeStarted = false
+        SupabaseClient.stopAdminAppointmentsRealtime()
+    }
+
+    // ------------------------------------------------------------------
+    private fun loadPendingPayments(showLoading: Boolean = true) {
+        if (showLoading) {
+            listContainer.removeAllViews()
+            listContainer.addView(
+                text("লোড হচ্ছে...", 12.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER).apply {
+                    setPadding(0, dp(20), 0, dp(20))
+                }
+            )
+        }
 
         lifecycleScope.launch {
             val result = SupabaseClient.getPendingVerificationAppointments()

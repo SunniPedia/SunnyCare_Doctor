@@ -102,6 +102,10 @@ class AdminActivity : AppCompatActivity() {
     // "রোগীর রিপোর্ট দেখুন" বাটনটি শুধুমাত্র এই সেটে থাকা রোগীদের জন্যই দেখানো হবে।
     private var patientsWithReports: Set<String> = emptySet()
 
+    // Realtime: 5-second REST polling নেই। Database change এলে WebSocket callback থেকে reload হবে।
+    private var adminRealtimeStarted = false
+    private var pendingNewAppointmentId: String? = null
+
     private data class NavItemViews(
         val root: LinearLayout,
         val pill: LinearLayout,
@@ -254,18 +258,49 @@ class AdminActivity : AppCompatActivity() {
         root.addView(bottomNav)
         setContentView(root)
 
-        loadAppointments()
+        loadAppointments(showNewBookingPopup = false)
+        startAdminRealtime()
         updateNavStyle()
     }
 
     override fun onResume() {
         super.onResume()
+        startAdminRealtime()
         when (currentTab) {
             Tab.APPOINTMENTS -> loadAppointments()
             Tab.PATIENTS -> loadPatients()
             Tab.SLOTS -> loadSlots()
             Tab.OTP -> loadOtpStats()
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopAdminRealtime()
+    }
+
+    private fun startAdminRealtime() {
+        if (adminRealtimeStarted) return
+        adminRealtimeStarted = true
+        SupabaseClient.startAdminAppointmentsRealtime { eventType, record ->
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val id = record?.optString("id", "")?.takeIf { it.isNotBlank() }
+                if (eventType == "INSERT" && id != null) {
+                    pendingNewAppointmentId = id
+                }
+                // INSERT/UPDATE/DELETE — শুধু change-এর পরেই REST reload।
+                // কোনো fixed interval polling নেই।
+                loadAppointments(showNewBookingPopup = eventType == "INSERT")
+            }
+        }
+    }
+
+    private fun stopAdminRealtime() {
+        if (!adminRealtimeStarted) return
+        adminRealtimeStarted = false
+        pendingNewAppointmentId = null
+        SupabaseClient.stopAdminAppointmentsRealtime()
     }
 
     private fun switchTab(tab: Tab) {
@@ -482,7 +517,7 @@ class AdminActivity : AppCompatActivity() {
     // ==================================================================
     // ট্যাব ১ — অ্যাপয়েন্টমেন্ট
     // ==================================================================
-    private fun loadAppointments() {
+    private fun loadAppointments(showNewBookingPopup: Boolean = false) {
         appointmentsContainer.removeAllViews()
         appointmentsContainer.addView(loadingText())
         lifecycleScope.launch {
@@ -492,11 +527,38 @@ class AdminActivity : AppCompatActivity() {
                 for (i in 0 until rows.length()) list.add(rows.getJSONObject(i))
                 allAppointments = list
                 renderAppointments(appointmentSearchInput.text?.toString().orEmpty())
+
+                if (showNewBookingPopup) {
+                    val newId = pendingNewAppointmentId
+                    val newBooking = newId?.let { id -> list.firstOrNull { it.optString("id", "") == id } }
+                    pendingNewAppointmentId = null
+                    if (newBooking != null) showNewBookingPopup(newBooking)
+                }
             }.onFailure {
                 appointmentsContainer.removeAllViews()
                 appointmentsContainer.addView(errorText("অ্যাপয়েন্টমেন্ট লোড করা যায়নি"))
             }
         }
+    }
+
+    private fun showNewBookingPopup(obj: JSONObject) {
+        val name = obj.optString("patient_name", "নতুন রোগী").ifBlank { "নতুন রোগী" }
+        val phone = obj.optString("phone", "")
+        val date = obj.optString("preferred_date", "")
+        val time = obj.optString("preferred_time", "")
+        val fee = obj.optInt("fee", 0)
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("🔔 নতুন বুকিং")
+            .setMessage("$name
+$phone
+$date • $time
+ফি: ৳$fee")
+            .setPositiveButton("দেখুন") { _, _ ->
+                switchTab(Tab.APPOINTMENTS)
+            }
+            .setNegativeButton("ঠিক আছে", null)
+            .show()
     }
 
     private fun renderAppointments(query: String) {
