@@ -4,48 +4,34 @@ on:
   workflow_dispatch:
     inputs:
       package_name:
-        description: 'নতুন Package Name লিখুন (যেমন: com.myapp.nagad)'
+        description: 'নতুন Package Name লিখুন'
         required: true
         default: 'com.example.nagad'
         type: string
 
 jobs:
   build:
-    name: Generate and Release APK
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: gradle
-
-      - name: Setup Gradle 8.5
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.5
-
       - name: Accept Android Licenses
         run: |
           yes | sdkmanager --licenses || true
           mkdir -p $ANDROID_HOME/licenses
           echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $ANDROID_HOME/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" > $ANDROID_HOME/licenses/android-sdk-preview-license
-
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
-
       - name: Update Package Name
         run: |
           NEW_PACKAGE="${{ inputs.package_name }}"
-          echo "Renaming package to: $NEW_PACKAGE"
           if [ -f app/build.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"$NEW_PACKAGE\"/" app/build.gradle
             sed -i "s/namespace '.*'/namespace '$NEW_PACKAGE'/" app/build.gradle
@@ -55,26 +41,16 @@ jobs:
             sed -i "s/applicationId = \".*\"/applicationId = \"$NEW_PACKAGE\"/" app/build.gradle.kts
             sed -i "s/namespace = \".*\"/namespace = \"$NEW_PACKAGE\"/" app/build.gradle.kts
           fi
-
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
-
-      - name: Rename APK file
-        run: |
-          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/${{ inputs.package_name }}-debug.apk
-
+        run: gradle assembleDebug
+      - name: Rename APK
+        run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/${{ inputs.package_name }}-debug.apk
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/outputs/apk/debug/${{ inputs.package_name }}-debug.apk
           tag_name: build-${{ github.run_number }}
           name: Nagad App v${{ github.run_number }} - ${{ inputs.package_name }}
-          body: |
-            **Package Name:** `${{ inputs.package_name }}`
-            **Build No:** `${{ github.run_number }}`
-            
-            ডাউনলোড করতে নিচের Assets সেকশন থেকে apk ফাইলে ক্লিক করুন।
-          draft: false
-          prerelease: false
+          body: "Package: ${{ inputs.package_name }} | Assets থেকে APK ডাউনলোড করুন"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
