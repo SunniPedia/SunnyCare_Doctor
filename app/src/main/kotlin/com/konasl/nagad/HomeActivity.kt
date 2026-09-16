@@ -20,8 +20,6 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -83,10 +81,9 @@ class HomeActivity : AppCompatActivity() {
     // ---------------- নতুন: হোমে "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ড ----------------
     private lateinit var homeUpcomingContainer: LinearLayout
 
-    // ---------------- নতুন: প্রতি ১০ সেকেন্ড স্ট্যাটাস পোলিং ----------------
-    private val pollHandler = Handler(Looper.getMainLooper())
-    private var pollRunnable: Runnable? = null
-    private val POLL_INTERVAL_MS = 10_000L
+    // ---------------- Supabase Realtime: appointment auto refresh ----------------
+    private var appointmentRealtime: okhttp3.WebSocket? = null
+    private var realtimeStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -171,6 +168,9 @@ class HomeActivity : AppCompatActivity() {
         homeContent.addView(headerContainer)
         homeContent.addView(doctorCard)
         homeContent.addView(quickActionsSection)
+
+        // ---------------- আমার প্রেসক্রিপশন ----------------
+        homeContent.addView(buildPrescriptionCard())
 
         // ---------------- ADMIN-ONLY: পেমেন্ট ভেরিফিকেশন ----------------
         if (SupabaseClient.isAdmin(this)) {
@@ -258,31 +258,38 @@ class HomeActivity : AppCompatActivity() {
         super.onResume()
         loadAppointments()
         loadHomeUpcomingAppointment()
-        startStatusPolling()
+        startAppointmentRealtime()
     }
 
     override fun onPause() {
         super.onPause()
-        stopStatusPolling()
+        stopAppointmentRealtime()
+    }
+
+    override fun onDestroy() {
+        stopAppointmentRealtime()
+        super.onDestroy()
     }
 
     // ------------------------------------------------------------------
-    private fun startStatusPolling() {
-        stopStatusPolling()
-        val runnable = object : Runnable {
-            override fun run() {
+    // Supabase Realtime: admin appointment update হলে সঙ্গে সঙ্গে UI refresh
+    private fun startAppointmentRealtime() {
+        if (realtimeStarted) return
+        val patientId = SupabaseClient.getPatientId(this) ?: return
+        realtimeStarted = true
+        appointmentRealtime = SupabaseClient.startAppointmentRealtime(patientId) {
+            runOnUiThread {
                 loadAppointments()
                 loadHomeUpcomingAppointment()
-                pollHandler.postDelayed(this, POLL_INTERVAL_MS)
             }
         }
-        pollRunnable = runnable
-        pollHandler.postDelayed(runnable, POLL_INTERVAL_MS)
     }
 
-    private fun stopStatusPolling() {
-        pollRunnable?.let { pollHandler.removeCallbacks(it) }
-        pollRunnable = null
+    private fun stopAppointmentRealtime() {
+        realtimeStarted = false
+        appointmentRealtime?.cancel()
+        appointmentRealtime = null
+        SupabaseClient.stopAppointmentRealtime()
     }
 
     private fun loadHomeUpcomingAppointment() {
@@ -834,6 +841,60 @@ class HomeActivity : AppCompatActivity() {
         row.addView(buildSideActionsColumn())
 
         return row
+    }
+
+    private fun buildPrescriptionCard(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.parseColor("#F1FBF8"), Color.WHITE)
+            ).apply {
+                cornerRadius = dp(20).toFloat()
+                setStroke(dp(1), Color.parseColor("#DCEEEA"))
+            }
+            setPadding(dp(16), dp(15), dp(14), dp(15))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(14), dp(14), dp(14), 0)
+            }
+            elevation = dp(2).toFloat()
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(20).toFloat())
+                }
+            }
+            clipToOutline = true
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                startActivity(Intent(this@HomeActivity, PrescriptionActivity::class.java))
+            }
+
+            addView(ImageView(this@HomeActivity).apply {
+                setImageDrawable(VectorIconDrawable(VectorIconDrawable.IconType.DOCUMENT, colorPrimary, dp(22)))
+                background = roundedBg(Color.parseColor("#E2F3EF"), 14f)
+                layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+            })
+
+            val textCol = LinearLayout(this@HomeActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = dp(13)
+                }
+            }
+            textCol.addView(text("আমার প্রেসক্রিপশন", 14f, Typeface.BOLD, colorDark, Gravity.START))
+            textCol.addView(text("ডাক্তারের দেওয়া প্রেসক্রিপশন দেখুন", 11.5f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+                setPadding(0, dp(4), 0, 0)
+            })
+            addView(textCol)
+
+            addView(ImageView(this@HomeActivity).apply {
+                setImageDrawable(VectorIconDrawable(VectorIconDrawable.IconType.ARROW_RIGHT, colorPrimary, dp(17)))
+                layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
+            })
+        }
     }
 
     private fun buildBookAppointmentHeroCard(): LinearLayout {

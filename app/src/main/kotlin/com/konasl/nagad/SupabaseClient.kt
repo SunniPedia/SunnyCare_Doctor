@@ -8,6 +8,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -775,4 +777,166 @@ suspend fun sendMessage(conversationId: String, senderId: String, senderRole: St
     } catch (e: Exception) {}
     return rows.getJSONObject(0)
 }
+
+    // ------------------------------------------------------------------
+    // SUPABASE REALTIME — APPOINTMENTS
+    // Listens to every INSERT / UPDATE / DELETE for the current patient.
+    // The REST API remains the source used to reload the complete list after
+    // a realtime event, so the UI always renders the latest appointment data.
+    // ------------------------------------------------------------------
+    private val realtimeClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    private val realtimeHeartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var realtimeHeartbeatRunnable: Runnable? = null
+    private var appointmentRealtimeSocket: WebSocket? = null
+    private var appointmentRealtimeGeneration = 0L
+
+    @Synchronized
+    fun startAppointmentRealtime(
+        patientId: String,
+        onAppointmentChanged: () -> Unit
+    ): WebSocket? {
+        if (patientId.isBlank()) return null
+
+        stopAppointmentRealtime()
+        val generation = ++appointmentRealtimeGeneration
+        val topic = "realtime:appointments_patient_$patientId"
+        val encodedFilter = URLEncoder.encode("patient_id=eq.$patientId", "UTF-8")
+        val realtimeBase = SUPABASE_URL
+            .removePrefix("https://")
+            .removePrefix("http://")
+            .trimEnd('/')
+        val realtimeUrl = "wss://$realtimeBase/realtime/v1/websocket?apikey=${enc(SUPABASE_ANON_KEY)}&vsn=1.0.0"
+
+        fun scheduleReconnect() {
+            if (generation != appointmentRealtimeGeneration) return
+            realtimeHeartbeatHandler.postDelayed({
+                if (generation == appointmentRealtimeGeneration && appointmentRealtimeSocket == null) {
+                    startAppointmentRealtime(patientId, onAppointmentChanged)
+                }
+            }, 3000L)
+        }
+
+        val request = Request.Builder().url(realtimeUrl).build()
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+                if (generation != appointmentRealtimeGeneration) {
+                    webSocket.cancel()
+                    return
+                }
+                appointmentRealtimeSocket = webSocket
+
+                val joinPayload = JSONObject().apply {
+                    put("topic", topic)
+                    put("event", "phx_join")
+                    put("ref", "1")
+                    put("payload", JSONObject().apply {
+                        put("config", JSONObject().apply {
+                            put("broadcast", JSONObject().put("self", false))
+                            put("presence", JSONObject().put("key", ""))
+                            put("postgres_changes", org.json.JSONArray().put(
+                                JSONObject().apply {
+                                    put("event", "*")
+                                    put("schema", "public")
+                                    put("table", "appointments")
+                                    put("filter", "patient_id=eq.$patientId")
+                                }
+                            ))
+                        })
+                        put("access_token", SUPABASE_ANON_KEY)
+                    })
+                }
+                webSocket.send(joinPayload.toString())
+                startRealtimeHeartbeat(webSocket, generation, topic)
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (generation != appointmentRealtimeGeneration) return
+                try {
+                    val message = JSONObject(text)
+                    val event = message.optString("event", "")
+                    val payload = message.optJSONObject("payload")
+                    val data = payload?.optJSONObject("data")
+
+                    // postgres_changes payloads contain the changed row under
+                    // record / old_record. We still perform a full REST reload
+                    // so INSERT, UPDATE and DELETE are all reflected correctly.
+                    if (event == "postgres_changes" ||
+                        event == "INSERT" || event == "UPDATE" || event == "DELETE" ||
+                        data != null
+                    ) {
+                        onAppointmentChanged()
+                    }
+                } catch (_: Exception) {
+                    // Ignore non-JSON heartbeat/transport noise.
+                }
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                if (generation == appointmentRealtimeGeneration) {
+                    appointmentRealtimeSocket = null
+                    stopRealtimeHeartbeat()
+                }
+                webSocket.close(code, reason)
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (generation == appointmentRealtimeGeneration) {
+                    appointmentRealtimeSocket = null
+                    stopRealtimeHeartbeat()
+                    scheduleReconnect()
+                }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+                if (generation == appointmentRealtimeGeneration) {
+                    appointmentRealtimeSocket = null
+                    stopRealtimeHeartbeat()
+                    scheduleReconnect()
+                }
+            }
+        }
+
+        return realtimeClient.newWebSocket(request, listener).also {
+            appointmentRealtimeSocket = it
+        }
+    }
+
+    private fun startRealtimeHeartbeat(webSocket: WebSocket, generation: Long, topic: String) {
+        stopRealtimeHeartbeat()
+        val runnable = object : Runnable {
+            override fun run() {
+                if (generation != appointmentRealtimeGeneration || appointmentRealtimeSocket !== webSocket) return
+                val heartbeat = JSONObject().apply {
+                    put("topic", "phoenix")
+                    put("event", "heartbeat")
+                    put("payload", JSONObject())
+                    put("ref", System.currentTimeMillis().toString())
+                }
+                webSocket.send(heartbeat.toString())
+                realtimeHeartbeatHandler.postDelayed(this, 25_000L)
+            }
+        }
+        realtimeHeartbeatRunnable = runnable
+        realtimeHeartbeatHandler.postDelayed(runnable, 25_000L)
+    }
+
+    @Synchronized
+    fun stopAppointmentRealtime() {
+        appointmentRealtimeGeneration++
+        appointmentRealtimeSocket?.close(1000, "Activity paused")
+        appointmentRealtimeSocket?.cancel()
+        appointmentRealtimeSocket = null
+        stopRealtimeHeartbeat()
+    }
+
+    private fun stopRealtimeHeartbeat() {
+        realtimeHeartbeatRunnable?.let { realtimeHeartbeatHandler.removeCallbacks(it) }
+        realtimeHeartbeatRunnable = null
+    }
+
 }
