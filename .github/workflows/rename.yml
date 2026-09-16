@@ -1,0 +1,82 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_name:
+        description: 'নতুন Package Name লিখুন (যেমন: com.myapp.nagad)'
+        required: true
+        default: 'com.example.nagad'
+        type: string
+
+jobs:
+  build:
+    name: Generate and Release APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle 8.5
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Update Package Name
+        run: |
+          NEW_PACKAGE="${{ inputs.package_name }}"
+          echo "Renaming package to: $NEW_PACKAGE"
+          
+          # 1. app/build.gradle (Groovy) এর applicationId এবং namespace চেঞ্জ
+          if [ -f app/build.gradle ]; then
+            sed -i "s/applicationId \".*\"/applicationId \"$NEW_PACKAGE\"/" app/build.gradle
+            sed -i "s/namespace '.*'/namespace '$NEW_PACKAGE'/" app/build.gradle
+            sed -i "s/namespace \".*\"/namespace \"$NEW_PACKAGE\"/" app/build.gradle
+          fi
+
+          # 2. app/build.gradle.kts (Kotlin DSL) এর applicationId এবং namespace চেঞ্জ
+          if [ -f app/build.gradle.kts ]; then
+            sed -i "s/applicationId = \".*\"/applicationId = \"$NEW_PACKAGE\"/" app/build.gradle.kts
+            sed -i "s/namespace = \".*\"/namespace = \"$NEW_PACKAGE\"/" app/build.gradle.kts
+          fi
+          
+          echo "Package renamed successfully"
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Rename APK file
+        run: |
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/${{ inputs.package_name }}-debug.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/debug/${{ inputs.package_name }}-debug.apk
+          tag_name: build-${{ github.run_number }}
+          name: Nagad App v${{ github.run_number }} - ${{ inputs.package_name }}
+          body: |
+            **Package Name:** `${{ inputs.package_name }}`
+            **Build No:** `${{ github.run_number }}`
+            
+            ডাউনলোড করতে নিচের Assets সেকশন থেকে apk ফাইলে ক্লিক করুন।
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
