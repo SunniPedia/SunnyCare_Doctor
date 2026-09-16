@@ -3,47 +3,64 @@ package com.konasl.nagad
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.text.InputType
+import android.text.TextUtils
 import android.util.LruCache
 import android.view.Gravity
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.viewpager2.widget.ViewPager2
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -61,6 +78,10 @@ import java.util.Locale
  * 5. Sending a message uses the existing SupabaseClient.sendMessage().
  * 6. The realtime subscription is owned by this Activity and is removed with the Activity,
  *    and is re-created whenever the Activity comes back to the foreground.
+ * 7. Keyboard-overlap is handled in-code (edge-to-edge + WindowInsets), independent of
+ *    manifest windowSoftInputMode.
+ * 8. Image attachments preview in the chat bubble and open in an in-app zoomable viewer.
+ * 9. PDF attachments open in an in-app swipeable, lazy-loading page viewer.
  *
  * Required database setup:
  * - public.messages must be enabled in the supabase_realtime publication.
@@ -70,10 +91,10 @@ import java.util.Locale
  * - supabase-kt 2.5.1
  * - realtime-kt 2.5.1
  * - a Ktor Android engine compatible with the project's supabase-kt version
+ * - androidx.viewpager2:viewpager2
  *
  * Required AndroidManifest.xml entries: see AndroidManifest_ADDITIONS.xml
- * (INTERNET, CAMERA permissions, FileProvider, and
- * android:windowSoftInputMode="adjustResize" on this Activity).
+ * (INTERNET, CAMERA permissions, FileProvider).
  */
 class ChatActivity : AppCompatActivity() {
 
@@ -88,6 +109,9 @@ class ChatActivity : AppCompatActivity() {
     private val colorDanger = Color.parseColor("#B42318")
     private val colorSuccess = Color.parseColor("#15803D")
 
+    // FIX: বড় পিডিএফ পেইজ রেন্ডারের সময় মেমোরি-সাশ্রয়ী রাখতে ক্যাশ সাইজ সীমা।
+    private val PDF_PAGE_CACHE_SIZE = 5
+
     private var appointmentId = ""
     private var patientId = ""
     private var patientName = ""
@@ -101,8 +125,10 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var sendButton: IconButtonView
     private lateinit var statusText: TextView
     private lateinit var titleText: TextView
-    private lateinit var subtitleText: TextView
+    private lateinit var onlineDot: View
     private lateinit var typingText: TextView
+    private lateinit var headerView: LinearLayout
+    private lateinit var rootView: LinearLayout
 
     private val messages = mutableListOf<JSONObject>()
     private var conversationJob: Job? = null
@@ -111,7 +137,7 @@ class ChatActivity : AppCompatActivity() {
     private var realtimeStarted = false
 
     // In-memory cache so attachment images are not re-downloaded on every
-    // RecyclerView rebind / scroll.
+    // RecyclerView rebind / scroll, and reused when opening the full viewer.
     private val imageCache = LruCache<String, Bitmap>(24)
 
     // Holds the destination Uri while the camera app is capturing a photo.
@@ -172,11 +198,14 @@ class ChatActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Belt-and-suspenders fix for the keyboard covering the input box.
-        // The primary fix is android:windowSoftInputMode="adjustResize" on
-        // this Activity in AndroidManifest.xml (see AndroidManifest_ADDITIONS.xml).
+        // FIX: এখন কীবোর্ড ওভারল্যাপ ফিক্স ম্যানিফেস্টের windowSoftInputMode এর উপর নির্ভর না করে
+        // কোডেই edge-to-edge + WindowInsets দিয়ে হ্যান্ডল করা হয় (buildUi() এর ভেতরে দেখুন)।
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         @Suppress("DEPRECATION")
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        window.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
+        )
 
         appointmentId = intent.getStringExtra("appointment_id").orEmpty()
         patientId =
@@ -217,6 +246,7 @@ class ChatActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
+        rootView = root
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -227,6 +257,7 @@ class ChatActivity : AppCompatActivity() {
                 intArrayOf(colorAccent, colorPrimaryDark)
             )
         }
+        headerView = header
 
         val back = IconButtonView(this, IconType.BACK).apply {
             setColor(Color.WHITE)
@@ -246,6 +277,13 @@ class ChatActivity : AppCompatActivity() {
             }
         }
 
+        // FIX: "রোগী"/"ডাক্তার" সাবটাইটেল ফিল্ড বাদ দেওয়া হয়েছে; পরিবর্তে নামের পাশে
+        // একটি সবুজ (অনলাইন) ভেক্টর ডট যুক্ত করা হলো।
+        val nameRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
         titleText = TextView(this).apply {
             text = patientName
             setTextColor(Color.WHITE)
@@ -253,11 +291,20 @@ class ChatActivity : AppCompatActivity() {
             typeface = Typeface.DEFAULT_BOLD
         }
 
-        subtitleText = TextView(this).apply {
-            text = if (myRole == "doctor") "রোগী" else "ডাক্তার"
-            setTextColor(Color.argb(220, 255, 255, 255))
-            textSize = 11f
+        onlineDot = View(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(colorSuccess)
+                setStroke(dp(1), Color.argb(160, 255, 255, 255))
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(8), dp(8)).apply {
+                marginStart = dp(6)
+            }
+            visibility = View.GONE
         }
+
+        nameRow.addView(titleText)
+        nameRow.addView(onlineDot)
 
         typingText = TextView(this).apply {
             text = ""
@@ -266,23 +313,18 @@ class ChatActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        titleColumn.addView(titleText)
-        titleColumn.addView(subtitleText)
+        titleColumn.addView(nameRow)
         titleColumn.addView(typingText)
 
-        val more = IconButtonView(this, IconType.MORE).apply {
-            setColor(Color.WHITE)
-            contentDescription = "আরও অপশন"
-            setOnClickListener { showChatInfo() }
-        }
-
+        // FIX: থ্রি-ডট (⋮) মেনু আইকন ও তার অ্যাকশন সম্পূর্ণ বাদ দেওয়া হয়েছে।
         header.addView(back, LinearLayout.LayoutParams(dp(44), dp(52)))
         header.addView(avatar, LinearLayout.LayoutParams(dp(44), dp(44)))
         header.addView(titleColumn)
-        header.addView(more, LinearLayout.LayoutParams(dp(44), dp(52)))
 
         root.addView(header)
 
+        // FIX: "প্রাইভেট চিকিৎসা চ্যাট" লাইনটি বাদ দেওয়া হয়েছে; স্ট্যাটাস বারে শুধু
+        // সংযোগ স্ট্যাটাস টেক্সট থাকবে (এবং তার মধ্যে "রিয়েলটাইম" শব্দটিও নেই)।
         val statusBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -291,20 +333,13 @@ class ChatActivity : AppCompatActivity() {
         }
 
         statusText = TextView(this).apply {
-            text = "কানেক্ট হচ্ছে..."
+            text = "সংযোগ হচ্ছে..."
             textSize = 11f
             setTextColor(colorMuted)
             layoutParams = LinearLayout.LayoutParams(0, dp(28), 1f)
         }
 
-        val privacy = TextView(this).apply {
-            text = "প্রাইভেট চিকিৎসা চ্যাট"
-            textSize = 10f
-            setTextColor(colorMuted)
-        }
-
         statusBar.addView(statusText)
-        statusBar.addView(privacy)
         root.addView(statusBar)
 
         recyclerView = RecyclerView(this).apply {
@@ -379,6 +414,21 @@ class ChatActivity : AppCompatActivity() {
         root.addView(composer)
 
         setContentView(root)
+
+        // FIX: কীবোর্ড ওভারল্যাপ প্রতিরোধ — decorFitsSystemWindows(false) করার কারণে
+        // এখন সিস্টেম বার/কীবোর্ড ইনসেট নিজেই ম্যানুয়ালি হ্যান্ডল করা হচ্ছে:
+        // - হেডারের টপ প্যাডিং = স্ট্যাটাস বার ইনসেট + স্বাভাবিক প্যাডিং
+        // - রুটের বটম প্যাডিং = কীবোর্ড উঁচু হলে কীবোর্ডের উচ্চতা, নাহলে নেভিগেশন বার ইনসেট
+        // ফলে কম্পোজার (মেসেজ বক্স) কখনো কীবোর্ডের নিচে ঢাকা পড়বে না।
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            headerView.updatePadding(top = dp(12) + systemBars.top)
+            view.updatePadding(bottom = if (imeBottom > 0) imeBottom else systemBars.bottom)
+
+            insets
+        }
     }
 
     private fun openConversation() {
@@ -455,7 +505,7 @@ class ChatActivity : AppCompatActivity() {
 
         realtimeJob = lifecycleScope.launch {
             try {
-                setStatus("রিয়েলটাইম কানেক্ট হচ্ছে...", false)
+                setStatus("সংযোগ হচ্ছে...", false)
 
                 val channelName =
                     "chat-$id-${System.currentTimeMillis()}"
@@ -484,7 +534,7 @@ class ChatActivity : AppCompatActivity() {
                  * subscribe() is suspend in supabase-kt.
                  */
                 realtimeChannelLocal.subscribe(blockUntilSubscribed = true)
-                setStatus("অনলাইন • রিয়েলটাইম", true)
+                setStatus("অনলাইন", true)
 
                 changes.collect { action: PostgresAction ->
                     when (action) {
@@ -517,14 +567,14 @@ class ChatActivity : AppCompatActivity() {
                 realtimeStarted = false
 
                 setStatus(
-                    "রিয়েলটাইম সংযোগ বিচ্ছিন্ন",
+                    "সংযোগ বিচ্ছিন্ন",
                     false
                 )
 
                 if (!isFinishing && !isDestroyed) {
                     Toast.makeText(
                         this@ChatActivity,
-                        "Realtime error: ${e.message ?: "অজানা সমস্যা"}",
+                        "সংযোগ ত্রুটি: ${e.message ?: "অজানা সমস্যা"}",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -871,7 +921,7 @@ class ChatActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // ATTACHMENT VIEWING (image thumbnail loading + open in external app)
+    // ATTACHMENT VIEWING (image thumbnail loading + PDF/image in-app viewers)
     // ------------------------------------------------------------------
 
     private fun parseAttachment(raw: String): JSONObject? {
@@ -943,6 +993,9 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
+    private fun isPdfUrl(nameOrUrl: String): Boolean =
+        nameOrUrl.substringBefore("?").lowercase().endsWith(".pdf")
+
     private fun formatFileSize(bytes: Long): String {
         if (bytes <= 0) return "0 KB"
         val kb = bytes / 1024.0
@@ -953,56 +1006,530 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
-    private fun showChatInfo() {
-        val dialog = android.app.Dialog(this)
+    // ------------------------------------------------------------------
+    // FIX: In-app zoomable image viewer — image attachments now open here
+    // instead of an external app.
+    // ------------------------------------------------------------------
 
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(18), dp(20), dp(18))
-            background = roundedBackground(Color.WHITE, 18f, colorBorder)
-        }
+    private fun openImageViewer(bitmap: Bitmap? = null, url: String? = null, title: String = "ছবি") {
+        val dialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.BLACK))
 
-        val title = TextView(this).apply {
-            text = "চ্যাট তথ্য"
-            textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(colorText)
-        }
-
-        val info = TextView(this).apply {
-            text =
-                "রোগী: ${if (myRole == "doctor") patientName else "ডাক্তার"}\n" +
-                    "Appointment: $appointmentId\n" +
-                    "Conversation: ${conversationId ?: "প্রস্তুত হচ্ছে"}\n" +
-                    "মোড: Supabase Realtime Postgres Changes"
-            textSize = 13f
-            setTextColor(colorMuted)
-            setPadding(0, dp(12), 0, dp(16))
-        }
-
-        val close = TextView(this).apply {
-            text = "বন্ধ করুন"
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(colorPrimary)
-            gravity = Gravity.CENTER
-            background = roundedBackground(
-                Color.parseColor("#E9F5F2"),
-                12f,
-                Color.TRANSPARENT
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
             )
-            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+
+        val zoomImage = ZoomableImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val progress = ProgressBar(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.CENTER }
+            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            visibility = if (bitmap != null) View.GONE else View.VISIBLE
+        }
+
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(34), dp(14), dp(14))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.argb(190, 0, 0, 0), Color.TRANSPARENT)
+            )
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.TOP }
+        }
+
+        val closeBtn = IconButtonView(this, IconType.CLOSE).apply {
+            setColor(Color.WHITE)
+            background = roundedBackground(Color.argb(60, 255, 255, 255), 30f, Color.TRANSPARENT)
+            contentDescription = "বন্ধ করুন"
             setOnClickListener { dialog.dismiss() }
         }
 
-        box.addView(title)
-        box.addView(info)
-        box.addView(close)
+        val titleView = TextView(this).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply { marginStart = dp(12) }
+        }
 
-        dialog.setContentView(box)
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        topBar.addView(closeBtn, LinearLayout.LayoutParams(dp(34), dp(34)))
+        topBar.addView(titleView)
+
+        root.addView(zoomImage)
+        root.addView(progress)
+        root.addView(topBar)
+        dialog.setContentView(root)
+        dialog.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
         dialog.show()
+
+        fun applyBitmap(bmp: Bitmap) {
+            progress.visibility = View.GONE
+            zoomImage.setImageBitmap(bmp)
+            zoomImage.resetZoomFit()
+        }
+
+        if (bitmap != null) {
+            applyBitmap(bitmap)
+        } else if (url != null) {
+            val cached = imageCache.get(url)
+            if (cached != null) {
+                applyBitmap(cached)
+            } else {
+                lifecycleScope.launch {
+                    try {
+                        val bmp = withContext(Dispatchers.IO) { downloadBitmap(url) }
+                        if (bmp != null) {
+                            imageCache.put(url, bmp)
+                            applyBitmap(bmp)
+                        } else {
+                            progress.visibility = View.GONE
+                            Toast.makeText(this@ChatActivity, "ছবি লোড করা যায়নি", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        progress.visibility = View.GONE
+                        Toast.makeText(
+                            this@ChatActivity,
+                            "ছবি লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+        }
     }
+
+    private class ZoomableImageView(context: android.content.Context) : ImageView(context) {
+        private val imgMatrix = Matrix()
+        private var lastX = 0f
+        private var lastY = 0f
+        private var isDragging = false
+        private var minScale = 1f
+        private val maxScale = 8f
+        private var currentScale = 1f
+
+        private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                var factor = detector.scaleFactor
+                val projected = currentScale * factor
+                if (projected < minScale) factor = minScale / currentScale
+                if (projected > maxScale) factor = maxScale / currentScale
+                currentScale *= factor
+                imgMatrix.postScale(factor, factor, detector.focusX, detector.focusY)
+                imageMatrix = imgMatrix
+                return true
+            }
+        })
+
+        init {
+            scaleType = ScaleType.MATRIX
+            setOnTouchListener { _, event ->
+                scaleDetector.onTouchEvent(event)
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        lastX = event.x; lastY = event.y; isDragging = true
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        if (isDragging && !scaleDetector.isInProgress) {
+                            val dx = event.x - lastX
+                            val dy = event.y - lastY
+                            imgMatrix.postTranslate(dx, dy)
+                            imageMatrix = imgMatrix
+                            lastX = event.x; lastY = event.y
+                        }
+                    }
+                    android.view.MotionEvent.ACTION_UP,
+                    android.view.MotionEvent.ACTION_POINTER_UP,
+                    android.view.MotionEvent.ACTION_CANCEL -> {
+                        isDragging = false
+                    }
+                }
+                true
+            }
+        }
+
+        fun resetZoomFit() {
+            post {
+                val d = drawable ?: return@post
+                val vw = width.toFloat()
+                val vh = height.toFloat()
+                val dw = d.intrinsicWidth.toFloat()
+                val dh = d.intrinsicHeight.toFloat()
+                if (vw <= 0 || vh <= 0 || dw <= 0 || dh <= 0) return@post
+                val scale = minOf(vw / dw, vh / dh)
+                minScale = scale
+                currentScale = scale
+                imgMatrix.reset()
+                imgMatrix.postScale(scale, scale)
+                imgMatrix.postTranslate((vw - dw * scale) / 2f, (vh - dh * scale) / 2f)
+                imageMatrix = imgMatrix
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // FIX: In-app swipeable, lazy-loading PDF viewer — PDF attachments now
+    // open here instead of an external app. Other document types (doc,
+    // docx, txt) still open externally via openAttachmentUrl().
+    // ------------------------------------------------------------------
+
+    private fun downloadToTempPdfFile(urlString: String): File {
+        val connection = URL(urlString).openConnection() as HttpURLConnection
+        connection.connectTimeout = 15000
+        connection.readTimeout = 15000
+        connection.doInput = true
+        connection.connect()
+        val bytes = connection.inputStream.use { it.readBytes() }
+        val file = File(cacheDir, "chat_pdf_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(file).use { it.write(bytes) }
+        return file
+    }
+
+    private data class PdfViewerViews(
+        val root: FrameLayout,
+        val viewPager: ViewPager2,
+        val progress: ProgressBar,
+        val loadingLabel: TextView,
+        val titleText: TextView,
+        val pageIndicator: TextView,
+        val closeBtn: View
+    )
+
+    private fun buildPdfViewerViews(bgColor: Int, title: String): PdfViewerViews {
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(bgColor)
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val viewPager = ViewPager2(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            offscreenPageLimit = 1
+            visibility = View.GONE
+        }
+
+        val progress = ProgressBar(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.CENTER }
+            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+        }
+
+        val loadingLabel = TextView(this).apply {
+            text = "PDF লোড হচ্ছে, একটু অপেক্ষা করুন..."
+            setTextColor(Color.parseColor("#CCCCCC"))
+            textSize = 11.5f
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.CENTER
+                topMargin = dp(56)
+            }
+        }
+
+        val pageIndicator = TextView(this).apply {
+            text = ""
+            setTextColor(Color.WHITE)
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT_BOLD
+            background = roundedBackground(Color.argb(160, 0, 0, 0), 30f, Color.TRANSPARENT)
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(22)
+            }
+        }
+
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(34), dp(14), dp(14))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.argb(210, 0, 0, 0), Color.TRANSPARENT)
+            )
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.TOP }
+        }
+
+        val closeBtn = IconButtonView(this, IconType.CLOSE).apply {
+            setColor(Color.WHITE)
+            background = roundedBackground(Color.argb(60, 255, 255, 255), 30f, Color.TRANSPARENT)
+            contentDescription = "বন্ধ করুন"
+        }
+
+        val titleView = TextView(this).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply { marginStart = dp(12) }
+        }
+
+        topBar.addView(closeBtn, LinearLayout.LayoutParams(dp(34), dp(34)))
+        topBar.addView(titleView)
+
+        root.addView(viewPager)
+        root.addView(progress)
+        root.addView(loadingLabel)
+        root.addView(pageIndicator)
+        root.addView(topBar)
+
+        return PdfViewerViews(root, viewPager, progress, loadingLabel, titleView, pageIndicator, closeBtn)
+    }
+
+    private fun openPdfViewer(url: String, title: String = "ডকুমেন্ট") {
+        if (url.isBlank()) {
+            Toast.makeText(this, "ফাইল লিংক পাওয়া যায়নি", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val dialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val bgColor = Color.parseColor("#1A1A1A")
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bgColor))
+
+        val views = buildPdfViewerViews(bgColor, title)
+        views.closeBtn.setOnClickListener { dialog.dismiss() }
+        dialog.setContentView(views.root)
+        dialog.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
+        dialog.show()
+
+        lifecycleScope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) { downloadToTempPdfFile(url) }
+                openSwipeablePdf(file, views, title, dialog)
+            } catch (e: Exception) {
+                views.progress.visibility = View.GONE
+                views.loadingLabel.visibility = View.GONE
+                Toast.makeText(
+                    this@ChatActivity,
+                    "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private suspend fun openSwipeablePdf(
+        file: File,
+        views: PdfViewerViews,
+        title: String,
+        dialog: android.app.Dialog
+    ) {
+        val pfd = withContext(Dispatchers.IO) { ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY) }
+        val renderer = try {
+            PdfRenderer(pfd)
+        } catch (e: Exception) {
+            withContext(Dispatchers.IO) {
+                try { pfd.close() } catch (ex: Exception) { }
+                try { file.delete() } catch (ex: Exception) { }
+            }
+            throw e
+        }
+        val pageCount = renderer.pageCount
+
+        views.progress.visibility = View.GONE
+        views.loadingLabel.visibility = View.GONE
+        views.titleText.text = "$title ($pageCount পৃষ্ঠা)"
+        views.pageIndicator.visibility = if (pageCount > 1) View.VISIBLE else View.GONE
+        views.pageIndicator.text = "1 / $pageCount"
+
+        // FIX: PdfRenderer থ্রেড-সেফ নয়, তাই একসাথে একাধিক পেইজ রেন্ডার হওয়া ঠেকাতে Mutex ব্যবহার করা হচ্ছে।
+        val rendererMutex = Mutex()
+        val screenWidthPx = resources.displayMetrics.widthPixels
+        val adapter = PdfPageAdapter(this@ChatActivity, renderer, rendererMutex, pageCount, screenWidthPx, lifecycleScope)
+
+        views.viewPager.adapter = adapter
+        views.viewPager.visibility = View.VISIBLE
+        views.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageSelected(position: Int) {
+                views.pageIndicator.text = "${position + 1} / $pageCount"
+            }
+        })
+
+        dialog.setOnDismissListener {
+            adapter.cancelAllAndClear()
+            try { renderer.close() } catch (e: Exception) { }
+            lifecycleScope.launch(Dispatchers.IO) {
+                try { pfd.close() } catch (e: Exception) { }
+                try { file.delete() } catch (e: Exception) { }
+            }
+        }
+    }
+
+    // FIX: ViewPager2 এর RecyclerView.Adapter — প্রতিটা পেইজ শুধু স্ক্রিনে আসার সময়
+    // (lazy-loading) রেন্ডার হয়, এবং সাম্প্রতিক কয়েকটি বাদে বাকি bitmap ক্যাশ থেকে
+    // সরিয়ে recycle করে দেয় যাতে মেমোরি কম লাগে। পেইজে ট্যাপ করলে ইন-অ্যাপ পিঞ্চ-জুম
+    // ইমেজ ভিউয়ার খোলে (openImageViewer পুনঃব্যবহার করে)।
+    private class PdfPageAdapter(
+        private val activity: ChatActivity,
+        private val renderer: PdfRenderer,
+        private val rendererMutex: Mutex,
+        private val pageCount: Int,
+        private val screenWidthPx: Int,
+        private val scope: CoroutineScope
+    ) : RecyclerView.Adapter<PdfPageAdapter.PageViewHolder>() {
+
+        private val maxCacheSize = activity.PDF_PAGE_CACHE_SIZE
+        private val bitmapCache = object : LinkedHashMap<Int, Bitmap>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Bitmap>): Boolean {
+                if (size > maxCacheSize) {
+                    val bmp = eldest.value
+                    if (!bmp.isRecycled) bmp.recycle()
+                    return true
+                }
+                return false
+            }
+        }
+        private val renderJobs = mutableMapOf<Int, Job>()
+
+        inner class PageViewHolder(
+            val frame: FrameLayout,
+            val imageView: ImageView,
+            val progress: ProgressBar
+        ) : RecyclerView.ViewHolder(frame)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PageViewHolder {
+            val frame = FrameLayout(activity).apply {
+                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            }
+            val imageView = ImageView(activity).apply {
+                adjustViewBounds = true
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                    val m = activity.dp(10)
+                    setMargins(m, m, m, m)
+                }
+                isClickable = true
+                isFocusable = true
+            }
+            val progress = ProgressBar(activity).apply {
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = Gravity.CENTER
+                }
+                indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            }
+            frame.addView(imageView)
+            frame.addView(progress)
+            return PageViewHolder(frame, imageView, progress)
+        }
+
+        override fun onBindViewHolder(holder: PageViewHolder, position: Int) {
+            val cached = bitmapCache[position]
+            if (cached != null && !cached.isRecycled) {
+                holder.imageView.setImageBitmap(cached)
+                holder.progress.visibility = View.GONE
+            } else {
+                holder.imageView.setImageBitmap(null)
+                holder.progress.visibility = View.VISIBLE
+                renderJobs[position]?.cancel()
+                val job = scope.launch {
+                    val bmp = renderPage(position)
+                    if (bmp != null) {
+                        bitmapCache[position] = bmp
+                        if (holder.bindingAdapterPosition == position) {
+                            holder.imageView.setImageBitmap(bmp)
+                            holder.progress.visibility = View.GONE
+                        }
+                    } else if (holder.bindingAdapterPosition == position) {
+                        holder.progress.visibility = View.GONE
+                    }
+                }
+                renderJobs[position] = job
+            }
+            holder.imageView.setOnClickListener {
+                val bmp = bitmapCache[position]
+                if (bmp != null && !bmp.isRecycled) {
+                    activity.openImageViewer(bitmap = bmp, title = "পৃষ্ঠা ${position + 1}/$pageCount")
+                }
+            }
+        }
+
+        override fun onViewRecycled(holder: PageViewHolder) {
+            val pos = holder.bindingAdapterPosition
+            renderJobs[pos]?.cancel()
+            renderJobs.remove(pos)
+            holder.imageView.setOnClickListener(null)
+        }
+
+        override fun getItemCount(): Int = pageCount
+
+        fun cancelAllAndClear() {
+            renderJobs.values.forEach { it.cancel() }
+            renderJobs.clear()
+            bitmapCache.values.forEach { if (!it.isRecycled) it.recycle() }
+            bitmapCache.clear()
+        }
+
+        private suspend fun renderPage(index: Int): Bitmap? = withContext(Dispatchers.IO) {
+            rendererMutex.withLock {
+                try {
+                    val page = renderer.openPage(index)
+                    val rawScale = (screenWidthPx.toFloat() / page.width.toFloat()) * 2f
+                    val safeScale = rawScale.coerceIn(1f, 4f)
+                    val outW = (page.width * safeScale).toInt().coerceAtLeast(1)
+                    val outH = (page.height * safeScale).toInt().coerceAtLeast(1)
+                    val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+                    Canvas(bmp).drawColor(Color.WHITE)
+                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    page.close()
+                    bmp
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Shared helpers
+    // ------------------------------------------------------------------
 
     private fun setStatus(text: String, online: Boolean) {
         runOnUiThread {
@@ -1010,6 +1537,7 @@ class ChatActivity : AppCompatActivity() {
             statusText.setTextColor(
                 if (online) colorSuccess else colorMuted
             )
+            onlineDot.visibility = if (online) View.VISIBLE else View.GONE
         }
     }
 
@@ -1133,7 +1661,6 @@ class ChatActivity : AppCompatActivity() {
 
     private enum class IconType {
         BACK,
-        MORE,
         ATTACH,
         SEND,
         PRESCRIPTION,
@@ -1222,7 +1749,6 @@ class ChatActivity : AppCompatActivity() {
 
             when (type) {
                 IconType.BACK -> drawBack(canvas, cx, cy, s)
-                IconType.MORE -> drawMore(canvas, cx, cy, s)
                 IconType.ATTACH -> drawAttach(canvas, cx, cy, s)
                 IconType.SEND -> drawSend(canvas, cx, cy, s)
                 IconType.PRESCRIPTION -> drawPrescription(canvas, cx, cy, s)
@@ -1239,14 +1765,6 @@ class ChatActivity : AppCompatActivity() {
             c.drawLine(x + s, y, x - s, y, paint)
             c.drawLine(x - s, y, x, y - s, paint)
             c.drawLine(x - s, y, x, y + s, paint)
-        }
-
-        private fun drawMore(c: Canvas, x: Float, y: Float, s: Float) {
-            paint.style = Paint.Style.FILL
-            c.drawCircle(x - s, y, 2.4f, paint)
-            c.drawCircle(x, y, 2.4f, paint)
-            c.drawCircle(x + s, y, 2.4f, paint)
-            paint.style = Paint.Style.STROKE
         }
 
         private fun drawAttach(c: Canvas, x: Float, y: Float, s: Float) {
@@ -1586,6 +2104,7 @@ class ChatActivity : AppCompatActivity() {
                 val url = attachment.optString("url", "")
 
                 if (mimeType.startsWith("image/")) {
+                    // FIX: ছবি প্রেভিউ ক্লিক করলে এখন ইন-অ্যাপ Zoomable Viewer খোলে।
                     val imageView = ImageView(this@ChatActivity).apply {
                         scaleType = ImageView.ScaleType.CENTER_CROP
                         background = roundedBackground(
@@ -1595,7 +2114,7 @@ class ChatActivity : AppCompatActivity() {
                         )
                         layoutParams = LinearLayout.LayoutParams(dp(180), dp(180))
                         isClickable = true
-                        setOnClickListener { openAttachmentUrl(url, mimeType) }
+                        setOnClickListener { openImageViewer(url = url, title = fileName) }
                     }
                     bubble.addView(imageView)
                     if (url.isNotBlank()) {
@@ -1612,11 +2131,20 @@ class ChatActivity : AppCompatActivity() {
                     }
                     bubble.addView(caption)
                 } else {
+                    // FIX: PDF হলে ইন-অ্যাপ Swipeable/Lazy-load PDF Viewer খোলে,
+                    // অন্য ফাইল টাইপের জন্য আগের মতো এক্সটার্নাল অ্যাপে খোলে।
+                    val isPdf =
+                        mimeType == "application/pdf" ||
+                            isPdfUrl(fileName) ||
+                            (url.isNotBlank() && isPdfUrl(url))
+
                     val row = LinearLayout(this@ChatActivity).apply {
                         orientation = LinearLayout.HORIZONTAL
                         gravity = Gravity.CENTER_VERTICAL
                         isClickable = true
-                        setOnClickListener { openAttachmentUrl(url, mimeType) }
+                        setOnClickListener {
+                            if (isPdf) openPdfViewer(url, fileName) else openAttachmentUrl(url, mimeType)
+                        }
                     }
 
                     val icon = IconButtonView(this@ChatActivity, IconType.DOCUMENT).apply {
@@ -1644,7 +2172,7 @@ class ChatActivity : AppCompatActivity() {
                     }
 
                     val sizeText = TextView(this@ChatActivity).apply {
-                        this.text = formatFileSize(fileSize) + " • ফাইল দেখতে ট্যাপ করুন"
+                        this.text = formatFileSize(fileSize) + if (isPdf) " • PDF দেখতে ট্যাপ করুন" else " • ফাইল দেখতে ট্যাপ করুন"
                         textSize = 10f
                         setTextColor(
                             if (mine) Color.argb(220, 255, 255, 255) else colorMuted
