@@ -733,4 +733,45 @@ object SupabaseClient {
     } catch (e: Exception) {
         Result.failure(e)
     }
+    suspend fun getOrCreateConversation(appointmentId: String, patientId: String): org.json.JSONObject {
+    // 1. আগে আছে কিনা দেখো
+    val existing = try {
+        get("conversations?appointment_id=eq.${enc(appointmentId)}&limit=1")
+    } catch (e: Exception) {
+        org.json.JSONArray()
+    }
+    if (existing.length() > 0) {
+        return existing.getJSONObject(0)
+    }
+    // 2. না থাকলে বানাও - appointment_id unique তাই একটাই রুম হবে
+    val json = org.json.JSONObject().apply {
+        put("appointment_id", appointmentId)
+        put("patient_id", patientId)
+        put("doctor_id", DOCTOR_PHONE)
+        put("last_message", "")
+    }
+    val rows = post("conversations", json)
+    return rows.getJSONObject(0)
+}
+
+suspend fun getMessages(conversationId: String): org.json.JSONArray {
+    return get("messages?conversation_id=eq.${enc(conversationId)}&order=created_at.asc&limit=200")
+}
+
+suspend fun sendMessage(conversationId: String, senderId: String, senderRole: String, text: String): org.json.JSONObject {
+    val json = org.json.JSONObject().apply {
+        put("conversation_id", conversationId)
+        put("sender_id", senderId)
+        put("sender_role", senderRole) // doctor / patient
+        put("message", text)
+    }
+    val rows = post("messages", json)
+    // last_message আপডেট যাতে লিস্টে দেখা যায়
+    try {
+        patch("conversations?id=eq.${enc(conversationId)}", org.json.JSONObject().apply {
+            put("last_message", text)
+            put("last_message_at", "now()")
+        })
+    } catch (e: Exception) {}
+    return rows.getJSONObject(0)
 }
