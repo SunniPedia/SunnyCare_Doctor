@@ -30,6 +30,9 @@
         <activity android:name=".AdminPaymentVerificationActivity" android:exported="false" />
 		<activity android:name=".BookAppointmentActivity" android:exported="false" />
         <activity android:name=".DebugActivity" android:exported="false" />
+		<activity android:name=".ChatActivity" android:exported="false" />
+		<activity android:name=".VideocallActivity" android:exported="false" />
+		<activity android:name=".AudiocallActivity" android:exported="false" />
 		<activity
             android:name=".LoginActivity"
             android:exported="false" />
