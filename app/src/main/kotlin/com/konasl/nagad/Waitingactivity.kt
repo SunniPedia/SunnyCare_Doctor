@@ -31,34 +31,6 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-/**
- * ============================================================================
- * WaitingActivity
- * ============================================================================
- * HomeActivity তে "আসন্ন অ্যাপয়েন্টমেন্ট" কার্ডে (যখন status == confirmed &&
- * slot_open == true থাকে) ক্লিক করলে এই একটিভিটি ওপেন হয়।
- *
- * এই একটিভিটিতে যা যা থাকে:
- * - রোগীর অ্যাপয়েন্টমেন্টের তথ্য (নাম, ফোন, তারিখ, সময়, কারণ)
- * - মাঝখানে একটি লাইভ কাউন্টডাউন — দিন/ঘণ্টা/মিনিট/সেকেন্ড আলাদা আলাদা বক্সে
- *   দেখানো হয়, প্রতি ১ সেকেন্ডে আপডেট হয়
- * - প্রতি ১০ সেকেন্ডে Supabase থেকে সার্ভার-সাইড স্ট্যাটাস চেক করা হয়;
- *   অ্যাপয়েন্টমেন্ট cancelled/completed হয়ে গেলে বা স্লট আবার বন্ধ হয়ে
- *   গেলে সাথে সাথে ইউজারকে জানানো হয়
- * - ডাক্তারের সাথে যোগাযোগের জন্য Chat / Video Call / Audio Call — তিনটা
- *   ভেক্টর-আইকন বাটন। কাউন্টডাউন শেষ না হওয়া পর্যন্ত এগুলো "লকড" অবস্থায়
- *   থাকে (ধূসর, লক-আইকন সহ); লকড অবস্থায় ট্যাপ করলে একটা কাস্টম ডায়ালগ
- *   দেখিয়ে জানানো হয় যে এখনো সময় হয়নি এবং বাকি কতটুকু সময় আছে। কাউন্টডাউন
- *   শেষ হওয়ার সাথে সাথেই বাটনগুলো স্বয়ংক্রিয়ভাবে সক্রিয় (রঙিন) হয়ে যায় এবং
- *   ট্যাপ করলে সরাসরি ChatActivity / VideocallActivity / AudiocallActivity
- *   Intent দিয়ে ওপেন হয়।
- * - সম্পূর্ণ UI কোনো ইমুজি বা ফন্ট-ক্যারেক্টার ছাড়াই, Canvas/Paint দিয়ে আঁকা
- *   ভেক্টর আইকন দিয়ে তৈরি।
- *
- * Intent extras (HomeActivity থেকে পাঠানো হয়):
- *   appointment_id, patient_name, phone, preferred_date, preferred_time, reason
- * ============================================================================
- */
 class WaitingActivity : AppCompatActivity() {
 
     private val colorPrimary = Color.parseColor("#0F6C61")
@@ -75,7 +47,6 @@ class WaitingActivity : AppCompatActivity() {
     private val colorInfo = Color.parseColor("#2563EB")
     private val colorLockedBg = Color.parseColor("#E5E7EB")
 
-    // সিরিয়ালের জন্য কল করার নাম্বার (HomeActivity এর মতোই)
     private val doctorSerialPhone = "01660029028"
 
     private var appointmentId: String = ""
@@ -87,7 +58,6 @@ class WaitingActivity : AppCompatActivity() {
 
     private var targetMillis: Long? = null
 
-    // নতুন — কাউন্টডাউন শেষ হয়েছে কিনা (এর ওপর ভিত্তি করেই Chat/Video/Audio বাটন আনলক হয়)
     private var isCountdownFinished = false
 
     private lateinit var countdownLabelText: TextView
@@ -95,7 +65,6 @@ class WaitingActivity : AppCompatActivity() {
     private lateinit var statusMessageText: TextView
     private lateinit var infoCard: LinearLayout
 
-    // কাউন্টডাউন ইউনিট বক্সগুলোর রেফারেন্স (দিন/ঘণ্টা/মিনিট/সেকেন্ড)
     private lateinit var daysBox: LinearLayout
     private lateinit var daysColon: TextView
     private lateinit var daysValueText: TextView
@@ -103,7 +72,6 @@ class WaitingActivity : AppCompatActivity() {
     private lateinit var minutesValueText: TextView
     private lateinit var secondsValueText: TextView
 
-    // যোগাযোগ সেকশন
     private lateinit var commSubtitle: TextView
     private val commButtons = mutableListOf<CommButtonViews>()
 
@@ -117,11 +85,9 @@ class WaitingActivity : AppCompatActivity() {
         val targetActivity: Class<*>
     )
 
-    // প্রতি সেকেন্ডে কাউন্টডাউন আপডেট
     private val tickHandler = Handler(Looper.getMainLooper())
     private var tickRunnable: Runnable? = null
 
-    // প্রতি ১০ সেকেন্ডে সার্ভার স্ট্যাটাস পোল
     private val pollHandler = Handler(Looper.getMainLooper())
     private var pollRunnable: Runnable? = null
     private val POLL_INTERVAL_MS = 10_000L
@@ -152,9 +118,6 @@ class WaitingActivity : AppCompatActivity() {
         stopStatusPolling()
     }
 
-    // ------------------------------------------------------------------
-    // UI বানানো
-    // ------------------------------------------------------------------
     private fun buildUi() {
         val root = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -174,7 +137,6 @@ class WaitingActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(40))
         }
 
-        // ---------------- হেডার ----------------
         val headerContainer = FrameLayout(this).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
@@ -191,7 +153,6 @@ class WaitingActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), dp(40), dp(20), dp(26))
         }
-        // ইমুজি/টেক্সট অ্যারো ("←") নয় — সম্পূর্ণ Canvas-ভেক্টর ব্যাক আইকন
         val backBtn = ImageView(this).apply {
             setImageDrawable(BackArrowDrawable(Color.WHITE, dp(2).toFloat()))
             background = roundedBg(Color.argb(46, 255, 255, 255), 30f)
@@ -215,7 +176,6 @@ class WaitingActivity : AppCompatActivity() {
         headerRow.addView(headerTextCol)
         headerContainer.addView(headerRow)
 
-        // ---------------- কাউন্টডাউন কার্ড ----------------
         val countdownCardWrap = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(dp(18), dp(-26), dp(18), 0)
@@ -250,8 +210,6 @@ class WaitingActivity : AppCompatActivity() {
         }
         countdownCard.addView(countdownLabelText)
 
-        // নতুন — একক বড় টেক্সটের বদলে দিন/ঘণ্টা/মিনিট/সেকেন্ড আলাদা আলাদা "বক্সে" দেখানো হয়,
-        // দেখতে অনেক বেশি স্পষ্ট ও প্রফেশনাল
         val unitsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -285,7 +243,6 @@ class WaitingActivity : AppCompatActivity() {
 
         countdownCardWrap.addView(countdownCard)
 
-        // ---------------- স্ট্যাটাস ব্যানার ----------------
         val statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -319,7 +276,6 @@ class WaitingActivity : AppCompatActivity() {
         statusRow.addView(statusCol)
         statusRow.addView(statusBadge)
 
-        // ---------------- নতুন — ডাক্তারের সাথে যোগাযোগ (Chat/Video/Audio) ----------------
         val commCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(colorCard, 20f)
@@ -344,7 +300,6 @@ class WaitingActivity : AppCompatActivity() {
         commRow.addView(buildCommActionCard("অডিও কল", AudioCallIconDrawable(Color.WHITE), colorAccent, "অডিও কল", AudiocallActivity::class.java))
         commCard.addView(commRow)
 
-        // ---------------- অ্যাপয়েন্টমেন্ট তথ্য কার্ড ----------------
         infoCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(colorCard, 20f)
@@ -362,7 +317,6 @@ class WaitingActivity : AppCompatActivity() {
         infoCard.addView(infoRow("সময়", preferredTime.ifEmpty { "—" }))
         infoCard.addView(infoRow("সমস্যার বিবরণ", reason.ifEmpty { "সাধারণ পরামর্শ" }))
 
-        // ---------------- সিরিয়ালের জন্য কল করুন বাটন ----------------
         val callRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -394,7 +348,6 @@ class WaitingActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
         })
 
-        // ---------------- নোট ----------------
         val noteText = text(
             "দ্রষ্টব্য: কাউন্টডাউন আপনার বুক করা সময় অনুযায়ী দেখানো হচ্ছে। ক্লিনিকের প্রকৃত সিরিয়াল কিছুটা এগিয়ে-পিছিয়ে যেতে পারে, তাই স্ট্যাটাস দেখে প্রস্তুত থাকুন।",
             11f, Typeface.NORMAL, colorTextMuted, Gravity.START
@@ -416,7 +369,6 @@ class WaitingActivity : AppCompatActivity() {
         setContentView(root)
     }
 
-    /** কাউন্টডাউনের একটা একক ইউনিট (যেমন "ঘণ্টা") — উপরে সংখ্যা, নিচে লেবেল */
     private fun timeUnitBox(labelText: String): Pair<LinearLayout, TextView> {
         val valueText = TextView(this).apply {
             textSize = 22f
@@ -448,7 +400,6 @@ class WaitingActivity : AppCompatActivity() {
         setPadding(dp(4), 0, dp(4), 0)
     }
 
-    /** Chat/Video/Audio বাটনগুলোর জন্য একটা আইকন-সার্কেল + লেবেল কার্ড তৈরি করে, লক-স্টেট সহ */
     private fun buildCommActionCard(
         label: String,
         icon: Drawable,
@@ -497,11 +448,6 @@ class WaitingActivity : AppCompatActivity() {
         return root
     }
 
-    /**
-     * Chat/Video/Audio বাটনে ক্লিক করলে এখানে আসে —
-     * কাউন্টডাউন শেষ হয়ে থাকলে সরাসরি সংশ্লিষ্ট একটিভিটি Intent দিয়ে ওপেন হয়,
-     * নাহলে একটা কাস্টম ডায়ালগ দেখিয়ে বাকি সময় জানিয়ে দেওয়া হয়।
-     */
     private fun onCommButtonClicked(targetActivity: Class<*>, featureLabel: String) {
         if (isCountdownFinished) {
             startActivity(Intent(this, targetActivity).apply {
@@ -518,7 +464,6 @@ class WaitingActivity : AppCompatActivity() {
         }
     }
 
-    /** কাউন্টডাউন শেষ হওয়ার আগে Chat/Video/Audio বাটনে ক্লিক করলে দেখানো কাস্টম ডায়ালগ */
     private fun showNotYetReadyDialog(featureLabel: String) {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
@@ -531,7 +476,8 @@ class WaitingActivity : AppCompatActivity() {
             setPadding(dp(24), dp(28), dp(24), dp(22))
         }
         card.addView(ImageView(this).apply {
-            setImageDrawable(LockIconDrawable(Color.WHITE, dp(2f)))
+            // FIX: added .toFloat() — dp(2f) returns Int, constructor expects Float
+            setImageDrawable(LockIconDrawable(Color.WHITE, dp(2f).toFloat()))
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(colorPrimaryLight, colorPrimaryDark)
@@ -568,7 +514,6 @@ class WaitingActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /** ডায়ালগে দেখানোর জন্য বাকি সময়ের সংক্ষিপ্ত, মানুষ-পঠনযোগ্য বর্ণনা */
     private fun remainingTimeSummary(): String {
         val target = targetMillis ?: return "শীঘ্রই"
         val diff = target - System.currentTimeMillis()
@@ -585,7 +530,6 @@ class WaitingActivity : AppCompatActivity() {
         }
     }
 
-    /** কাউন্টডাউন শেষ হওয়ার সাথে সাথেই Chat/Video/Audio বাটনগুলোর রঙ, আইকন-টিন্ট ও লক-ব্যাজ আপডেট হয় */
     private fun updateCommunicationButtonsUi() {
         commButtons.forEach { cb ->
             if (isCountdownFinished) {
@@ -641,11 +585,6 @@ class WaitingActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------------------------------
-    // কাউন্টডাউন লজিক
-    // ------------------------------------------------------------------
-
-    /** preferred_date ও preferred_time স্ট্রিং থেকে টার্গেট টাইমস্ট্যাম্প বের করার চেষ্টা করে; সম্ভব না হলে null */
     private fun computeTargetMillis(dateStr: String, timeStr: String): Long? {
         if (dateStr.isBlank()) return null
         val datePatterns = listOf("yyyy-MM-dd", "dd-MM-yyyy", "dd/MM/yyyy", "MM/dd/yyyy", "yyyy/MM/dd")
@@ -659,7 +598,6 @@ class WaitingActivity : AppCompatActivity() {
                     val parsed = sdf.parse("${dateStr.trim()} $cleanTime")
                     if (parsed != null) return parsed.time
                 } catch (e: Exception) {
-                    // এই ফরম্যাটে মিলেনি, পরের ফরম্যাট চেষ্টা করা হবে
                 }
             }
         }
@@ -708,7 +646,6 @@ class WaitingActivity : AppCompatActivity() {
         setUnits(days, hours, minutes, seconds)
     }
 
-    /** টার্গেট সময় পার হয়ে গেলে বা হিসাব করা না গেলে (উভয় ক্ষেত্রেই আটকে না রেখে) একবারই বাটন আনলক করে */
     private fun markCountdownFinishedIfNeeded() {
         if (!isCountdownFinished) {
             isCountdownFinished = true
@@ -738,9 +675,6 @@ class WaitingActivity : AppCompatActivity() {
         secondsValueText.text = String.format(Locale.US, "%02d", seconds)
     }
 
-    // ------------------------------------------------------------------
-    // সার্ভার-সাইড স্ট্যাটাস পোলিং (প্রতি ১০ সেকেন্ড)
-    // ------------------------------------------------------------------
     private fun startStatusPolling() {
         stopStatusPolling()
         if (appointmentId.isBlank()) return
@@ -802,7 +736,6 @@ class WaitingActivity : AppCompatActivity() {
                     }
                 }
             }
-            // ব্যর্থ হলে চুপচাপ স্কিপ, পরের পোলে আবার চেষ্টা হবে
         }
     }
 
@@ -816,9 +749,6 @@ class WaitingActivity : AppCompatActivity() {
         stopCountdown()
     }
 
-    // ------------------------------------------------------------------
-    // UI helpers
-    // ------------------------------------------------------------------
     private fun text(t: String, sizeSp: Float, style: Int, color: Int, gravity: Int): TextView = TextView(this).apply {
         text = t; textSize = sizeSp; setTypeface(null, style); setTextColor(color); this.gravity = gravity
     }
@@ -834,17 +764,10 @@ class WaitingActivity : AppCompatActivity() {
         setColor(color)
     }
 
-    // ------------------------------------------------------------------
-    // TintableIcon — যেসব কাস্টম ভেক্টর আইকনের রঙ রানটাইমে বদলানো দরকার
-    // (লকড/আনলকড অবস্থা অনুযায়ী), তারা এই ইন্টারফেস ইমপ্লিমেন্ট করে
-    // ------------------------------------------------------------------
     private interface TintableIcon {
         fun updateTint(color: Int)
     }
 
-    // ------------------------------------------------------------------
-    // BackArrowDrawable — ব্যাক বাটনের জন্য সম্পূর্ণ ভেক্টর-আঁকা (Canvas/Paint দিয়ে) অ্যারো আইকন
-    // ------------------------------------------------------------------
     private class BackArrowDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -877,10 +800,6 @@ class WaitingActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // LockIconDrawable — কাউন্টডাউন শেষ না হওয়া পর্যন্ত Chat/Video/Audio বাটনে
-    // দেখানো "লক" ভেক্টর আইকন
-    // ------------------------------------------------------------------
     private class LockIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
         private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -912,10 +831,6 @@ class WaitingActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // ChatIconDrawable — স্পিচ-বাবল + তিনটা টাইপিং-ডট, চ্যাট বাটনের ভেক্টর আইকন।
-    // TintableIcon ইমপ্লিমেন্ট করে যাতে লক/আনলক অবস্থায় রঙ বদলানো যায়।
-    // ------------------------------------------------------------------
     private class ChatIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable(), TintableIcon {
         private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -958,9 +873,6 @@ class WaitingActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // VideoCallIconDrawable — ক্যামেরা-বডি + লেন্স ত্রিভুজ, ভিডিও কল বাটনের ভেক্টর আইকন
-    // ------------------------------------------------------------------
     private class VideoCallIconDrawable(iconColor: Int) : Drawable(), TintableIcon {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
@@ -992,10 +904,6 @@ class WaitingActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // AudioCallIconDrawable — ক্লাসিক ফোন-হ্যান্ডসেট সিলুয়েট, অডিও কল বাটনের ভেক্টর আইকন
-    // (Bezier কার্ভ দিয়ে আঁকা, কোনো র‍্যাস্টার/ইমুজি নয়)
-    // ------------------------------------------------------------------
     private class AudioCallIconDrawable(iconColor: Int) : Drawable(), TintableIcon {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
