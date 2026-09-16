@@ -483,7 +483,7 @@ class ChatActivity : AppCompatActivity() {
                  * which differs between supabase-kt versions.
                  */
                 val changes =
-                    channel.postgresChangeFlow<PostgresAction>(
+                    realtimeChannelLocal.postgresChangeFlow<PostgresAction>(
                         schema = "public"
                     )
 
@@ -494,25 +494,22 @@ class ChatActivity : AppCompatActivity() {
                 realtimeChannelLocal.subscribe(blockUntilSubscribed = true)
                 setStatus("অনলাইন • রিয়েলটাইম", true)
 
-                realtimeChannelLocal.subscribe(blockUntilSubscribed = true)
-                setStatus("অনলাইন • রিয়েলটাইম", true)
-
                 changes.collect { action: PostgresAction ->
                     when (action) {
                         is PostgresAction.Insert -> {
-                            handleRealtimeInsert(action.record)
+                            handleRealtimeInsert(JSONObject(action.record.toString()))
                         }
 
                         is PostgresAction.Update -> {
-                            handleRealtimeUpdate(action.record)
+                            handleRealtimeUpdate(JSONObject(action.record.toString()))
                         }
 
                         is PostgresAction.Delete -> {
-                            handleRealtimeDelete(action.oldRecord)
+                            handleRealtimeDelete(JSONObject(action.oldRecord.toString()))
                         }
 
                         is PostgresAction.Select -> {
-                            handleRealtimeInsert(action.record)
+                            handleRealtimeInsert(JSONObject(action.record.toString()))
                         }
                     }
                 }
