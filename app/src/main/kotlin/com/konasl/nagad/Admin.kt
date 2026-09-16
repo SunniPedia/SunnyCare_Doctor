@@ -50,42 +50,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
 
-/**
- * ============================================================================
- * Admin.kt — এডমিন প্যানেল
- * ============================================================================
- * HomeActivity তে ডাক্তারের অ্যাভাটারে ক্লিক করলে (শুধুমাত্র SupabaseClient.isAdmin()
- * true হলে) এই একটিভিটি ওপেন হয়। এখানে SupabaseClient.kt এর সব ডেটা এডমিন
- * সুন্দরভাবে সাজানো অবস্থায় দেখতে, আপডেট করতে ও ডিলিট করতে পারেন:
- *
- *  ট্যাব ১ — অ্যাপয়েন্টমেন্ট: সব রোগীর সব অ্যাপয়েন্টমেন্ট, status/payment_status/
- *            slot_open/fee এডিট করা ও ডিলিট করা যায়। উপরে সার্চ টগল আইকন দিয়ে
- *            নাম/নাম্বার দিয়ে সার্চ করা যায়, এবং প্রতিটি কার্ডে সরাসরি সেই
- *            রোগীর সাথে Chat / Video Call / Audio Call শুরু করা যায়।
- *  ট্যাব ২ — রোগী: সব রোগীর প্রোফাইল তথ্য দেখা, এডিট করা, PIN রিসেট করা,
- *            ডিভাইস রিসেট করা (সিম/মোবাইল হারালে নতুন ডিভাইসে লগইনের জন্য),
- *            রোগীর সব টেস্ট রিপোর্ট (ছবি/PDF) দেখা, অ্যাকাউন্ট ডিলিট করা যায়।
- *            উপরে সার্চ টগল আইকন দিয়ে নাম/নাম্বার দিয়ে সার্চ করা যায়।
- *  ট্যাব ৩ — টাইম স্লট: প্রতিটি সময়-স্লট গ্লোবালি চালু/বন্ধ করা যায়, এবং
- *            নির্দিষ্ট তারিখের জন্য আলাদা ওভাররাইডও দেওয়া যায়
- *  ট্যাব ৪ — OTP পুল: available/assigned/verified কোডের সংখ্যা দেখা, নতুন কোড
- *            বাল্কে যোগ করা এবং ব্যবহৃত কোড রিসেট করা যায়
- *
- * নতুন সংযোজন:
- *  • সব "←" ব্যাক বাটন এখন ইমুজি/ফন্ট-ক্যারেক্টার নয়, সম্পূর্ণ Canvas-ভেক্টর আইকন
- *  • অ্যাপয়েন্টমেন্ট ও রোগী সেকশনের টপ-বারে সার্চ toggle ভেক্টর-আইকন — নাম/নাম্বার
- *    দিয়ে লাইভ সার্চ/ফিল্টার করা যায়
- *  • প্রতিটি অ্যাপয়েন্টমেন্ট কার্ডে Chat / Video Call / Audio Call — তিনটা আলাদা
- *    ভেক্টর-আইকন বাটন, যা যথাক্রমে ChatActivity / VideocallActivity /
- *    AudiocallActivity কে Intent দিয়ে ওপেন করে (পরে ওই একটিভিটিগুলোর ভেতরের
- *    লজিক আলাদাভাবে তৈরি করা হবে)
- *  • রোগীর কার্ডে "রিপোর্ট দেখুন" বাটন — তার সব অ্যাপয়েন্টমেন্ট থেকে জমা দেওয়া
- *    টেস্ট রিপোর্টের (ছবি/PDF) লিস্ট দেখায়
- *  • সম্পূর্ণ built-in, কোনো তৃতীয়-পক্ষ লাইব্রেরি ছাড়াই হাই-কোয়ালিটি ImageViewer
- *    (পিঞ্চ-জুম/প্যান সহ) ও PdfViewer (android.graphics.pdf.PdfRenderer দিয়ে
- *    উচ্চ-রেজ্যুলেশনে পৃষ্ঠা রেন্ডার করে)
- * ============================================================================
- */
 class AdminActivity : AppCompatActivity() {
 
     private val colorPrimary = Color.parseColor("#0F6C61")
@@ -114,13 +78,11 @@ class AdminActivity : AppCompatActivity() {
     private lateinit var slotsContainer: LinearLayout
     private lateinit var otpStatsContainer: LinearLayout
 
-    // নতুন — সার্চ বার ও ইনপুট রেফারেন্স (অ্যাপয়েন্টমেন্ট ও রোগী সেকশন)
     private lateinit var appointmentSearchBar: LinearLayout
     private lateinit var appointmentSearchInput: EditText
     private lateinit var patientSearchBar: LinearLayout
     private lateinit var patientSearchInput: EditText
 
-    // নতুন — সার্ভার থেকে আসা পূর্ণ তালিকা মেমরিতে রাখা, যাতে সার্চ ফিল্টার লোকালি করা যায়
     private var allAppointments: List<JSONObject> = emptyList()
     private var allPatients: List<JSONObject> = emptyList()
 
@@ -137,7 +99,6 @@ class AdminActivity : AppCompatActivity() {
     private lateinit var navSlots: NavItemViews
     private lateinit var navOtp: NavItemViews
 
-    // ডিফল্ট সময়-স্লট লিস্ট (সকাল ১০টা থেকে রাত ৮টা, ৩০ মিনিট পর পর)
     private val defaultTimeSlots: List<String> by lazy {
         val list = mutableListOf<String>()
         var h = 10
@@ -153,7 +114,6 @@ class AdminActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // শুধুমাত্র অ্যাডমিন এই একটিভিটিতে ঢুকতে পারবেন
         if (!SupabaseClient.isLoggedIn(this) || !SupabaseClient.isAdmin(this)) {
             Toast.makeText(this, "এই পাতাটি শুধুমাত্র এডমিনের জন্য", Toast.LENGTH_SHORT).show()
             finish()
@@ -182,7 +142,6 @@ class AdminActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(110))
         }
 
-        // নতুন — সার্চ বার তৈরি করে টপ-বারে toggle আইকনের সাথে যুক্ত করা হচ্ছে
         val (apptSearchBarView, apptSearchInputView) = buildSearchBar("রোগীর নাম বা নাম্বার দিয়ে সার্চ করুন") { query ->
             renderAppointments(query)
         }
@@ -212,7 +171,6 @@ class AdminActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(110))
         }
 
-        // নতুন — রোগী সেকশনের জন্যও একই ধরনের সার্চ বার
         val (patientSearchBarView, patientSearchInputView) = buildSearchBar("রোগীর নাম বা নাম্বার দিয়ে সার্চ করুন") { query ->
             renderPatients(query)
         }
@@ -294,9 +252,6 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------------------------------
-    // ট্যাব সুইচিং + বটম ন্যাভ
-    // ------------------------------------------------------------------
     private fun switchTab(tab: Tab) {
         currentTab = tab
         appointmentsPanel.visibility = if (tab == Tab.APPOINTMENTS) View.VISIBLE else View.GONE
@@ -389,10 +344,6 @@ class AdminActivity : AppCompatActivity() {
         return NavItemViews(itemRoot, pill, icon, drawable, labelView)
     }
 
-    /**
-     * প্যানেলের টপ-বার। searchBarView পাস করলে ব্যাক বাটনের পাশে একটা সার্চ
-     * toggle ভেক্টর-আইকন দেখানো হয়, যা ট্যাপ করলে সেই সার্চ-বারটি দেখানো/লুকানো হয়।
-     */
     private fun panelTopBar(titleText: String, subtitle: String, searchBarView: View? = null): View {
         val container = FrameLayout(this).apply {
             background = GradientDrawable(
@@ -410,8 +361,6 @@ class AdminActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        // ইমুজি/টেক্সট অ্যারো ("←") নয় — Canvas দিয়ে সম্পূর্ণ ভেক্টর-আঁকা ব্যাক আইকন,
-        // ফলে যেকোনো ফন্ট বা ডিভাইসে সবসময় স্পষ্ট ও প্রফেশনাল দেখাবে।
         val backBtn = ImageView(this).apply {
             setImageDrawable(BackArrowDrawable(Color.WHITE, dp(2).toFloat()))
             background = roundedBg(Color.argb(46, 255, 255, 255), 30f)
@@ -434,10 +383,10 @@ class AdminActivity : AppCompatActivity() {
         row.addView(backBtn)
         row.addView(textCol)
 
-        // নতুন — সার্চ toggle আইকন, শুধুমাত্র যেসব প্যানেলে সার্চ বার আছে সেখানে দেখানো হয়
         if (searchBarView != null) {
             val searchToggleBtn = ImageView(this).apply {
-                setImageDrawable(SearchIconDrawable(Color.WHITE, dp(2f)))
+                // FIX: added .toFloat() — dp(2f) returns Int, constructor expects Float
+                setImageDrawable(SearchIconDrawable(Color.WHITE, dp(2f).toFloat()))
                 background = roundedBg(Color.argb(46, 255, 255, 255), 30f)
                 layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginStart = dp(10) }
                 val pad = dp(8)
@@ -465,11 +414,6 @@ class AdminActivity : AppCompatActivity() {
         return container
     }
 
-    // ==================================================================
-    // নতুন — সার্চ বার ও ফিল্টার সংক্রান্ত হেল্পার
-    // ==================================================================
-
-    /** সার্চ toggle-এর নিচে দেখানো ইনপুট বার — নাম/নাম্বার দিয়ে লাইভ ফিল্টার করার জন্য */
     private fun buildSearchBar(hint: String, onQueryChange: (String) -> Unit): Pair<LinearLayout, EditText> {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -480,7 +424,8 @@ class AdminActivity : AppCompatActivity() {
             elevation = dp(1f).toFloat()
         }
         val searchIcon = ImageView(this).apply {
-            setImageDrawable(SearchIconDrawable(colorTextMuted, dp(1.8f)))
+            // FIX: added .toFloat() — dp(1.8f) returns Int, constructor expects Float
+            setImageDrawable(SearchIconDrawable(colorTextMuted, dp(1.8f).toFloat()))
             layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) }
         }
         val input = EditText(this).apply {
@@ -514,7 +459,6 @@ class AdminActivity : AppCompatActivity() {
         return bar to input
     }
 
-    /** নাম বা ফোন নাম্বার — যেকোনো একটাতে মিলে গেলেই true (query খালি থাকলে সব দেখাবে) */
     private fun matchesQuery(name: String, phone: String, query: String): Boolean {
         if (query.isBlank()) return true
         val q = query.trim().lowercase()
@@ -541,7 +485,6 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
-    /** allAppointments থেকে সার্চ query অনুযায়ী ফিল্টার করে কার্ড রেন্ডার করে */
     private fun renderAppointments(query: String) {
         appointmentsContainer.removeAllViews()
         val filtered = allAppointments.filter {
@@ -642,10 +585,6 @@ class AdminActivity : AppCompatActivity() {
             })
             addView(actionsRow)
 
-            // নতুন — এই নির্দিষ্ট রোগীর সাথে সরাসরি Chat / Video Call / Audio Call শুরু করার বাটন।
-            // আপাতত শুধু ChatActivity / VideocallActivity / AudiocallActivity কে Intent দিয়ে
-            // ওপেন করা হচ্ছে, প্রয়োজনীয় extras (appointment_id, patient_id, patient_name,
-            // patient_phone) সহ পাঠানো হয় যাতে ওই একটিভিটিগুলো তৈরি করার সময় সরাসরি ব্যবহার করা যায়।
             addView(space(dp(8)))
             val commRow = LinearLayout(this@AdminActivity).apply { orientation = LinearLayout.HORIZONTAL }
             commRow.addView(communicationButton("চ্যাট", ChatIconDrawable(colorInfo, dp(1.6f).toFloat()), colorInfo) {
@@ -676,7 +615,6 @@ class AdminActivity : AppCompatActivity() {
             }.apply { layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
             addView(commRow)
 
-            // এই অ্যাপয়েন্টমেন্টের সাথে যদি টেস্ট রিপোর্ট (ছবি/PDF) যুক্ত থাকে, সরাসরি এখান থেকেই দেখা যাবে
             if (reportUrl.isNotBlank()) {
                 addView(space(dp(8)))
                 addView(smallActionButton("এই অ্যাপয়েন্টমেন্টের রিপোর্ট দেখুন", colorInfo) {
@@ -693,7 +631,6 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
-    /** অ্যাপয়েন্টমেন্ট এডিট করার কাস্টম ডায়ালগ — status, payment_status, slot_open, fee পরিবর্তনযোগ্য */
     private fun showEditAppointmentDialog(obj: JSONObject) {
         val id = obj.optString("id", "")
         var selectedStatus = obj.optString("status", "pending")
@@ -716,7 +653,6 @@ class AdminActivity : AppCompatActivity() {
             setPadding(0, dp(4), 0, dp(14))
         })
 
-        // --- status চিপস ---
         card.addView(sectionLabel("স্ট্যাটাস"))
         val statusOptions = listOf("pending" to "পেন্ডিং", "confirmed" to "কনফার্মড", "completed" to "সম্পন্ন", "cancelled" to "বাতিল")
         val statusChipsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -733,7 +669,6 @@ class AdminActivity : AppCompatActivity() {
         }
         card.addView(horizontalScrollOf(statusChipsRow))
 
-        // --- payment status চিপস ---
         card.addView(sectionLabel("পেমেন্ট স্ট্যাটাস"))
         val paymentOptions = listOf(
             "not_applicable" to "প্রযোজ্য নয়",
@@ -755,7 +690,6 @@ class AdminActivity : AppCompatActivity() {
         }
         card.addView(horizontalScrollOf(paymentChipsRow))
 
-        // --- slot open সুইচ ---
         val slotRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -769,7 +703,6 @@ class AdminActivity : AppCompatActivity() {
         slotRow.addView(slotSwitch)
         card.addView(slotRow)
 
-        // --- ফি এডিট ---
         card.addView(sectionLabel("ফি (টাকা)").apply { setPadding(0, dp(14), 0, dp(6)) })
         val feeInput = EditText(this).apply {
             setText(obj.optInt("fee", 800).toString())
@@ -780,7 +713,6 @@ class AdminActivity : AppCompatActivity() {
         }
         card.addView(feeInput)
 
-        // --- বাটন ---
         val buttonsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -842,7 +774,6 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
-    /** allPatients থেকে সার্চ query অনুযায়ী ফিল্টার করে কার্ড রেন্ডার করে */
     private fun renderPatients(query: String) {
         patientsContainer.removeAllViews()
         val filtered = allPatients.filter {
@@ -922,7 +853,6 @@ class AdminActivity : AppCompatActivity() {
 
             addView(space(dp(8)))
 
-            // নতুন: এই রোগীর জমা দেওয়া সব অ্যাপয়েন্টমেন্টের টেস্ট রিপোর্ট (ছবি/PDF) একসাথে দেখার বাটন
             addView(smallActionButton("রোগীর রিপোর্ট দেখুন", colorPrimary) {
                 showPatientReportsDialog(id, name.ifEmpty { "রোগী" })
             }.apply {
@@ -931,8 +861,6 @@ class AdminActivity : AppCompatActivity() {
 
             addView(space(dp(8)))
 
-            // ডিভাইস রিসেট — সিম/মোবাইল হারিয়ে গেলে বা নষ্ট হয়ে গেলে রোগী নতুন ডিভাইসে
-            // লগইন করতে পারার জন্য এডমিন এখান থেকে তার device_id আনবাইন্ড করে দিতে পারবেন
             addView(smallActionButton("ডিভাইস রিসেট", colorInfo) {
                 confirmDialog(
                     title = "ডিভাইস রিসেট",
@@ -1007,7 +935,6 @@ class AdminActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /** রোগীর প্রোফাইল তথ্য এডিট করার ডায়ালগ */
     private fun showEditPatientDialog(obj: JSONObject) {
         val id = obj.optString("id", "")
         val dialog = Dialog(this)
@@ -1241,11 +1168,8 @@ class AdminActivity : AppCompatActivity() {
     }
 
     // ==================================================================
-    // নতুন — রোগীর রিপোর্ট লিস্ট + হাই-কোয়ালিটি ImageViewer / PdfViewer
-    // (সম্পূর্ণ built-in, কোনো এক্সট্রা লাইব্রেরি/ডিপেন্ডেন্সি ছাড়াই)
+    // রোগীর রিপোর্ট লিস্ট + হাই-কোয়ালিটি ImageViewer / PdfViewer
     // ==================================================================
-
-    /** নির্দিষ্ট রোগীর সব অ্যাপয়েন্টমেন্ট থেকে জমা দেওয়া রিপোর্টের URL গুলো একত্র করে লিস্ট দেখায় */
     private fun showPatientReportsDialog(patientId: String, patientName: String) {
         Toast.makeText(this, "রিপোর্ট খোঁজা হচ্ছে...", Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
@@ -1272,7 +1196,6 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
-    /** রিপোর্ট URL-গুলোর একটা ক্লিকযোগ্য লিস্ট ডায়ালগ — প্রতিটাতে ট্যাপ করলে ইমেজ/PDF ভিউয়ার খোলে */
     private fun renderReportsListDialog(patientName: String, urls: List<String>) {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
@@ -1344,7 +1267,6 @@ class AdminActivity : AppCompatActivity() {
 
     private fun isPdfUrl(url: String): Boolean = url.substringBefore("?").lowercase().endsWith(".pdf")
 
-    /** নেটওয়ার্ক থেকে যেকোনো ফাইলের raw bytes ডাউনলোড করে — শুধু android.net এর বিল্ট-ইন API দিয়ে */
     private fun downloadBytes(url: String): ByteArray {
         val connection = URL(url).openConnection()
         connection.connectTimeout = 15000
@@ -1354,12 +1276,6 @@ class AdminActivity : AppCompatActivity() {
         return connection.getInputStream().use { it.readBytes() }
     }
 
-    /**
-     * হাই-কোয়ালিটি, ফুলস্ক্রিন ImageViewer — পিঞ্চ-টু-জুম ও প্যান সাপোর্ট সহ।
-     * `url` দিলে নেটওয়ার্ক থেকে ফুল-রেজ্যুলেশন বিটম্যাপ ডাউনলোড করে দেখায়,
-     * অথবা সরাসরি একটা `bitmap` (যেমন PdfViewer থেকে রেন্ডার করা পৃষ্ঠা) দেখানো যায়।
-     * কোনো তৃতীয়-পক্ষ ইমেজ-ভিউয়ার লাইব্রেরি ছাড়াই সম্পূর্ণ Android বিল্ট-ইন API দিয়ে তৈরি।
-     */
     private fun openImageViewer(bitmap: Bitmap? = null, url: String? = null, title: String = "ছবি") {
         val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.BLACK))
@@ -1437,13 +1353,6 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * হাই-কোয়ালিটি PdfViewer — android.graphics.pdf.PdfRenderer (Android বিল্ট-ইন, API 21+)
-     * দিয়ে প্রতিটা পৃষ্ঠা উচ্চ-রেজ্যুলেশনে (স্ক্রিনের প্রস্থের ~২ গুণ ঘনত্বে) রেন্ডার করে
-     * ভার্টিক্যালি স্ক্রলযোগ্য লিস্টে দেখায়। কোনো পৃষ্ঠায় ট্যাপ করলে সেটা পূর্ণ-স্ক্রিন
-     * পিঞ্চ-জুম ImageViewer-এ খোলে (একই ZoomableImageView পুনঃব্যবহার করে)।
-     * কোনো এক্সট্রা PDF-ভিউয়ার লাইব্রেরি ছাড়াই — সম্পূর্ণ Android SDK বিল্ট-ইন।
-     */
     private fun openPdfViewer(url: String, title: String = "ডকুমেন্ট") {
         val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         val bgColor = Color.parseColor("#1A1A1A")
@@ -1534,8 +1443,6 @@ class AdminActivity : AppCompatActivity() {
                 val screenWidthPx = resources.displayMetrics.widthPixels
                 for (i in 0 until pageCount) {
                     val page = renderer.openPage(i)
-                    // "হাই-কোয়ালিটি" রেন্ডারের জন্য স্ক্রিনের প্রস্থের প্রায় ২ গুণ রেজ্যুলেশনে আঁকা হয়,
-                    // যাতে জুম করলেও পৃষ্ঠা ঝাপসা না হয়ে যায়
                     val rawScale = (screenWidthPx.toFloat() / page.width.toFloat()) * 2f
                     val safeScale = rawScale.coerceIn(1f, 4f)
                     val outW = (page.width * safeScale).toInt().coerceAtLeast(1)
@@ -1571,9 +1478,9 @@ class AdminActivity : AppCompatActivity() {
                 Toast.makeText(this@AdminActivity, "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}", Toast.LENGTH_SHORT).show()
             } finally {
                 withContext(Dispatchers.IO) {
-                    try { renderer?.close() } catch (e: Exception) { /* ignore */ }
-                    try { pfd?.close() } catch (e: Exception) { /* ignore */ }
-                    try { tempFile?.delete() } catch (e: Exception) { /* ignore */ }
+                    try { renderer?.close() } catch (e: Exception) { }
+                    try { pfd?.close() } catch (e: Exception) { }
+                    try { tempFile?.delete() } catch (e: Exception) { }
                 }
             }
         }
@@ -1628,7 +1535,6 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
-    /** নতুন — Chat/Video Call/Audio Call বাটনের জন্য আইকন + লেবেল সহ কম্প্যাক্ট বাটন */
     private fun communicationButton(label: String, icon: Drawable, color: Int, onClick: () -> Unit): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1783,10 +1689,6 @@ class AdminActivity : AppCompatActivity() {
         setStroke(dp(strokeWidthDp), strokeColor)
     }
 
-    // ------------------------------------------------------------------
-    // BackArrowDrawable — ব্যাক বাটনের জন্য সম্পূর্ণ ভেক্টর-আঁকা (Canvas/Paint দিয়ে) অ্যারো আইকন।
-    // BookAppointmentActivity-র সাথে ডিজাইন-সামঞ্জস্যপূর্ণ, কোনো ইমুজি/ফন্ট-ক্যারেক্টার ব্যবহার হয়নি।
-    // ------------------------------------------------------------------
     private class BackArrowDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -1819,9 +1721,6 @@ class AdminActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // CloseIconDrawable — ImageViewer/PdfViewer-এর "বন্ধ করুন" (X) বাটনের জন্য ভেক্টর আইকন
-    // ------------------------------------------------------------------
     private class CloseIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -1847,10 +1746,6 @@ class AdminActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // SearchIconDrawable — সার্চ toggle বাটনের জন্য ম্যাগনিফায়ার-গ্লাস ভেক্টর আইকন,
-    // সম্পূর্ণ Canvas/Paint দিয়ে আঁকা (কোনো ইমুজি/ফন্ট-ক্যারেক্টার নয়)।
-    // ------------------------------------------------------------------
     private class SearchIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -1879,9 +1774,6 @@ class AdminActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // ChatIconDrawable — স্পিচ-বাবল + তিনটা টাইপিং-ডট, চ্যাট বাটনের জন্য সম্পূর্ণ ভেক্টর আইকন
-    // ------------------------------------------------------------------
     private class ChatIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
         private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -1923,9 +1815,6 @@ class AdminActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // VideoCallIconDrawable — ক্যামেরা-বডি + লেন্স ত্রিভুজ, ভিডিও কল বাটনের ভেক্টর আইকন
-    // ------------------------------------------------------------------
     private class VideoCallIconDrawable(iconColor: Int) : Drawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
@@ -1956,10 +1845,6 @@ class AdminActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // AudioCallIconDrawable — ক্লাসিক ফোন-হ্যান্ডসেট সিলুয়েট, অডিও কল বাটনের ভেক্টর আইকন
-    // (Bezier কার্ভ দিয়ে আঁকা, কোনো র‍্যাস্টার/ইমুজি নয়)
-    // ------------------------------------------------------------------
     private class AudioCallIconDrawable(iconColor: Int) : Drawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
@@ -1993,11 +1878,6 @@ class AdminActivity : AppCompatActivity() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
-    // ------------------------------------------------------------------
-    // ZoomableImageView — পিঞ্চ-টু-জুম ও ড্র্যাগ-প্যান সাপোর্ট করা ImageView, সম্পূর্ণ
-    // Android বিল্ট-ইন ScaleGestureDetector/Matrix API দিয়ে তৈরি (কোনো এক্সট্রা লাইব্রেরি নয়)।
-    // ImageViewer ও PdfViewer — দুই জায়গাতেই এটা পুনঃব্যবহার হয়।
-    // ------------------------------------------------------------------
     private class ZoomableImageView(context: Context) : ImageView(context) {
         private val imgMatrix = Matrix()
         private var lastX = 0f
@@ -2045,7 +1925,6 @@ class AdminActivity : AppCompatActivity() {
             }
         }
 
-        /** ইমেজ সেট হওয়ার পর ভিউ-এর ঠিক মাঝখানে, স্ক্রিনে ফিট করে জুম-লেভেল ১x-এ রিসেট করে */
         fun resetZoomFit() {
             post {
                 val d = drawable ?: return@post
