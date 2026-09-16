@@ -39,7 +39,10 @@ object SupabaseClient {
 
     private const val REPORTS_BUCKET = "test-reports"
     private const val PROFILE_BUCKET = "profile-pictures"
-    private const val CHAT_ATTACHMENTS_BUCKET = "chat-attachments"
+    // FIX: bucket নাম "chat-attachments" থেকে "chat_attachments" এ রিনেম করা হয়েছে।
+    // Supabase Storage-এ আন্ডারস্কোরসহ নতুন bucket "chat_attachments" তৈরি/রিনেম
+    // করে নিতে হবে, বাকি সব ফিচার ও UI অপরিবর্তিত রইলো।
+    private const val CHAT_ATTACHMENTS_BUCKET = "chat_attachments"
 
     private const val PREFS = "sunnycare_prefs"
     private const val KEY_LOGGED_IN = "is_logged_in"
@@ -794,7 +797,8 @@ object SupabaseClient {
     // --------------------------------------------------------------
     // Attachment metadata is stored inside messages.message as a JSON
     // envelope, so the existing messages table does not need new columns.
-    // The binary file itself is stored in the private chat-attachments bucket.
+    // FIX: The binary file itself is stored in the private chat_attachments
+    // bucket (renamed from chat-attachments to chat_attachments).
 
     // FIX: RequestBody wrapper that reports real upload progress (sent/total
     // bytes) as OkHttp streams the request body to the socket. This is what
