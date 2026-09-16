@@ -1,8 +1,15 @@
 package com.konasl.nagad
 
+import android.app.Dialog
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -33,11 +40,20 @@ import java.util.Locale
  *
  * এই একটিভিটিতে যা যা থাকে:
  * - রোগীর অ্যাপয়েন্টমেন্টের তথ্য (নাম, ফোন, তারিখ, সময়, কারণ)
- * - মাঝখানে একটি লাইভ কাউন্টডাউন — অ্যাপয়েন্টমেন্টের নির্ধারিত সময় পর্যন্ত
- *   ঠিক কত সময় বাকি (দিন:ঘণ্টা:মিনিট:সেকেন্ড), প্রতি ১ সেকেন্ডে আপডেট হয়
+ * - মাঝখানে একটি লাইভ কাউন্টডাউন — দিন/ঘণ্টা/মিনিট/সেকেন্ড আলাদা আলাদা বক্সে
+ *   দেখানো হয়, প্রতি ১ সেকেন্ডে আপডেট হয়
  * - প্রতি ১০ সেকেন্ডে Supabase থেকে সার্ভার-সাইড স্ট্যাটাস চেক করা হয়;
  *   অ্যাপয়েন্টমেন্ট cancelled/completed হয়ে গেলে বা স্লট আবার বন্ধ হয়ে
  *   গেলে সাথে সাথে ইউজারকে জানানো হয়
+ * - ডাক্তারের সাথে যোগাযোগের জন্য Chat / Video Call / Audio Call — তিনটা
+ *   ভেক্টর-আইকন বাটন। কাউন্টডাউন শেষ না হওয়া পর্যন্ত এগুলো "লকড" অবস্থায়
+ *   থাকে (ধূসর, লক-আইকন সহ); লকড অবস্থায় ট্যাপ করলে একটা কাস্টম ডায়ালগ
+ *   দেখিয়ে জানানো হয় যে এখনো সময় হয়নি এবং বাকি কতটুকু সময় আছে। কাউন্টডাউন
+ *   শেষ হওয়ার সাথে সাথেই বাটনগুলো স্বয়ংক্রিয়ভাবে সক্রিয় (রঙিন) হয়ে যায় এবং
+ *   ট্যাপ করলে সরাসরি ChatActivity / VideocallActivity / AudiocallActivity
+ *   Intent দিয়ে ওপেন হয়।
+ * - সম্পূর্ণ UI কোনো ইমুজি বা ফন্ট-ক্যারেক্টার ছাড়াই, Canvas/Paint দিয়ে আঁকা
+ *   ভেক্টর আইকন দিয়ে তৈরি।
  *
  * Intent extras (HomeActivity থেকে পাঠানো হয়):
  *   appointment_id, patient_name, phone, preferred_date, preferred_time, reason
@@ -56,6 +72,8 @@ class WaitingActivity : AppCompatActivity() {
     private val colorFieldBorder = Color.parseColor("#E7ECEA")
     private val colorDanger = Color.parseColor("#DC2626")
     private val colorSuccess = Color.parseColor("#16A34A")
+    private val colorInfo = Color.parseColor("#2563EB")
+    private val colorLockedBg = Color.parseColor("#E5E7EB")
 
     // সিরিয়ালের জন্য কল করার নাম্বার (HomeActivity এর মতোই)
     private val doctorSerialPhone = "01660029028"
@@ -69,11 +87,35 @@ class WaitingActivity : AppCompatActivity() {
 
     private var targetMillis: Long? = null
 
-    private lateinit var countdownBigText: TextView
+    // নতুন — কাউন্টডাউন শেষ হয়েছে কিনা (এর ওপর ভিত্তি করেই Chat/Video/Audio বাটন আনলক হয়)
+    private var isCountdownFinished = false
+
     private lateinit var countdownLabelText: TextView
     private lateinit var statusBadge: TextView
     private lateinit var statusMessageText: TextView
     private lateinit var infoCard: LinearLayout
+
+    // কাউন্টডাউন ইউনিট বক্সগুলোর রেফারেন্স (দিন/ঘণ্টা/মিনিট/সেকেন্ড)
+    private lateinit var daysBox: LinearLayout
+    private lateinit var daysColon: TextView
+    private lateinit var daysValueText: TextView
+    private lateinit var hoursValueText: TextView
+    private lateinit var minutesValueText: TextView
+    private lateinit var secondsValueText: TextView
+
+    // যোগাযোগ সেকশন
+    private lateinit var commSubtitle: TextView
+    private val commButtons = mutableListOf<CommButtonViews>()
+
+    private data class CommButtonViews(
+        val circleBg: GradientDrawable,
+        val iconDrawable: Drawable,
+        val label: TextView,
+        val lockBadge: ImageView,
+        val displayColor: Int,
+        val featureLabel: String,
+        val targetActivity: Class<*>
+    )
 
     // প্রতি সেকেন্ডে কাউন্টডাউন আপডেট
     private val tickHandler = Handler(Looper.getMainLooper())
@@ -99,6 +141,7 @@ class WaitingActivity : AppCompatActivity() {
         targetMillis = computeTargetMillis(preferredDate, preferredTime)
 
         buildUi()
+        updateCommunicationButtonsUi()
         startCountdown()
         startStatusPolling()
     }
@@ -148,16 +191,16 @@ class WaitingActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), dp(40), dp(20), dp(26))
         }
-        val backBtn = TextView(this).apply {
-            text = "←"
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            setTypeface(null, Typeface.BOLD)
+        // ইমুজি/টেক্সট অ্যারো ("←") নয় — সম্পূর্ণ Canvas-ভেক্টর ব্যাক আইকন
+        val backBtn = ImageView(this).apply {
+            setImageDrawable(BackArrowDrawable(Color.WHITE, dp(2).toFloat()))
             background = roundedBg(Color.argb(46, 255, 255, 255), 30f)
-            gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(dp(38), dp(38))
+            val pad = dp(10)
+            setPadding(pad, pad, pad, pad)
             isClickable = true
             isFocusable = true
+            contentDescription = "পেছনে যান"
             setOnClickListener { finish() }
         }
         val headerTextCol = LinearLayout(this).apply {
@@ -207,19 +250,37 @@ class WaitingActivity : AppCompatActivity() {
         }
         countdownCard.addView(countdownLabelText)
 
-        countdownBigText = TextView(this).apply {
-            text = "--:--:--"
-            textSize = 40f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
+        // নতুন — একক বড় টেক্সটের বদলে দিন/ঘণ্টা/মিনিট/সেকেন্ড আলাদা আলাদা "বক্সে" দেখানো হয়,
+        // দেখতে অনেক বেশি স্পষ্ট ও প্রফেশনাল
+        val unitsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, dp(10), 0, 0)
-            letterSpacing = 0.02f
+            setPadding(0, dp(16), 0, 0)
         }
-        countdownCard.addView(countdownBigText)
+        val (daysBoxView, daysValueView) = timeUnitBox("দিন")
+        daysBox = daysBoxView
+        daysValueText = daysValueView
+        daysBox.visibility = View.GONE
+        daysColon = colonSeparator().apply { visibility = View.GONE }
+
+        val (hoursBoxView, hoursValueView) = timeUnitBox("ঘণ্টা")
+        hoursValueText = hoursValueView
+        val (minutesBoxView, minutesValueView) = timeUnitBox("মিনিট")
+        minutesValueText = minutesValueView
+        val (secondsBoxView, secondsValueView) = timeUnitBox("সেকেন্ড")
+        secondsValueText = secondsValueView
+
+        unitsRow.addView(daysBox)
+        unitsRow.addView(daysColon)
+        unitsRow.addView(hoursBoxView)
+        unitsRow.addView(colonSeparator())
+        unitsRow.addView(minutesBoxView)
+        unitsRow.addView(colonSeparator())
+        unitsRow.addView(secondsBoxView)
+        countdownCard.addView(unitsRow)
 
         countdownCard.addView(text("$preferredDate • $preferredTime", 13f, Typeface.BOLD, Color.argb(230, 255, 255, 255), Gravity.CENTER).apply {
-            setPadding(0, dp(14), 0, 0)
+            setPadding(0, dp(18), 0, 0)
         })
 
         countdownCardWrap.addView(countdownCard)
@@ -257,6 +318,31 @@ class WaitingActivity : AppCompatActivity() {
         statusRow.addView(statusIconWrap)
         statusRow.addView(statusCol)
         statusRow.addView(statusBadge)
+
+        // ---------------- নতুন — ডাক্তারের সাথে যোগাযোগ (Chat/Video/Audio) ----------------
+        val commCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(colorCard, 20f)
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(18), dp(18), dp(18), 0)
+            }
+            elevation = dp(2).toFloat()
+        }
+        commCard.addView(text("ডাক্তারের সাথে যোগাযোগ করুন", 14f, Typeface.BOLD, colorDark, Gravity.START))
+        commSubtitle = text("অ্যাপয়েন্টমেন্টের সময় হলে বাটনগুলো স্বয়ংক্রিয়ভাবে চালু হয়ে যাবে", 11f, Typeface.NORMAL, colorTextMuted, Gravity.START).apply {
+            setPadding(0, dp(4), 0, dp(16))
+            setLineSpacing(dp(2).toFloat(), 1f)
+        }
+        commCard.addView(commSubtitle)
+
+        val commRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        commRow.addView(buildCommActionCard("চ্যাট", ChatIconDrawable(Color.WHITE, dp(1.7f).toFloat()), colorInfo, "চ্যাট", ChatActivity::class.java))
+        commRow.addView(space(dp(10)))
+        commRow.addView(buildCommActionCard("ভিডিও কল", VideoCallIconDrawable(Color.WHITE), colorSuccess, "ভিডিও কল", VideocallActivity::class.java))
+        commRow.addView(space(dp(10)))
+        commRow.addView(buildCommActionCard("অডিও কল", AudioCallIconDrawable(Color.WHITE), colorAccent, "অডিও কল", AudiocallActivity::class.java))
+        commCard.addView(commRow)
 
         // ---------------- অ্যাপয়েন্টমেন্ট তথ্য কার্ড ----------------
         infoCard = LinearLayout(this).apply {
@@ -320,6 +406,7 @@ class WaitingActivity : AppCompatActivity() {
         content.addView(headerContainer)
         content.addView(countdownCardWrap)
         content.addView(statusRow)
+        content.addView(commCard)
         content.addView(infoCard)
         content.addView(callRow)
         content.addView(noteText)
@@ -327,6 +414,200 @@ class WaitingActivity : AppCompatActivity() {
         scroll.addView(content)
         root.addView(scroll)
         setContentView(root)
+    }
+
+    /** কাউন্টডাউনের একটা একক ইউনিট (যেমন "ঘণ্টা") — উপরে সংখ্যা, নিচে লেবেল */
+    private fun timeUnitBox(labelText: String): Pair<LinearLayout, TextView> {
+        val valueText = TextView(this).apply {
+            textSize = 22f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            background = roundedBg(Color.argb(40, 255, 255, 255), 12f)
+            minWidth = dp(50)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            text = "00"
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            addView(valueText)
+            addView(text(labelText, 10f, Typeface.BOLD, Color.argb(210, 255, 255, 255), Gravity.CENTER).apply {
+                setPadding(0, dp(6), 0, 0)
+            })
+        }
+        return box to valueText
+    }
+
+    private fun colonSeparator(): TextView = TextView(this).apply {
+        text = ":"
+        textSize = 22f
+        setTypeface(null, Typeface.BOLD)
+        setTextColor(Color.argb(200, 255, 255, 255))
+        gravity = Gravity.CENTER
+        setPadding(dp(4), 0, dp(4), 0)
+    }
+
+    /** Chat/Video/Audio বাটনগুলোর জন্য একটা আইকন-সার্কেল + লেবেল কার্ড তৈরি করে, লক-স্টেট সহ */
+    private fun buildCommActionCard(
+        label: String,
+        icon: Drawable,
+        displayColor: Int,
+        featureLabel: String,
+        targetActivity: Class<*>
+    ): LinearLayout {
+        val circleBg = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(colorLockedBg)
+        }
+        val circleWrap = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(58), dp(58))
+            background = circleBg
+        }
+        circleWrap.addView(ImageView(this).apply {
+            setImageDrawable(icon)
+            layoutParams = FrameLayout.LayoutParams(dp(24), dp(24)).apply { gravity = Gravity.CENTER }
+        })
+        val lockBadge = ImageView(this).apply {
+            setImageDrawable(LockIconDrawable(colorTextMuted, dp(1.4f).toFloat()))
+            background = roundedBg(Color.WHITE, 30f)
+            layoutParams = FrameLayout.LayoutParams(dp(20), dp(20)).apply { gravity = Gravity.TOP or Gravity.END }
+            val pad = dp(4)
+            setPadding(pad, pad, pad, pad)
+            elevation = dp(2).toFloat()
+        }
+        circleWrap.addView(lockBadge)
+
+        val labelView = text(label, 11.5f, Typeface.BOLD, colorTextMuted, Gravity.CENTER).apply {
+            setPadding(0, dp(8), 0, 0)
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            isClickable = true
+            isFocusable = true
+            addView(circleWrap)
+            addView(labelView)
+            setOnClickListener { onCommButtonClicked(targetActivity, featureLabel) }
+        }
+
+        commButtons.add(CommButtonViews(circleBg, icon, labelView, lockBadge, displayColor, featureLabel, targetActivity))
+        return root
+    }
+
+    /**
+     * Chat/Video/Audio বাটনে ক্লিক করলে এখানে আসে —
+     * কাউন্টডাউন শেষ হয়ে থাকলে সরাসরি সংশ্লিষ্ট একটিভিটি Intent দিয়ে ওপেন হয়,
+     * নাহলে একটা কাস্টম ডায়ালগ দেখিয়ে বাকি সময় জানিয়ে দেওয়া হয়।
+     */
+    private fun onCommButtonClicked(targetActivity: Class<*>, featureLabel: String) {
+        if (isCountdownFinished) {
+            startActivity(Intent(this, targetActivity).apply {
+                putExtra("appointment_id", appointmentId)
+                putExtra("patient_id", SupabaseClient.getPatientId(this@WaitingActivity))
+                putExtra("patient_name", patientName)
+                putExtra("patient_phone", patientPhone)
+                putExtra("preferred_date", preferredDate)
+                putExtra("preferred_time", preferredTime)
+                putExtra("reason", reason)
+            })
+        } else {
+            showNotYetReadyDialog(featureLabel)
+        }
+    }
+
+    /** কাউন্টডাউন শেষ হওয়ার আগে Chat/Video/Audio বাটনে ক্লিক করলে দেখানো কাস্টম ডায়ালগ */
+    private fun showNotYetReadyDialog(featureLabel: String) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = roundedBg(Color.WHITE, 22f)
+            setPadding(dp(24), dp(28), dp(24), dp(22))
+        }
+        card.addView(ImageView(this).apply {
+            setImageDrawable(LockIconDrawable(Color.WHITE, dp(2f)))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(colorPrimaryLight, colorPrimaryDark)
+            ).apply { shape = GradientDrawable.OVAL }
+            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+            setPadding(dp(15), dp(15), dp(15), dp(15))
+        })
+        card.addView(text("এখনো সময় হয়নি", 16f, Typeface.BOLD, colorDark, Gravity.CENTER).apply {
+            setPadding(0, dp(14), 0, 0)
+        })
+        card.addView(text(
+            "আপনার অ্যাপয়েন্টমেন্টের নির্ধারিত সময়ের আগে $featureLabel চালু করা যাবে না। উপরের কাউন্টডাউন শেষ হলেই এই ফিচারটি স্বয়ংক্রিয়ভাবে চালু হয়ে যাবে।",
+            12.5f, Typeface.NORMAL, colorTextMuted, Gravity.CENTER
+        ).apply {
+            setPadding(0, dp(10), 0, 0)
+            setLineSpacing(dp(2).toFloat(), 1f)
+        })
+        card.addView(text("বাকি সময়: ${remainingTimeSummary()}", 13f, Typeface.BOLD, colorPrimary, Gravity.CENTER).apply {
+            setPadding(0, dp(16), 0, 0)
+        })
+        card.addView(text("বুঝেছি", 13.5f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+            background = roundedBg(colorPrimary, 14f)
+            setPadding(0, dp(13), 0, dp(13))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { dialog.dismiss() }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(20)
+            }
+        })
+
+        dialog.setContentView(card)
+        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.86).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.show()
+    }
+
+    /** ডায়ালগে দেখানোর জন্য বাকি সময়ের সংক্ষিপ্ত, মানুষ-পঠনযোগ্য বর্ণনা */
+    private fun remainingTimeSummary(): String {
+        val target = targetMillis ?: return "শীঘ্রই"
+        val diff = target - System.currentTimeMillis()
+        if (diff <= 0) return "শীঘ্রই"
+        val totalSeconds = diff / 1000
+        val days = totalSeconds / 86400
+        val hours = (totalSeconds % 86400) / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        return when {
+            days > 0 -> "$days দিন $hours ঘণ্টা"
+            hours > 0 -> "$hours ঘণ্টা $minutes মিনিট"
+            minutes > 0 -> "$minutes মিনিট"
+            else -> "কয়েক সেকেন্ড"
+        }
+    }
+
+    /** কাউন্টডাউন শেষ হওয়ার সাথে সাথেই Chat/Video/Audio বাটনগুলোর রঙ, আইকন-টিন্ট ও লক-ব্যাজ আপডেট হয় */
+    private fun updateCommunicationButtonsUi() {
+        commButtons.forEach { cb ->
+            if (isCountdownFinished) {
+                cb.circleBg.setColor(cb.displayColor)
+                setIconTint(cb.iconDrawable, Color.WHITE)
+                cb.label.setTextColor(colorDark)
+                cb.lockBadge.visibility = View.GONE
+            } else {
+                cb.circleBg.setColor(colorLockedBg)
+                setIconTint(cb.iconDrawable, colorTextMuted)
+                cb.label.setTextColor(colorTextMuted)
+                cb.lockBadge.visibility = View.VISIBLE
+            }
+        }
+        commSubtitle.text = if (isCountdownFinished)
+            "সময় হয়ে গেছে — এখন আপনি সরাসরি যোগাযোগ করতে পারবেন"
+        else
+            "অ্যাপয়েন্টমেন্টের সময় হলে বাটনগুলো স্বয়ংক্রিয়ভাবে চালু হয়ে যাবে"
+    }
+
+    private fun setIconTint(drawable: Drawable, color: Int) {
+        (drawable as? TintableIcon)?.updateTint(color)
     }
 
     private fun infoRow(label: String, value: String): LinearLayout {
@@ -405,14 +686,16 @@ class WaitingActivity : AppCompatActivity() {
     private fun updateCountdownText() {
         val target = targetMillis
         if (target == null) {
-            countdownBigText.text = "--:--:--"
+            setUnits(placeholder = true)
             countdownLabelText.text = "সময় হিসাব করা যাচ্ছে না"
+            markCountdownFinishedIfNeeded()
             return
         }
         val diff = target - System.currentTimeMillis()
         if (diff <= 0) {
-            countdownBigText.text = "০০:০০:০০"
+            setUnits(0, 0, 0, 0)
             countdownLabelText.text = "আপনার অ্যাপয়েন্টমেন্টের সময় হয়ে গেছে"
+            markCountdownFinishedIfNeeded()
             return
         }
         val totalSeconds = diff / 1000
@@ -422,11 +705,37 @@ class WaitingActivity : AppCompatActivity() {
         val seconds = totalSeconds % 60
 
         countdownLabelText.text = "অ্যাপয়েন্টমেন্ট পর্যন্ত বাকি সময়"
-        countdownBigText.text = if (days > 0) {
-            String.format(Locale.US, "%dদিন %02d:%02d:%02d", days, hours, minutes, seconds)
-        } else {
-            String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
+        setUnits(days, hours, minutes, seconds)
+    }
+
+    /** টার্গেট সময় পার হয়ে গেলে বা হিসাব করা না গেলে (উভয় ক্ষেত্রেই আটকে না রেখে) একবারই বাটন আনলক করে */
+    private fun markCountdownFinishedIfNeeded() {
+        if (!isCountdownFinished) {
+            isCountdownFinished = true
+            updateCommunicationButtonsUi()
         }
+    }
+
+    private fun setUnits(days: Long = 0, hours: Long = 0, minutes: Long = 0, seconds: Long = 0, placeholder: Boolean = false) {
+        if (placeholder) {
+            daysBox.visibility = View.GONE
+            daysColon.visibility = View.GONE
+            hoursValueText.text = "--"
+            minutesValueText.text = "--"
+            secondsValueText.text = "--"
+            return
+        }
+        if (days > 0) {
+            daysBox.visibility = View.VISIBLE
+            daysColon.visibility = View.VISIBLE
+            daysValueText.text = days.toString()
+        } else {
+            daysBox.visibility = View.GONE
+            daysColon.visibility = View.GONE
+        }
+        hoursValueText.text = String.format(Locale.US, "%02d", hours)
+        minutesValueText.text = String.format(Locale.US, "%02d", minutes)
+        secondsValueText.text = String.format(Locale.US, "%02d", seconds)
     }
 
     // ------------------------------------------------------------------
@@ -503,7 +812,7 @@ class WaitingActivity : AppCompatActivity() {
         statusBadge.text = badgeText
         statusBadge.background = roundedBg(color, 30f)
         countdownLabelText.text = message
-        countdownBigText.text = "--:--:--"
+        setUnits(0, 0, 0, 0)
         stopCountdown()
     }
 
@@ -514,11 +823,210 @@ class WaitingActivity : AppCompatActivity() {
         text = t; textSize = sizeSp; setTypeface(null, style); setTextColor(color); this.gravity = gravity
     }
 
+    private fun space(h: Int): View = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, h) }
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Float): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun roundedBg(color: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = radiusDp * resources.displayMetrics.density
         setColor(color)
+    }
+
+    // ------------------------------------------------------------------
+    // TintableIcon — যেসব কাস্টম ভেক্টর আইকনের রঙ রানটাইমে বদলানো দরকার
+    // (লকড/আনলকড অবস্থা অনুযায়ী), তারা এই ইন্টারফেস ইমপ্লিমেন্ট করে
+    // ------------------------------------------------------------------
+    private interface TintableIcon {
+        fun updateTint(color: Int)
+    }
+
+    // ------------------------------------------------------------------
+    // BackArrowDrawable — ব্যাক বাটনের জন্য সম্পূর্ণ ভেক্টর-আঁকা (Canvas/Paint দিয়ে) অ্যারো আইকন
+    // ------------------------------------------------------------------
+    private class BackArrowDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = strokeWidthPx
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+
+            val left = b.left + w * 0.22f
+            val right = b.left + w * 0.78f
+            val cy = b.top + h / 2f
+            val armLen = w * 0.26f
+
+            canvas.drawLine(left, cy, right, cy, paint)
+            canvas.drawLine(left, cy, left + armLen, cy - armLen, paint)
+            canvas.drawLine(left, cy, left + armLen, cy + armLen, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // LockIconDrawable — কাউন্টডাউন শেষ না হওয়া পর্যন্ত Chat/Video/Audio বাটনে
+    // দেখানো "লক" ভেক্টর আইকন
+    // ------------------------------------------------------------------
+    private class LockIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable() {
+        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = strokeWidthPx
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = iconColor
+        }
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val bodyRect = android.graphics.RectF(b.left + w * 0.20f, b.top + h * 0.46f, b.right - w * 0.20f, b.bottom - h * 0.10f)
+            canvas.drawRoundRect(bodyRect, w * 0.10f, w * 0.10f, fillPaint)
+            val shackleRect = android.graphics.RectF(b.left + w * 0.32f, b.top + h * 0.08f, b.right - w * 0.32f, b.top + h * 0.58f)
+            canvas.drawArc(shackleRect, 180f, 180f, false, strokePaint)
+        }
+
+        override fun setAlpha(alpha: Int) { strokePaint.alpha = alpha; fillPaint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { strokePaint.colorFilter = colorFilter; fillPaint.colorFilter = colorFilter }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // ChatIconDrawable — স্পিচ-বাবল + তিনটা টাইপিং-ডট, চ্যাট বাটনের ভেক্টর আইকন।
+    // TintableIcon ইমপ্লিমেন্ট করে যাতে লক/আনলক অবস্থায় রঙ বদলানো যায়।
+    // ------------------------------------------------------------------
+    private class ChatIconDrawable(iconColor: Int, private val strokeWidthPx: Float) : Drawable(), TintableIcon {
+        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = strokeWidthPx
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = iconColor
+        }
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val rect = android.graphics.RectF(b.left + w * 0.08f, b.top + h * 0.12f, b.right - w * 0.08f, b.top + h * 0.70f)
+            canvas.drawRoundRect(rect, w * 0.16f, w * 0.16f, strokePaint)
+            val tail = android.graphics.Path().apply {
+                moveTo(b.left + w * 0.30f, rect.bottom - h * 0.02f)
+                lineTo(b.left + w * 0.24f, b.top + h * 0.90f)
+                lineTo(b.left + w * 0.46f, rect.bottom - h * 0.02f)
+                close()
+            }
+            canvas.drawPath(tail, fillPaint)
+            val dotR = w * 0.035f
+            val dotY = (rect.top + rect.bottom) / 2f
+            canvas.drawCircle(rect.left + rect.width() * 0.28f, dotY, dotR, fillPaint)
+            canvas.drawCircle(rect.left + rect.width() * 0.5f, dotY, dotR, fillPaint)
+            canvas.drawCircle(rect.left + rect.width() * 0.72f, dotY, dotR, fillPaint)
+        }
+
+        override fun setAlpha(alpha: Int) { strokePaint.alpha = alpha; fillPaint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { strokePaint.colorFilter = colorFilter; fillPaint.colorFilter = colorFilter }
+        override fun updateTint(color: Int) { strokePaint.color = color; fillPaint.color = color; invalidateSelf() }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // VideoCallIconDrawable — ক্যামেরা-বডি + লেন্স ত্রিভুজ, ভিডিও কল বাটনের ভেক্টর আইকন
+    // ------------------------------------------------------------------
+    private class VideoCallIconDrawable(iconColor: Int) : Drawable(), TintableIcon {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val bodyRect = android.graphics.RectF(b.left + w * 0.08f, b.top + h * 0.22f, b.left + w * 0.62f, b.top + h * 0.78f)
+            canvas.drawRoundRect(bodyRect, w * 0.10f, w * 0.10f, paint)
+            val lens = android.graphics.Path().apply {
+                moveTo(bodyRect.right, b.top + h * 0.34f)
+                lineTo(b.right - w * 0.06f, b.top + h * 0.20f)
+                lineTo(b.right - w * 0.06f, b.top + h * 0.80f)
+                lineTo(bodyRect.right, b.top + h * 0.66f)
+                close()
+            }
+            canvas.drawPath(lens, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+        override fun updateTint(color: Int) { paint.color = color; invalidateSelf() }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    // ------------------------------------------------------------------
+    // AudioCallIconDrawable — ক্লাসিক ফোন-হ্যান্ডসেট সিলুয়েট, অডিও কল বাটনের ভেক্টর আইকন
+    // (Bezier কার্ভ দিয়ে আঁকা, কোনো র‍্যাস্টার/ইমুজি নয়)
+    // ------------------------------------------------------------------
+    private class AudioCallIconDrawable(iconColor: Int) : Drawable(), TintableIcon {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = iconColor
+        }
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val w = b.width().toFloat()
+            val h = b.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val path = android.graphics.Path().apply {
+                moveTo(b.left + w * 0.20f, b.top + h * 0.12f)
+                cubicTo(b.left + w * 0.05f, b.top + h * 0.20f, b.left + w * 0.05f, b.top + h * 0.40f, b.left + w * 0.20f, b.top + h * 0.55f)
+                cubicTo(b.left + w * 0.35f, b.top + h * 0.70f, b.left + w * 0.50f, b.top + h * 0.80f, b.left + w * 0.65f, b.top + h * 0.85f)
+                cubicTo(b.left + w * 0.80f, b.top + h * 0.90f, b.left + w * 0.90f, b.top + h * 0.75f, b.left + w * 0.88f, b.top + h * 0.68f)
+                cubicTo(b.left + w * 0.86f, b.top + h * 0.62f, b.left + w * 0.72f, b.top + h * 0.55f, b.left + w * 0.65f, b.top + h * 0.60f)
+                cubicTo(b.left + w * 0.60f, b.top + h * 0.63f, b.left + w * 0.55f, b.top + h * 0.60f, b.left + w * 0.48f, b.top + h * 0.52f)
+                cubicTo(b.left + w * 0.42f, b.top + h * 0.45f, b.left + w * 0.40f, b.top + h * 0.40f, b.left + w * 0.42f, b.top + h * 0.34f)
+                cubicTo(b.left + w * 0.46f, b.top + h * 0.27f, b.left + w * 0.38f, b.top + h * 0.14f, b.left + w * 0.32f, b.top + h * 0.12f)
+                cubicTo(b.left + w * 0.28f, b.top + h * 0.10f, b.left + w * 0.24f, b.top + h * 0.10f, b.left + w * 0.20f, b.top + h * 0.12f)
+                close()
+            }
+            canvas.drawPath(path, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+        override fun updateTint(color: Int) { paint.color = color; invalidateSelf() }
+
+        @Deprecated("Deprecated in Java", ReplaceWith("PixelFormat.TRANSLUCENT", "android.graphics.PixelFormat"))
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 }
