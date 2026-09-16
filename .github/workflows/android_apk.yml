@@ -1,12 +1,13 @@
-name: Android APK
+name: Android Build
 
 on:
-  workflow_dispatch: # এই লাইনটি GitHub-এ 'Run workflow' বাটনটি যোগ করবে
+  workflow_dispatch:
 
 jobs:
   build:
     name: Generate and Release APK
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
@@ -21,13 +22,20 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Setup Gradle 8.5
+      - name: Setup Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: 8.5
+          gradle-version: '8.11.1'
+
+      - name: Verify Gradle Version
+        run: gradle --version
 
       - name: Build Debug APK
         run: gradle assembleDebug
+
+      - name: Verify APK
+        run: |
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -35,7 +43,11 @@ jobs:
           files: app/build/outputs/apk/debug/app-debug.apk
           tag_name: build-${{ github.run_number }}
           name: Nagad App v${{ github.run_number }}
-          body: "ডাউনলোড করতে নিচের Assets সেকশন থেকে app-debug.apk ফাইলে ক্লিক করুন।"
+          body: |
+            Android APK successfully built.
+
+            Download:
+            app-debug.apk
           draft: false
           prerelease: false
         env:
