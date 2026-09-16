@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Save this file as: app/src/main/res/xml/file_paths.xml
+
+    Used by the FileProvider declared in AndroidManifest_ADDITIONS.xml.
+    ChatActivity writes camera photos into the app's cache directory
+    (cacheDir), so "cache-path" must cover it.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path
+        name="chat_camera_photos"
+        path="." />
+</paths>
