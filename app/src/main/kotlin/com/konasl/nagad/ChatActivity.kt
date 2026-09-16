@@ -1,92 +1,128 @@
 package com.konasl.nagad
 
+import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
-import android.text.InputType
+import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
-import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.realtime.PostgresAction
+import io.github.jan.supabase.realtime.Realtime
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class ChatActivity : AppCompatActivity() {
 
     private val colorPrimary = Color.parseColor("#0F6C61")
     private val colorPrimaryDark = Color.parseColor("#0A4A42")
     private val colorBg = Color.parseColor("#F4F7F6")
-    private val colorCard = Color.WHITE
     private val colorTextMuted = Color.parseColor("#6B7280")
     private val colorDark = Color.parseColor("#111827")
+    private val colorBorder = Color.parseColor("#DDE7E4")
 
-    private var appointmentId: String = ""
-    private var patientId: String = ""
-    private var patientName: String = ""
+    private var appointmentId = ""
+    private var patientId = ""
+    private var patientName = ""
     private var conversationId: String? = null
-    private var mySenderId: String = ""
-    private var myRole: String = "patient"
+    private var mySenderId = ""
+    private var myRole = "patient"
 
     private lateinit var recyclerView: RecyclerView
     private lateinit var adapter: MessageAdapter
     private lateinit var inputField: EditText
-    private lateinit var sendBtn: LinearLayout
     private lateinit var statusText: TextView
     private lateinit var topTitle: TextView
+    private lateinit var sendButton: IconButton
+    private lateinit var attachmentButton: IconButton
+    private lateinit var callButton: IconButton
+    private lateinit var videoButton: IconButton
 
-    private var pollingJob: Job? = null
     private val messagesList = mutableListOf<JSONObject>()
+    private var realtimeJob: Job? = null
+    private var realtimeChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
+
+    private val realtimeSupabase by lazy {
+        createSupabaseClient(
+            supabaseUrl = CHAT_SUPABASE_URL,
+            supabaseKey = CHAT_SUPABASE_ANON_KEY
+        ) {
+            install(Realtime)
+        }
+    }
+
+    private val attachmentPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) uploadSelectedAttachment(uri)
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        appointmentId = intent.getStringExtra("appointment_id") ?: ""
-        patientId = intent.getStringExtra("patient_id") ?: SupabaseClient.getPatientId(this) ?: ""
-        patientName = intent.getStringExtra("patient_name") ?: SupabaseClient.getName(this) ?: "রোগী"
+        appointmentId = intent.getStringExtra("appointment_id").orEmpty()
+        patientId = intent.getStringExtra("patient_id")
+            ?: SupabaseClient.getPatientId(this).orEmpty()
+        patientName = intent.getStringExtra("patient_name")
+            ?: SupabaseClient.getName(this).orEmpty().ifBlank { "রোগী" }
 
-        if (appointmentId.isEmpty()) {
+        if (appointmentId.isBlank()) {
             Toast.makeText(this, "appointment_id পাওয়া যায়নি", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
 
-        // আমার পরিচয় ঠিক করো
         if (SupabaseClient.isAdmin(this)) {
             myRole = "doctor"
-            mySenderId = SupabaseClient.getPhone(this) ?: "doctor"
+            mySenderId = SupabaseClient.getPhone(this).orEmpty().ifBlank { "doctor" }
         } else {
             myRole = "patient"
-            mySenderId = patientId.ifEmpty { SupabaseClient.getPatientId(this) ?: "unknown" }
+            mySenderId = patientId.ifBlank {
+                SupabaseClient.getPatientId(this).orEmpty()
+            }
         }
 
-        buildUI()
+        if (mySenderId.isBlank()) {
+            Toast.makeText(this, "চ্যাট user identity পাওয়া যায়নি", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+
+        buildUi()
         initConversation()
     }
 
-    private fun buildUI() {
+    private fun buildUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setBackgroundColor(colorBg)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         }
 
-        // Top Bar
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -94,96 +130,119 @@ class ChatActivity : AppCompatActivity() {
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(Color.parseColor("#16897A"), colorPrimaryDark)
             )
-            setPadding(dp(16), dp(38), dp(16), dp(16))
+            setPadding(dp(10), dp(34), dp(10), dp(12))
         }
-        val backBtn = TextView(this).apply {
-            text = "‹"
-            textSize = 28f
-            setTextColor(Color.WHITE)
-            setPadding(dp(4), 0, dp(12), 0)
-            isClickable = true
-            isFocusable = true
+
+        val back = IconButton(this, IconType.BACK).apply {
             setOnClickListener { finish() }
         }
-        val titleCol = LinearLayout(this).apply {
+
+        val titleColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, dp(52), 1f)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, dp(4), 0)
         }
+
         topTitle = TextView(this).apply {
-            text = patientName
+            text = if (myRole == "doctor") patientName else "ডাক্তার"
             textSize = 16f
-            setTypeface(null, Typeface.BOLD)
             setTextColor(Color.WHITE)
+            setTypeface(null, Typeface.BOLD)
         }
+
         statusText = TextView(this).apply {
-            text = "কানেক্ট হচ্ছে..."
+            text = "চ্যাট খোলা হচ্ছে..."
             textSize = 11f
-            setTextColor(Color.argb(200, 255, 255, 255))
+            setTextColor(Color.argb(210, 255, 255, 255))
         }
-        titleCol.addView(topTitle)
-        titleCol.addView(statusText)
-        topBar.addView(backBtn)
-        topBar.addView(titleCol)
+
+        titleColumn.addView(topTitle)
+        titleColumn.addView(statusText)
+
+        callButton = IconButton(this, IconType.PHONE).apply {
+            setOnClickListener { openAudioCall() }
+        }
+        videoButton = IconButton(this, IconType.VIDEO).apply {
+            setOnClickListener { openVideoCall() }
+        }
+
+        topBar.addView(back)
+        topBar.addView(titleColumn)
+        topBar.addView(callButton)
+        topBar.addView(videoButton)
         root.addView(topBar)
 
-        // RecyclerView
         recyclerView = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@ChatActivity).apply { stackFromEnd = true }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            layoutManager = LinearLayoutManager(this@ChatActivity).apply {
+                stackFromEnd = true
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+            setPadding(dp(10), dp(10), dp(10), dp(10))
             clipToPadding = false
         }
+
         adapter = MessageAdapter(messagesList, mySenderId)
         recyclerView.adapter = adapter
         root.addView(recyclerView)
 
-        // Input Area
         val inputBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(Color.WHITE)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
             elevation = dp(4).toFloat()
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
+
+        attachmentButton = IconButton(this, IconType.ATTACHMENT).apply {
+            setOnClickListener {
+                attachmentPicker.launch(
+                    arrayOf(
+                        "image/*",
+                        "video/*",
+                        "audio/*",
+                        "application/pdf",
+                        "application/msword",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                )
+            }
+        }
+
         inputField = EditText(this).apply {
             hint = "মেসেজ লিখুন..."
             setHintTextColor(colorTextMuted)
             setTextColor(colorDark)
+            textSize = 15f
+            maxLines = 5
+            setPadding(dp(15), dp(10), dp(15), dp(10))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(24).toFloat()
+                cornerRadius = dp(22).toFloat()
                 setColor(Color.parseColor("#F1F5F4"))
+                setStroke(dp(1), colorBorder)
             }
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginEnd = dp(10)
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply {
+                marginStart = dp(6)
+                marginEnd = dp(6)
             }
-            maxLines = 4
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
         }
-        sendBtn = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(colorPrimary)
-            }
-            layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { sendMessage() }
+
+        sendButton = IconButton(this, IconType.SEND).apply {
+            setOnClickListener { sendTextMessage() }
         }
-        val sendIcon = TextView(this).apply {
-            text = "➤"
-            textSize = 18f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setTypeface(null, Typeface.BOLD)
-        }
-        sendBtn.addView(sendIcon)
+
+        inputBar.addView(attachmentButton)
         inputBar.addView(inputField)
-        inputBar.addView(sendBtn)
+        inputBar.addView(sendButton)
         root.addView(inputBar)
 
         setContentView(root)
@@ -192,166 +251,646 @@ class ChatActivity : AppCompatActivity() {
     private fun initConversation() {
         lifecycleScope.launch {
             try {
-                statusText.text = "চ্যাট খোলা হচ্ছে..."
-                // এই appointment_id এর জন্য conversation আছে কিনা দেখো, না থাকলে বানাও
-                val conv = SupabaseClient.getOrCreateConversation(appointmentId, patientId)
-                conversationId = conv.getString("id")
-                statusText.text = "অনলাইন • প্রাইভেট চ্যাট"
+                statusText.text = "Conversation প্রস্তুত হচ্ছে..."
+
+                val conversation =
+                    SupabaseClient.getOrCreateConversation(appointmentId, patientId)
+
+                conversationId = conversation.optString("id").ifBlank { null }
+
+                if (conversationId == null) {
+                    throw IllegalStateException("conversation id পাওয়া যায়নি")
+                }
+
                 topTitle.text = if (myRole == "doctor") patientName else "ডাক্তার"
 
-                // প্রথমবার মেসেজ লোড
-                loadMessagesOnce()
-                // Polling শুরু - Realtime এর মতো কাজ করবে
-                startPolling()
+                loadInitialMessages()
+                startChatRealtime(conversationId!!)
 
             } catch (e: Exception) {
                 statusText.text = "কানেক্ট ব্যর্থ"
-                Toast.makeText(this@ChatActivity, "চ্যাট খোলা যায়নি: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    this@ChatActivity,
+                    "চ্যাট খোলা যায়নি: ${e.message ?: "Unknown error"}",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
 
-    private suspend fun loadMessagesOnce() {
+    private suspend fun loadInitialMessages() {
         val convId = conversationId ?: return
-        try {
-            val rows = SupabaseClient.getMessages(convId)
-            messagesList.clear()
-            for (i in 0 until rows.length()) {
-                messagesList.add(rows.getJSONObject(i))
-            }
-            runOnUiThread {
-                adapter.notifyDataSetChanged()
-                if (messagesList.isNotEmpty()) recyclerView.scrollToPosition(messagesList.size - 1)
-            }
-        } catch (e: Exception) {
+        val rows = SupabaseClient.getMessages(convId)
+
+        messagesList.clear()
+        for (i in 0 until rows.length()) {
+            val message = rows.optJSONObject(i) ?: continue
+            addMessageIfMissing(message)
+        }
+
+        adapter.notifyDataSetChanged()
+
+        if (messagesList.isNotEmpty()) {
+            recyclerView.scrollToPosition(messagesList.lastIndex)
         }
     }
 
-    private fun startPolling() {
-        pollingJob?.cancel()
-        pollingJob = lifecycleScope.launch {
-            while (isActive) {
-                delay(2000) // 2 সেকেন্ড পর পর নতুন মেসেজ চেক - এটাই তোমার Realtime এর সহজ ভার্সন
-                try {
-                    val convId = conversationId ?: continue
-                    val rows = SupabaseClient.getMessages(convId)
-                    // শুধু নতুন মেসেজ থাকলে আপডেট করো
-                    if (rows.length() != messagesList.size) {
-                        messagesList.clear()
-                        for (i in 0 until rows.length()) {
-                            messagesList.add(rows.getJSONObject(i))
-                        }
-                        runOnUiThread {
-                            adapter.notifyDataSetChanged()
-                            recyclerView.scrollToPosition(messagesList.size - 1)
-                        }
-                    }
-                } catch (e: Exception) {
+    private fun startChatRealtime(convId: String) {
+        realtimeJob?.cancel()
+
+        realtimeJob = lifecycleScope.launch {
+            try {
+                statusText.text = "Realtime সংযোগ হচ্ছে..."
+
+                realtimeChannel?.let {
+                    realtimeSupabase.realtime.removeChannel(it)
                 }
+
+                val channel = realtimeSupabase.channel("chat:$convId")
+                realtimeChannel = channel
+
+                val changeFlow =
+                    channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                        table = "messages"
+                        filter = "conversation_id=eq.$convId"
+                    }
+
+                /*
+                 * Flow collector অবশ্যই subscribe() এর আগে register করা হচ্ছে।
+                 * তারপর subscribe() call করা হচ্ছে, তাই INSERT/UPDATE/DELETE
+                 * event miss হওয়ার সম্ভাবনা কমে এবং polling দরকার হয় না।
+                 */
+                val collectorJob = launch {
+                    changeFlow.collect { action ->
+                        handleRealtimeAction(action)
+                    }
+                }
+
+                channel.subscribe(blockUntilSubscribed = true)
+                statusText.text = "অনলাইন • Realtime"
+
+                collectorJob.join()
+
+            } catch (e: Exception) {
+                statusText.text = "Realtime সংযোগ ব্যর্থ"
+                Toast.makeText(
+                    this@ChatActivity,
+                    "Realtime error: ${e.message ?: "Unknown error"}",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
 
-    private fun sendMessage() {
-        val text = inputField.text.toString().trim()
-        if (text.isEmpty()) return
-        val convId = conversationId
-        if (convId == null) {
-            Toast.makeText(this, "চ্যাট এখনো রেডি হয়নি", Toast.LENGTH_SHORT).show()
+    private fun handleRealtimeAction(action: PostgresAction) {
+        when (action) {
+            is PostgresAction.Insert -> {
+                val obj = jsonObjectFromSupabase(action.record)
+                addMessageIfMissing(obj)
+                refreshLastMessage()
+            }
+
+            is PostgresAction.Update -> {
+                val obj = jsonObjectFromSupabase(action.record)
+                replaceMessage(obj)
+                refreshLastMessage()
+            }
+
+            is PostgresAction.Delete -> {
+                val old = jsonObjectFromSupabase(action.oldRecord)
+                removeMessage(old.optString("id"))
+                refreshLastMessage()
+            }
+
+            is PostgresAction.Select -> {
+                // Chat screen-এর জন্য SELECT event দরকার নেই।
+            }
+        }
+    }
+
+    private fun jsonObjectFromSupabase(record: kotlinx.serialization.json.JsonObject): JSONObject {
+        return JSONObject(record.toString())
+    }
+
+    private fun addMessageIfMissing(obj: JSONObject) {
+        val id = obj.optString("id").trim()
+
+        if (id.isNotEmpty()) {
+            val exists = messagesList.any {
+                it.optString("id").equals(id, ignoreCase = false)
+            }
+            if (exists) return
+        } else {
             return
         }
-        inputField.setText("")
-        // Optimistic UI - সাথে সাথে দেখাও
-        val tempObj = JSONObject().apply {
-            put("sender_id", mySenderId)
-            put("message", text)
-            put("created_at", "")
+
+        messagesList.add(obj)
+        messagesList.sortBy { it.optString("created_at", "") }
+
+        runOnUiThread {
+            adapter.notifyDataSetChanged()
+            recyclerView.scrollToPosition(messagesList.lastIndex)
         }
-        messagesList.add(tempObj)
-        adapter.notifyItemInserted(messagesList.size - 1)
-        recyclerView.scrollToPosition(messagesList.size - 1)
+    }
+
+    private fun replaceMessage(obj: JSONObject) {
+        val id = obj.optString("id")
+        if (id.isBlank()) return
+
+        val index = messagesList.indexOfFirst {
+            it.optString("id") == id
+        }
+
+        if (index >= 0) {
+            messagesList[index] = obj
+        } else {
+            messagesList.add(obj)
+            messagesList.sortBy { it.optString("created_at", "") }
+        }
+
+        runOnUiThread {
+            adapter.notifyDataSetChanged()
+        }
+    }
+
+    private fun removeMessage(id: String) {
+        if (id.isBlank()) return
+
+        val index = messagesList.indexOfFirst {
+            it.optString("id") == id
+        }
+
+        if (index >= 0) {
+            messagesList.removeAt(index)
+            runOnUiThread {
+                adapter.notifyDataSetChanged()
+            }
+        }
+    }
+
+    private fun refreshLastMessage() {
+        // Database event already contains the authoritative message row.
+        // No REST polling/reload is performed here.
+    }
+
+    private fun sendTextMessage() {
+        val text = inputField.text?.toString()?.trim().orEmpty()
+        val convId = conversationId
+
+        if (text.isBlank()) return
+
+        if (convId == null) {
+            Toast.makeText(this, "চ্যাট এখনো প্রস্তুত নয়", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        inputField.setText("")
 
         lifecycleScope.launch {
             try {
-                SupabaseClient.sendMessage(convId, mySenderId, myRole, text)
-                // পাঠানোর পর সাথে সাথে রিফ্রেশ
-                loadMessagesOnce()
+                /*
+                 * এখানে optimistic insert করা হচ্ছে না।
+                 * INSERT event Realtime থেকে আসবে এবং id দিয়ে deduplicate হবে।
+                 */
+                val result =
+                    SupabaseClient.sendMessage(
+                        convId,
+                        mySenderId,
+                        myRole,
+                        text
+                    )
+
+                if (result == null) {
+                    throw IllegalStateException("message insert failed")
+                }
+
             } catch (e: Exception) {
-                Toast.makeText(this@ChatActivity, "পাঠানো যায়নি", Toast.LENGTH_SHORT).show()
+                inputField.setText(text)
+                Toast.makeText(
+                    this@ChatActivity,
+                    "মেসেজ পাঠানো যায়নি: ${e.message ?: "Unknown error"}",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
+    }
+
+    private fun uploadSelectedAttachment(uri: Uri) {
+        val convId = conversationId
+
+        if (convId == null) {
+            Toast.makeText(this, "চ্যাট এখনো প্রস্তুত নয়", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                val fileName = queryDisplayName(uri)
+                val mimeType =
+                    contentResolver.getType(uri) ?: "application/octet-stream"
+
+                val bytes = contentResolver.openInputStream(uri)?.use {
+                    it.readBytes()
+                } ?: throw IllegalStateException("ফাইল পড়া যায়নি")
+
+                if (bytes.isEmpty()) {
+                    throw IllegalStateException("ফাইল খালি")
+                }
+
+                if (bytes.size > 25 * 1024 * 1024) {
+                    throw IllegalStateException("সর্বোচ্চ 25 MB ফাইল নেওয়া যাবে")
+                }
+
+                attachmentButton.isEnabled = false
+                sendButton.isEnabled = false
+                statusText.text = "Attachment আপলোড হচ্ছে..."
+
+                val uploaded =
+                    SupabaseClient.uploadChatAttachment(
+                        conversationId = convId,
+                        senderId = mySenderId,
+                        fileName = fileName,
+                        mimeType = mimeType,
+                        bytes = bytes
+                    ).getOrThrow()
+
+                SupabaseClient.sendAttachmentMessage(
+                    conversationId = convId,
+                    senderId = mySenderId,
+                    senderRole = myRole,
+                    attachment = uploaded
+                ).getOrThrow()
+
+                statusText.text = "অনলাইন • Realtime"
+
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@ChatActivity,
+                    "Attachment পাঠানো যায়নি: ${e.message ?: "Unknown error"}",
+                    Toast.LENGTH_LONG
+                ).show()
+                statusText.text = "অনলাইন • Realtime"
+            } finally {
+                attachmentButton.isEnabled = true
+                sendButton.isEnabled = true
+            }
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String {
+        contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0) {
+                    return cursor.getString(index).orEmpty().ifBlank { "attachment" }
+                }
+            }
+        }
+
+        return "attachment_${System.currentTimeMillis()}"
+    }
+
+    private fun openAudioCall() {
+        val intent = Intent(this, AudiocallActivity::class.java).apply {
+            putExtra("appointment_id", appointmentId)
+            putExtra("patient_id", patientId)
+            putExtra("patient_name", patientName)
+            putExtra("conversation_id", conversationId.orEmpty())
+            putExtra("caller_id", mySenderId)
+            putExtra("caller_role", myRole)
+        }
+        startActivity(intent)
+    }
+
+    private fun openVideoCall() {
+        val intent = Intent(this, VideocallActivity::class.java).apply {
+            putExtra("appointment_id", appointmentId)
+            putExtra("patient_id", patientId)
+            putExtra("patient_name", patientName)
+            putExtra("conversation_id", conversationId.orEmpty())
+            putExtra("caller_id", mySenderId)
+            putExtra("caller_role", myRole)
+        }
+        startActivity(intent)
     }
 
     override fun onDestroy() {
-        pollingJob?.cancel()
+        realtimeJob?.cancel()
+        realtimeJob = null
+
+        realtimeChannel?.let { channel ->
+            lifecycleScope.launch {
+                try {
+                    realtimeSupabase.realtime.removeChannel(channel)
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        realtimeChannel = null
         super.onDestroy()
     }
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
-    // Adapter - প্রাইভেট চ্যাটের জন্য 2 টাইপ
-    inner class MessageAdapter(
+    private fun formatTime(value: String): String {
+        if (value.isBlank()) return ""
+        return try {
+            val parser = SimpleDateFormat(
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
+                Locale.US
+            )
+            val date = parser.parse(value)
+                ?: SimpleDateFormat(
+                    "yyyy-MM-dd'T'HH:mm:ssXXX",
+                    Locale.US
+                ).parse(value)
+
+            if (date == null) "" else
+                SimpleDateFormat("hh:mm a", Locale.US).format(date)
+        } catch (_: Exception) {
+            value.substringAfter("T").take(5)
+        }
+    }
+
+    private fun parseAttachment(message: JSONObject): JSONObject? {
+        if (!message.has("message")) return null
+
+        val raw = message.optString("message", "")
+        if (raw.isBlank()) return null
+
+        return try {
+            val obj = JSONObject(raw)
+            if (obj.optString("kind") == "attachment") obj else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private inner class MessageAdapter(
         private val list: List<JSONObject>,
         private val myId: String
-    ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+    ) : RecyclerView.Adapter<MessageAdapter.MessageHolder>() {
 
-        override fun getItemViewType(position: Int): Int {
-            val sender = list[position].optString("sender_id", "")
-            return if (sender == myId) 1 else 0 // 1 = sent, 0 = received
-        }
+        inner class MessageHolder(val root: LinearLayout) :
+            RecyclerView.ViewHolder(root)
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
-            val bubble = LinearLayout(parent.context).apply {
+        override fun onCreateViewHolder(
+            parent: ViewGroup,
+            viewType: Int
+        ): MessageHolder {
+            val root = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                setPadding(dp(4), dp(4), dp(4), dp(4))
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                setPadding(dp(4), dp(3), dp(4), dp(3))
             }
-            val textView = TextView(parent.context).apply {
-                textSize = 14f
-                setPadding(dp(14), dp(10), dp(14), dp(10))
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    maxWidth = (parent.context.resources.displayMetrics.widthPixels * 0.75).toInt()
-                }
-            }
-            bubble.addView(textView)
-            return object : RecyclerView.ViewHolder(bubble) {}
+
+            return MessageHolder(root)
         }
 
-        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-            val obj = list[position]
-            val message = obj.optString("message", "")
-            val isMe = getItemViewType(position) == 1
+        override fun onBindViewHolder(holder: MessageHolder, position: Int) {
+            val item = list[position]
+            val isMine = item.optString("sender_id") == myId
+            val root = holder.root
 
-            val bubbleLayout = holder.itemView as LinearLayout
-            val tv = bubbleLayout.getChildAt(0) as TextView
-            tv.text = message
+            root.removeAllViews()
+            root.gravity = if (isMine) Gravity.END else Gravity.START
 
-            // FIX: RecyclerView er child er LayoutParams RecyclerView.LayoutParams hoy, LinearLayout.LayoutParams na
-            val tvParams = tv.layoutParams as LinearLayout.LayoutParams
+            val attachment = parseAttachment(item)
 
-            if (isMe) {
-                bubbleLayout.gravity = Gravity.END
-                tv.setTextColor(Color.WHITE)
-                tv.background = GradientDrawable().apply {
+            val bubble = LinearLayout(this@ChatActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), dp(10), dp(14), dp(8))
+                background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
-                    cornerRadii = floatArrayOf(dp(18).toFloat(), dp(18).toFloat(), dp(4).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat())
-                    setColor(colorPrimary)
+                    cornerRadius = dp(18).toFloat()
+                    if (isMine) {
+                        setColor(colorPrimary)
+                    } else {
+                        setColor(Color.WHITE)
+                        setStroke(dp(1), colorBorder)
+                    }
                 }
-                tvParams.gravity = Gravity.END
-            } else {
-                bubbleLayout.gravity = Gravity.START
-                tv.setTextColor(colorDark)
-                tv.background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadii = floatArrayOf(dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(4).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat())
-                    setColor(Color.WHITE)
-                }
-                tvParams.gravity = Gravity.START
+                layoutParams = LinearLayout.LayoutParams(
+                    (resources.displayMetrics.widthPixels * 0.78f).toInt(),
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
             }
-            tv.layoutParams = tvParams
+
+            if (attachment != null) {
+                val fileName =
+                    attachment.optString("file_name", "Attachment")
+                val mime =
+                    attachment.optString("mime_type", "application/octet-stream")
+
+                val fileText = TextView(this@ChatActivity).apply {
+                    text = "$fileName\n$mime"
+                    textSize = 14f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(if (isMine) Color.WHITE else colorDark)
+                    setPadding(0, 0, 0, dp(4))
+                    setOnClickListener {
+                        openAttachment(attachment)
+                    }
+                }
+
+                val openText = TextView(this@ChatActivity).apply {
+                    text = "Open attachment"
+                    textSize = 12f
+                    setTextColor(
+                        if (isMine) Color.argb(220, 255, 255, 255)
+                        else colorPrimary
+                    )
+                    setOnClickListener {
+                        openAttachment(attachment)
+                    }
+                }
+
+                bubble.addView(fileText)
+                bubble.addView(openText)
+            } else {
+                val text = TextView(this@ChatActivity).apply {
+                    text = item.optString("message", "")
+                    textSize = 15f
+                    setTextColor(if (isMine) Color.WHITE else colorDark)
+                }
+                bubble.addView(text)
+            }
+
+            val time = TextView(this@ChatActivity).apply {
+                text = formatTime(item.optString("created_at", ""))
+                textSize = 10f
+                gravity = Gravity.END
+                setPadding(0, dp(4), 0, 0)
+                setTextColor(
+                    if (isMine) Color.argb(190, 255, 255, 255)
+                    else colorTextMuted
+                )
+            }
+
+            bubble.addView(time)
+            root.addView(bubble)
+        }
+
+        private fun openAttachment(attachment: JSONObject) {
+            val url = attachment.optString("url", "")
+            if (url.isBlank()) {
+                Toast.makeText(
+                    this@ChatActivity,
+                    "Attachment URL পাওয়া যায়নি",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return
+            }
+
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@ChatActivity,
+                    "Attachment খোলা যায়নি",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
 
         override fun getItemCount(): Int = list.size
-        private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    }
+
+    private enum class IconType {
+        BACK,
+        PHONE,
+        VIDEO,
+        ATTACHMENT,
+        SEND
+    }
+
+    private class IconButton(
+        context: android.content.Context,
+        private val type: IconType
+    ) : View(context) {
+
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = resources.displayMetrics.density * 2f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = Color.WHITE
+        }
+
+        init {
+            isClickable = true
+            isFocusable = true
+            setPadding(
+                (10 * resources.displayMetrics.density).toInt(),
+                (10 * resources.displayMetrics.density).toInt(),
+                (10 * resources.displayMetrics.density).toInt(),
+                (10 * resources.displayMetrics.density).toInt()
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                (44 * resources.displayMetrics.density).toInt(),
+                (44 * resources.displayMetrics.density).toInt()
+            )
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+
+            val d = resources.displayMetrics.density
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val cx = w / 2f
+            val cy = h / 2f
+
+            when (type) {
+                IconType.BACK -> {
+                    canvas.drawLine(cx + 7 * d, cy, cx - 7 * d, cy, paint)
+                    canvas.drawLine(cx - 7 * d, cy, cx - 1 * d, cy - 6 * d, paint)
+                    canvas.drawLine(cx - 7 * d, cy, cx - 1 * d, cy + 6 * d, paint)
+                }
+
+                IconType.PHONE -> {
+                    val path = android.graphics.Path()
+                    path.moveTo(cx - 8 * d, cy - 9 * d)
+                    path.lineTo(cx - 4 * d, cy - 13 * d)
+                    path.quadTo(cx - 1 * d, cy - 13 * d, cx + 2 * d, cy - 8 * d)
+                    path.lineTo(cx + 6 * d, cy - 2 * d)
+                    path.quadTo(cx + 9 * d, cy + 2 * d, cx + 6 * d, cy + 5 * d)
+                    path.lineTo(cx + 2 * d, cy + 9 * d)
+                    path.quadTo(cx - 7 * d, cy + 5 * d, cx - 10 * d, cy - 4 * d)
+                    path.close()
+                    canvas.drawPath(path, paint)
+                }
+
+                IconType.VIDEO -> {
+                    canvas.drawRoundRect(
+                        cx - 11 * d,
+                        cy - 8 * d,
+                        cx + 4 * d,
+                        cy + 8 * d,
+                        3 * d,
+                        3 * d,
+                        paint
+                    )
+                    val path = android.graphics.Path()
+                    path.moveTo(cx + 4 * d, cy - 5 * d)
+                    path.lineTo(cx + 11 * d, cy - 9 * d)
+                    path.lineTo(cx + 11 * d, cy + 9 * d)
+                    path.lineTo(cx + 4 * d, cy + 5 * d)
+                    canvas.drawPath(path, paint)
+                }
+
+                IconType.ATTACHMENT -> {
+                    val path = android.graphics.Path()
+                    path.moveTo(cx + 7 * d, cy - 4 * d)
+                    path.lineTo(cx - 2 * d, cy + 5 * d)
+                    path.quadTo(cx - 7 * d, cy + 10 * d, cx - 12 * d, cy + 5 * d)
+                    path.quadTo(cx - 17 * d, cy, cx - 12 * d, cy - 5 * d)
+                    path.lineTo(cx - 2 * d, cy - 15 * d)
+                    path.quadTo(cx + 3 * d, cy - 20 * d, cx + 8 * d, cy - 15 * d)
+                    path.quadTo(cx + 13 * d, cy - 10 * d, cx + 8 * d, cy - 5 * d)
+                    path.lineTo(cx - 2 * d, cy + 5 * d)
+                    canvas.drawPath(path, paint)
+                }
+
+                IconType.SEND -> {
+                    val path = android.graphics.Path()
+                    path.moveTo(cx - 11 * d, cy - 8 * d)
+                    path.lineTo(cx + 12 * d, cy)
+                    path.lineTo(cx - 11 * d, cy + 8 * d)
+                    path.lineTo(cx - 5 * d, cy)
+                    path.close()
+                    canvas.drawPath(path, paint)
+                }
+            }
+        }
+    }
+
+    companion object {
+        /*
+         * Keep these identical to the project's Supabase project.
+         * They are the same public anon configuration already used by
+         * SupabaseClient.kt. For a cleaner final architecture, move them
+         * to BuildConfig later instead of duplicating them in Activities.
+         */
+        private const val CHAT_SUPABASE_URL =
+            "https://azbleibkgerzaqbrrydl.supabase.co"
+
+        private const val CHAT_SUPABASE_ANON_KEY =
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6YmxlaWJrZ2VyemFxYnJyeWRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzExNjYsImV4cCI6MjEwNDc0NzE2Nn0.6Q6PMcRJHXFIRPUZZf9lOjoTmq77_wbCoKc8tGkVF2o"
     }
 }

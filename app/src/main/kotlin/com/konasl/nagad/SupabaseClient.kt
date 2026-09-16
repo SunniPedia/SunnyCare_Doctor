@@ -30,6 +30,7 @@ object SupabaseClient {
 
     private const val REPORTS_BUCKET = "test-reports"
     private const val PROFILE_BUCKET = "profile-pictures"
+    private const val CHAT_ATTACHMENTS_BUCKET = "chat-attachments"
 
     private const val PREFS = "sunnycare_prefs"
     private const val KEY_LOGGED_IN = "is_logged_in"
@@ -777,6 +778,112 @@ suspend fun sendMessage(conversationId: String, senderId: String, senderRole: St
     } catch (e: Exception) {}
     return rows.getJSONObject(0)
 }
+
+
+    // ------------------------------------------------------------------
+    // CHAT ATTACHMENTS
+    // ------------------------------------------------------------------
+    // Attachment metadata is stored inside messages.message as a JSON
+    // envelope, so the existing messages table does not need new columns.
+    // The binary file itself is stored in the private chat-attachments bucket.
+    suspend fun uploadChatAttachment(
+        conversationId: String,
+        senderId: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            require(conversationId.isNotBlank()) { "conversationId খালি" }
+            require(senderId.isNotBlank()) { "senderId খালি" }
+            require(bytes.isNotEmpty()) { "ফাইল খালি" }
+            require(bytes.size <= 25 * 1024 * 1024) { "সর্বোচ্চ 25 MB ফাইল নেওয়া যাবে" }
+
+            val safeFileName = fileName
+                .trim()
+                .replace(Regex("[^A-Za-z0-9._-]"), "_")
+                .take(120)
+                .ifBlank { "attachment" }
+
+            val objectPath =
+                "conversations/${enc(conversationId)}/${System.currentTimeMillis()}_${safeFileName}"
+
+            val mediaType =
+                mimeType.toMediaTypeOrNull() ?: "application/octet-stream".toMediaType()
+
+            val uploadRequest = Request.Builder()
+                .url("$SUPABASE_URL/storage/v1/object/$CHAT_ATTACHMENTS_BUCKET/$objectPath")
+                .addHeader("apikey", SUPABASE_ANON_KEY)
+                .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
+                .addHeader("Content-Type", mediaType.toString())
+                .addHeader("x-upsert", "false")
+                .post(bytes.toRequestBody(mediaType))
+                .build()
+
+            client.newCall(uploadRequest).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    throw IOException("Attachment upload failed: ${response.code} $body")
+                }
+            }
+
+            // The URL is intentionally returned as a normal object URL.
+            // If the bucket is configured private, replace this with a
+            // short-lived signed URL endpoint before exposing it in UI.
+            val objectUrl =
+                "$SUPABASE_URL/storage/v1/object/public/$CHAT_ATTACHMENTS_BUCKET/$objectPath"
+
+            Result.success(JSONObject().apply {
+                put("conversation_id", conversationId)
+                put("sender_id", senderId)
+                put("file_name", fileName)
+                put("mime_type", mimeType.ifBlank { "application/octet-stream" })
+                put("file_size", bytes.size)
+                put("storage_path", objectPath)
+                put("url", objectUrl)
+            })
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun sendAttachmentMessage(
+        conversationId: String,
+        senderId: String,
+        senderRole: String,
+        attachment: JSONObject
+    ): Result<JSONObject> = try {
+        val envelope = JSONObject().apply {
+            put("kind", "attachment")
+            put("file_name", attachment.optString("file_name", "Attachment"))
+            put("mime_type", attachment.optString("mime_type", "application/octet-stream"))
+            put("file_size", attachment.optLong("file_size", 0L))
+            put("storage_path", attachment.optString("storage_path", ""))
+            put("url", attachment.optString("url", ""))
+        }
+
+        val json = JSONObject().apply {
+            put("conversation_id", conversationId)
+            put("sender_id", senderId)
+            put("sender_role", senderRole)
+            put("message", envelope.toString())
+        }
+
+        val rows = post("messages", json)
+        val row = rows.getJSONObject(0)
+
+        try {
+            patch("conversations?id=eq.${enc(conversationId)}", JSONObject().apply {
+                put("last_message", "Attachment: ${attachment.optString("file_name", "file")}")
+                put("last_message_at", "now()")
+            })
+        } catch (_: Exception) {
+        }
+
+        Result.success(row)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 
     // ------------------------------------------------------------------
     // SUPABASE REALTIME — ADMIN APPOINTMENTS
