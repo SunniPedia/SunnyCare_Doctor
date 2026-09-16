@@ -550,10 +550,7 @@ class AdminActivity : AppCompatActivity() {
 
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("🔔 নতুন বুকিং")
-            .setMessage("$name
-$phone
-$date • $time
-ফি: ৳$fee")
+            .setMessage("$name\n$phone\n$date • $time\nফি: ৳$fee")
             .setPositiveButton("দেখুন") { _, _ ->
                 switchTab(Tab.APPOINTMENTS)
             }
