@@ -50,6 +50,13 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
 
+/**
+ * UPDATED (this revision): loadPatients() এখন SupabaseClient.adminGetAllPatientsWithReportFlag()
+ * ব্যবহার করে, যা `patients_with_reports` ভিউ থেকে ডেটা আনে এবং প্রতিটি রোগীর
+ * সাথে একটি `has_report` বুলিয়ান ফ্ল্যাগ দেয়। buildPatientCard() এখন এই
+ * ফ্ল্যাগ চেক করে "রোগীর রিপোর্ট দেখুন" বাটনটি শুধুমাত্র তখনই দেখায় যখন
+ * রোগীর সত্যিকারের কোনো রিপোর্ট আপলোড করা আছে। বাকি সব ফিচার ও UI অপরিবর্তিত।
+ */
 class AdminActivity : AppCompatActivity() {
 
     private val colorPrimary = Color.parseColor("#0F6C61")
@@ -761,7 +768,11 @@ class AdminActivity : AppCompatActivity() {
         patientsContainer.removeAllViews()
         patientsContainer.addView(loadingText())
         lifecycleScope.launch {
-            val result = SupabaseClient.adminGetAllPatients()
+            // 🆕 UPDATED: patients_with_reports ভিউ থেকে ডেটা আনা হচ্ছে, যাতে
+            // প্রতিটি রোগীর অবজেক্টে সরাসরি "has_report" ফ্ল্যাগ পাওয়া যায়।
+            // (এই ভিউটি তৈরি করতে supabase_migration_patients_with_reports.sql
+            // Supabase SQL Editor-এ একবার রান করে নিতে হবে।)
+            val result = SupabaseClient.adminGetAllPatientsWithReportFlag()
             result.onSuccess { rows ->
                 val list = mutableListOf<JSONObject>()
                 for (i in 0 until rows.length()) list.add(rows.getJSONObject(i))
@@ -799,6 +810,9 @@ class AdminActivity : AppCompatActivity() {
         val gender = obj.optString("gender", "")
         val blood = obj.optString("blood_group", "")
         val deviceId = obj.optString("device_id", "")
+        // 🆕 patients_with_reports ভিউ থেকে আসা ফ্ল্যাগ: এই রোগীর অন্তত একটি
+        // অ্যাপয়েন্টমেন্টে বৈধ report_url আছে কিনা।
+        val hasReport = obj.optBoolean("has_report", false)
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -853,13 +867,17 @@ class AdminActivity : AppCompatActivity() {
 
             addView(space(dp(8)))
 
-            addView(smallActionButton("রোগীর রিপোর্ট দেখুন", colorPrimary) {
-                showPatientReportsDialog(id, name.ifEmpty { "রোগী" })
-            }.apply {
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            })
-
-            addView(space(dp(8)))
+            // 🆕 FIX: শুধুমাত্র hasReport সত্য হলেই "রোগীর রিপোর্ট দেখুন" বাটন দেখানো হবে।
+            // আগে এই বাটনটি শর্তহীনভাবে সব রোগীর কার্ডে দেখানো হতো, ফলে রিপোর্ট
+            // আপলোড না থাকা রোগীর ক্ষেত্রেও বাটন দেখা যেত।
+            if (hasReport) {
+                addView(smallActionButton("রোগীর রিপোর্ট দেখুন", colorPrimary) {
+                    showPatientReportsDialog(id, name.ifEmpty { "রোগী" })
+                }.apply {
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                })
+                addView(space(dp(8)))
+            }
 
             addView(smallActionButton("ডিভাইস রিসেট", colorInfo) {
                 confirmDialog(
