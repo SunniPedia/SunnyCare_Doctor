@@ -93,7 +93,14 @@ dependencies {
     // Ktor 2.x
     //
     // Supabase 2.5.1-এর সঙ্গে Ktor 3.0.3 ব্যবহার করবেন না।
+    //
+    // IMPORTANT FIX:
+    // ktor-client-android ইঞ্জিন WebSocket সাপোর্ট করে না, তাই
+    // Supabase Realtime-এর channel.subscribe() কখনো সম্পূর্ণ হতো না
+    // ("কানেক্ট হচ্ছে..." তে আটকে থাকা)। ktor-client-okhttp
+    // ব্যবহার করলে WebSocket ঠিকমতো কাজ করবে, আর প্রজেক্টে এমনিতেই
+    // OkHttp ডিপেন্ডেন্সি আছে বলে এটা সবচেয়ে সামঞ্জস্যপূর্ণ পছন্দ।
     // ─────────────────────────────────────────
 
-    implementation("io.ktor:ktor-client-android:2.3.12")
+    implementation("io.ktor:ktor-client-okhttp:2.3.12")
 }
