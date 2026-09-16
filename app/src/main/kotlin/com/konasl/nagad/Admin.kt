@@ -1464,84 +1464,83 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
-    // FIX: এখন এটি শুধু URL থেকে ডাউনলোড করে renderPdfFromLocalFile কে কল করে —
-    // মূল রেন্ডারিং লজিকটি আলাদা ফাংশনে সরানো হয়েছে যাতে openPdfSmart এ আগে থেকে
-    // ডাউনলোড করা ফাইল থাকলে সেটি পুনরায় ডাউনলোড না করেই সরাসরি রেন্ডার করা যায়।
+    // FIX: এখন এটি শুধু URL থেকে ডাউনলোড করে openSwipeablePdf কে কল করে —
+    // মূল রেন্ডারিং লজিকটি লেজি-লোডিং সোয়াইপেবল ভিউয়ারে সরানো হয়েছে (নিচে দেখুন)।
     private fun openPdfViewer(url: String, title: String = "ডকুমেন্ট") {
         val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         val bgColor = Color.parseColor("#1A1A1A")
         dialog.window?.setBackgroundDrawable(ColorDrawable(bgColor))
 
-        val (root, scrollView, pagesContainer, progress, loadingLabel, titleText, closeBtn) = buildPdfViewerViews(bgColor, title)
-        closeBtn.setOnClickListener { dialog.dismiss() }
-        dialog.setContentView(root)
+        val views = buildPdfViewerViews(bgColor, title)
+        views.closeBtn.setOnClickListener { dialog.dismiss() }
+        dialog.setContentView(views.root)
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         dialog.show()
 
         lifecycleScope.launch {
             try {
                 val file = withContext(Dispatchers.IO) { downloadToTempFile(url) }
-                renderPdfPagesIntoContainer(file, pagesContainer, progress, loadingLabel, titleText, title, deleteFileAfter = true)
+                openSwipeablePdf(file, views, title, dialog, deleteFileOnClose = true)
             } catch (e: Exception) {
-                progress.visibility = View.GONE
-                loadingLabel.visibility = View.GONE
+                views.progress.visibility = View.GONE
+                views.loadingLabel.visibility = View.GONE
                 Toast.makeText(this@AdminActivity, "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // FIX: ইতিমধ্যে ডাউনলোড করা একটি লোকাল PDF ফাইল সরাসরি ফুল-স্ক্রিন ভিউয়ারে রেন্ডার করে।
+    // FIX: ইতিমধ্যে ডাউনলোড করা একটি লোকাল PDF ফাইল সরাসরি সোয়াইপেবল ফুল-স্ক্রিন ভিউয়ারে খোলে।
     // openPdfSmart এবং showPdfOpenOptionsDialog "In app" চাপলে এটি ব্যবহার করে, তাই re-download লাগে না।
     private fun renderPdfFromLocalFile(file: File, title: String = "ডকুমেন্ট") {
         val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         val bgColor = Color.parseColor("#1A1A1A")
         dialog.window?.setBackgroundDrawable(ColorDrawable(bgColor))
 
-        val (root, scrollView, pagesContainer, progress, loadingLabel, titleText, closeBtn) = buildPdfViewerViews(bgColor, title)
-        closeBtn.setOnClickListener { dialog.dismiss() }
-        dialog.setContentView(root)
+        val views = buildPdfViewerViews(bgColor, title)
+        views.closeBtn.setOnClickListener { dialog.dismiss() }
+        dialog.setContentView(views.root)
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         dialog.show()
 
         lifecycleScope.launch {
             try {
-                renderPdfPagesIntoContainer(file, pagesContainer, progress, loadingLabel, titleText, title, deleteFileAfter = true)
+                openSwipeablePdf(file, views, title, dialog, deleteFileOnClose = true)
             } catch (e: Exception) {
-                progress.visibility = View.GONE
-                loadingLabel.visibility = View.GONE
+                views.progress.visibility = View.GONE
+                views.loadingLabel.visibility = View.GONE
                 Toast.makeText(this@AdminActivity, "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
+    // FIX: root + ViewPager2 (swipe নেভিগেশনের জন্য) + পেইজ ইন্ডিকেটর ব্যাজ + টপবার (টাইটেল/ক্লোজ)
+    // + প্রাথমিক লোডিং স্পিনার — এই সবগুলো ধারণ করে। openPdfViewer ও renderPdfFromLocalFile দুটোই এটি শেয়ার করে।
     private data class PdfViewerViews(
         val root: FrameLayout,
-        val scrollView: NestedScrollView,
-        val pagesContainer: LinearLayout,
+        val viewPager: ViewPager2,
         val progress: ProgressBar,
         val loadingLabel: TextView,
         val titleText: TextView,
+        val pageIndicator: TextView,
         val closeBtn: ImageView
     )
 
-    // FIX: PDF ফুল-স্ক্রিন ভিউয়ারের UI কাঠামো তৈরি করে — openPdfViewer ও renderPdfFromLocalFile দুটোই এটি শেয়ার করে।
+    // FIX: PDF ফুল-স্ক্রিন ভিউয়ারের UI কাঠামো তৈরি করে (ViewPager2 সহ)।
     // closeBtn টি রিটার্ন করা হয় যাতে কলার নিজের Dialog রেফারেন্স দিয়ে ক্লিক লিসেনার সেট করতে পারে।
     private fun buildPdfViewerViews(bgColor: Int, title: String): PdfViewerViews {
         val root = FrameLayout(this).apply {
             setBackgroundColor(bgColor)
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         }
-        val scrollView = NestedScrollView(this).apply {
+
+        // FIX: এখন পেইজগুলো একটার নিচে একটা স্ক্রল করে দেখানোর বদলে ViewPager2 দিয়ে
+        // সোয়াইপ করে এক পেইজ থেকে আরেক পেইজে যাওয়া যায়। offscreenPageLimit = 1 রাখায়
+        // পাশের একটি করে পেইজ আগে থেকেই তৈরি (lazy) থাকে, ফলে সোয়াইপ মসৃণ হয়।
+        val viewPager = ViewPager2(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            setPadding(0, dp(64), 0, dp(24))
-            clipToPadding = false
-            overScrollMode = View.OVER_SCROLL_NEVER
+            offscreenPageLimit = 1
+            visibility = View.GONE
         }
-        val pagesContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        scrollView.addView(pagesContainer)
 
         val progress = ProgressBar(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -1555,6 +1554,19 @@ class AdminActivity : AppCompatActivity() {
                 topMargin = dp(56)
             }
         }
+
+        // FIX: নিচে ভাসমান "X / Y" পেইজ ইন্ডিকেটর ব্যাজ — সোয়াইপ করার সাথে সাথে আপডেট হয়,
+        // আগে যেভাবে প্রতিটি পেইজের নিচে "পৃষ্ঠা X/Y" লেখা থাকতো তার বদলে এটি এখন একটি ভাসমান ব্যাজ।
+        val pageIndicator = text("", 11.5f, Typeface.BOLD, Color.WHITE, Gravity.CENTER).apply {
+            background = roundedBg(Color.argb(160, 0, 0, 0), 30f)
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(22)
+            }
+        }
+
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1581,73 +1593,193 @@ class AdminActivity : AppCompatActivity() {
         topBar.addView(closeBtn)
         topBar.addView(titleText)
 
-        root.addView(scrollView)
+        root.addView(viewPager)
         root.addView(progress)
         root.addView(loadingLabel)
+        root.addView(pageIndicator)
         root.addView(topBar)
 
-        return PdfViewerViews(root, scrollView, pagesContainer, progress, loadingLabel, titleText, closeBtn)
+        return PdfViewerViews(root, viewPager, progress, loadingLabel, titleText, pageIndicator, closeBtn)
     }
 
-    // FIX: একটি লোকাল PDF ফাইল থেকে পেইজগুলো রেন্ডার করে pagesContainer এ যোগ করে, লোডিং UI আপডেট করে।
-    private suspend fun renderPdfPagesIntoContainer(
+    // FIX: মূল সেটআপ ফাংশন — PdfRenderer একবার খোলে, ViewPager2 তে lazy-loading adapter বসায়,
+    // এবং ডায়ালগ বন্ধ হলে (dialog.setOnDismissListener) renderer/pfd/temp-file পরিষ্কার করে।
+    // যেহেতু পেইজগুলো এখন lazily (দরকার হলে তবেই) রেন্ডার হয়, তাই renderer সম্পূর্ণ ডায়ালগের
+    // লাইফটাইম জুড়ে খোলা রাখতে হয় — আগের মতো ফাংশনের শেষে try/finally তে বন্ধ করা যাবে না।
+    private suspend fun openSwipeablePdf(
         file: File,
-        pagesContainer: LinearLayout,
-        progress: ProgressBar,
-        loadingLabel: TextView,
-        titleText: TextView,
+        views: PdfViewerViews,
         title: String,
-        deleteFileAfter: Boolean
+        dialog: Dialog,
+        deleteFileOnClose: Boolean
     ) {
-        var pfd: ParcelFileDescriptor? = null
-        var renderer: PdfRenderer? = null
-        try {
-            pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            renderer = PdfRenderer(pfd)
-            val pageCount = renderer.pageCount
+        val pfd = withContext(Dispatchers.IO) { ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY) }
+        val renderer = try {
+            PdfRenderer(pfd)
+        } catch (e: Exception) {
+            withContext(Dispatchers.IO) {
+                try { pfd.close() } catch (ex: Exception) { }
+                if (deleteFileOnClose) { try { file.delete() } catch (ex: Exception) { } }
+            }
+            throw e
+        }
+        val pageCount = renderer.pageCount
 
-            progress.visibility = View.GONE
-            loadingLabel.visibility = View.GONE
-            titleText.text = "$title ($pageCount পৃষ্ঠা)"
+        views.progress.visibility = View.GONE
+        views.loadingLabel.visibility = View.GONE
+        views.titleText.text = "$title ($pageCount পৃষ্ঠা)"
+        views.pageIndicator.visibility = if (pageCount > 1) View.VISIBLE else View.GONE
+        views.pageIndicator.text = "1 / $pageCount"
 
-            val screenWidthPx = resources.displayMetrics.widthPixels
-            for (i in 0 until pageCount) {
-                val page = renderer.openPage(i)
-                val rawScale = (screenWidthPx.toFloat() / page.width.toFloat()) * 2f
-                val safeScale = rawScale.coerceIn(1f, 4f)
-                val outW = (page.width * safeScale).toInt().coerceAtLeast(1)
-                val outH = (page.height * safeScale).toInt().coerceAtLeast(1)
-                val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
-                Canvas(bmp).drawColor(Color.WHITE)
-                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                page.close()
+        // FIX: PdfRenderer থ্রেড-সেফ নয়, তাই একসাথে একাধিক পেইজ রেন্ডার হওয়া ঠেকাতে Mutex ব্যবহার করা হচ্ছে।
+        val rendererMutex = Mutex()
+        val screenWidthPx = resources.displayMetrics.widthPixels
+        val adapter = PdfPageAdapter(this@AdminActivity, renderer, rendererMutex, pageCount, screenWidthPx, lifecycleScope)
 
-                val pageIndexForClick = i
-                val pageImage = ImageView(this@AdminActivity).apply {
-                    setImageBitmap(bmp)
-                    adjustViewBounds = true
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        setMargins(dp(8), dp(6), dp(8), dp(6))
-                    }
-                    background = roundedBg(Color.WHITE, 4f)
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        openImageViewer(bitmap = bmp, title = "পৃষ্ঠা ${pageIndexForClick + 1}/$pageCount")
+        views.viewPager.adapter = adapter
+        views.viewPager.visibility = View.VISIBLE
+        views.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageSelected(position: Int) {
+                views.pageIndicator.text = "${position + 1} / $pageCount"
+            }
+        })
+
+        // FIX: ডায়ালগ বন্ধ হলে (ক্লোজ বাটন বা ব্যাক-প্রেস, যেকোনো উপায়ে) pending render job,
+        // ক্যাশে থাকা bitmap, renderer, pfd এবং প্রয়োজনে temp ফাইল — সব ক্লিনআপ হয়।
+        dialog.setOnDismissListener {
+            adapter.cancelAllAndClear()
+            try { renderer.close() } catch (e: Exception) { }
+            lifecycleScope.launch(Dispatchers.IO) {
+                try { pfd.close() } catch (e: Exception) { }
+                if (deleteFileOnClose) {
+                    try { file.delete() } catch (e: Exception) { }
+                }
+            }
+        }
+    }
+
+    // FIX: ViewPager2 এর RecyclerView.Adapter — প্রতিটা পেইজ শুধু স্ক্রিনে আসার সময় (বা তার পাশের
+    // offscreenPageLimit রেঞ্জে) রেন্ডার হয় (lazy-loading), এবং সাম্প্রতিক কয়েকটি বাদে বাকি bitmap
+    // ক্যাশ থেকে সরিয়ে recycle করে দেয় যাতে মেমোরি কম লাগে। প্রতিটি পেইজে ট্যাপ করলে আগের মতোই
+    // pinch-zoom করা যায় এমন ফুল-স্ক্রিন ইমেজ ভিউয়ার খোলে।
+    private class PdfPageAdapter(
+        private val activity: AdminActivity,
+        private val renderer: PdfRenderer,
+        private val rendererMutex: Mutex,
+        private val pageCount: Int,
+        private val screenWidthPx: Int,
+        private val scope: CoroutineScope
+    ) : RecyclerView.Adapter<PdfPageAdapter.PageViewHolder>() {
+
+        // FIX: সর্বোচ্চ ৫টি পেইজের bitmap ক্যাশে রাখা হয় (বর্তমান + আশেপাশের কয়েকটি)।
+        // এর বেশি হলে সবচেয়ে পুরনোটা স্বয়ংক্রিয়ভাবে recycle হয়ে যায় — এটাই মূল মেমোরি-সাশ্রয়ী lazy অংশ।
+        private val maxCacheSize = 5
+        private val bitmapCache = object : LinkedHashMap<Int, Bitmap>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Bitmap>): Boolean {
+                if (size > maxCacheSize) {
+                    val bmp = eldest.value
+                    if (!bmp.isRecycled) bmp.recycle()
+                    return true
+                }
+                return false
+            }
+        }
+        private val renderJobs = mutableMapOf<Int, Job>()
+
+        inner class PageViewHolder(
+            val frame: FrameLayout,
+            val imageView: ImageView,
+            val progress: ProgressBar
+        ) : RecyclerView.ViewHolder(frame)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PageViewHolder {
+            val frame = FrameLayout(activity).apply {
+                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            }
+            val imageView = ImageView(activity).apply {
+                adjustViewBounds = true
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                    val m = activity.dp(10)
+                    setMargins(m, m, m, m)
+                }
+                isClickable = true
+                isFocusable = true
+            }
+            val progress = ProgressBar(activity).apply {
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = Gravity.CENTER
+                }
+                indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            }
+            frame.addView(imageView)
+            frame.addView(progress)
+            return PageViewHolder(frame, imageView, progress)
+        }
+
+        override fun onBindViewHolder(holder: PageViewHolder, position: Int) {
+            val cached = bitmapCache[position]
+            if (cached != null && !cached.isRecycled) {
+                holder.imageView.setImageBitmap(cached)
+                holder.progress.visibility = View.GONE
+            } else {
+                holder.imageView.setImageBitmap(null)
+                holder.progress.visibility = View.VISIBLE
+                renderJobs[position]?.cancel()
+                val job = scope.launch {
+                    val bmp = renderPage(position)
+                    if (bmp != null) {
+                        bitmapCache[position] = bmp
+                        if (holder.bindingAdapterPosition == position) {
+                            holder.imageView.setImageBitmap(bmp)
+                            holder.progress.visibility = View.GONE
+                        }
+                    } else if (holder.bindingAdapterPosition == position) {
+                        holder.progress.visibility = View.GONE
                     }
                 }
-                pagesContainer.addView(pageImage)
-                pagesContainer.addView(text("পৃষ্ঠা ${i + 1}/$pageCount", 10.5f, Typeface.NORMAL, Color.parseColor("#B0B0B0"), Gravity.CENTER).apply {
-                    setPadding(0, 0, 0, dp(10))
-                })
+                renderJobs[position] = job
             }
-        } finally {
-            withContext(Dispatchers.IO) {
-                try { renderer?.close() } catch (e: Exception) { }
-                try { pfd?.close() } catch (e: Exception) { }
-                if (deleteFileAfter) {
-                    try { file.delete() } catch (e: Exception) { }
+            holder.imageView.setOnClickListener {
+                val bmp = bitmapCache[position]
+                if (bmp != null && !bmp.isRecycled) {
+                    activity.openImageViewer(bitmap = bmp, title = "পৃষ্ঠা ${position + 1}/$pageCount")
+                }
+            }
+        }
+
+        override fun onViewRecycled(holder: PageViewHolder) {
+            val pos = holder.bindingAdapterPosition
+            renderJobs[pos]?.cancel()
+            renderJobs.remove(pos)
+            holder.imageView.setOnClickListener(null)
+        }
+
+        override fun getItemCount(): Int = pageCount
+
+        // FIX: ডায়ালগ বন্ধ হওয়ার সময় সব pending render job বাতিল করে এবং ক্যাশে থাকা bitmap গুলো recycle করে।
+        fun cancelAllAndClear() {
+            renderJobs.values.forEach { it.cancel() }
+            renderJobs.clear()
+            bitmapCache.values.forEach { if (!it.isRecycled) it.recycle() }
+            bitmapCache.clear()
+        }
+
+        private suspend fun renderPage(index: Int): Bitmap? = withContext(Dispatchers.IO) {
+            rendererMutex.withLock {
+                try {
+                    val page = renderer.openPage(index)
+                    val rawScale = (screenWidthPx.toFloat() / page.width.toFloat()) * 2f
+                    val safeScale = rawScale.coerceIn(1f, 4f)
+                    val outW = (page.width * safeScale).toInt().coerceAtLeast(1)
+                    val outH = (page.height * safeScale).toInt().coerceAtLeast(1)
+                    val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+                    Canvas(bmp).drawColor(Color.WHITE)
+                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    page.close()
+                    bmp
+                } catch (e: Exception) {
+                    null
                 }
             }
         }
