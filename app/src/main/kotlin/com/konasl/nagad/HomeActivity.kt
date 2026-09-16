@@ -1556,7 +1556,7 @@ class HomeActivity : AppCompatActivity() {
         private val sizePx: Int = 96
     ) : Drawable() {
 
-        enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT, DOCUMENT, TRASH, LOCATION, CLOCK, PLUS }
+        enum class IconType { HOME, CALENDAR, PHONE, PILL, PERSON, CHECK, STAR, LOGOUT, SUN, DOT, SHIELD, ARROW_RIGHT, DOCUMENT, PRESCRIPTION, TRASH, LOCATION, CLOCK, PLUS }
 
         private var iconColor: Int = initialColor
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = iconColor }
@@ -1602,6 +1602,7 @@ class HomeActivity : AppCompatActivity() {
                 IconType.SHIELD -> drawShield(canvas, s)
                 IconType.ARROW_RIGHT -> drawArrowRight(canvas, s)
                 IconType.DOCUMENT -> drawDocument(canvas, s)
+                IconType.PRESCRIPTION -> drawPrescription(canvas, s)
                 IconType.TRASH -> drawTrash(canvas, s)
                 IconType.LOCATION -> drawLocation(canvas, s)
                 IconType.CLOCK -> drawClock(canvas, s)
@@ -1779,6 +1780,42 @@ class HomeActivity : AppCompatActivity() {
             canvas.drawLine(s * 0.24f, s * 0.30f, s * 0.76f, s * 0.30f, strokePaint)
             canvas.drawLine(s * 0.24f, s * 0.52f, s * 0.76f, s * 0.52f, strokePaint)
             canvas.drawLine(s * 0.24f, s * 0.74f, s * 0.58f, s * 0.74f, strokePaint)
+        }
+
+        private fun drawPrescription(canvas: Canvas, s: Float) {
+            // Prescription / medical prescription sheet with a small Rx mark.
+            val u = s / 24f
+
+            val sheet = Path().apply {
+                moveTo(6f * u, 2f * u)
+                lineTo(18f * u, 2f * u)
+                lineTo(21f * u, 5f * u)
+                lineTo(21f * u, 22f * u)
+                lineTo(6f * u, 22f * u)
+                close()
+            }
+            canvas.drawPath(sheet, strokePaint)
+
+            // Folded corner.
+            val fold = Path().apply {
+                moveTo(18f * u, 2f * u)
+                lineTo(18f * u, 5f * u)
+                lineTo(21f * u, 5f * u)
+            }
+            canvas.drawPath(fold, strokePaint)
+
+            // Prescription lines.
+            canvas.drawLine(9f * u, 9f * u, 18f * u, 9f * u, strokePaint)
+            canvas.drawLine(9f * u, 12.5f * u, 18f * u, 12.5f * u, strokePaint)
+            canvas.drawLine(9f * u, 16f * u, 15f * u, 16f * u, strokePaint)
+
+            // Rx-style medical mark.
+            val rx = Path().apply {
+                moveTo(9f * u, 18.5f * u)
+                lineTo(11.2f * u, 18.5f * u)
+                lineTo(12.5f * u, 20.5f * u)
+            }
+            canvas.drawPath(rx, strokePaint)
         }
 
         private fun drawTrash(canvas: Canvas, s: Float) {
