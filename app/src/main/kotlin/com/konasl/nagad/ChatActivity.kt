@@ -1159,6 +1159,143 @@ class ChatActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
+    // FIX: কাস্টম এরর ডায়লগ — ছবি/পিডিএফ লোড ব্যর্থ হলে এখন আর সাধারণ Toast
+    // (যা কয়েক সেকেন্ডেই মিলিয়ে যায় এবং টেক্সট কপি করা যায় না) দেখানো হয় না।
+    // বদলে এই কাস্টম ডায়লগে টাইটেল, পুরো এরর মেসেজ এবং একটা "কপি করুন" বাটন
+    // থাকে যাতে ইউজার এরর মেসেজটা কপি করে (যেমন ডাক্তার/সাপোর্টকে) পাঠাতে পারে।
+    // ------------------------------------------------------------------
+    private fun showErrorDialog(title: String, message: String) {
+        if (isFinishing || isDestroyed) return
+
+        val dialog = android.app.Dialog(this)
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(16))
+            background = roundedBackground(Color.WHITE, 18f, colorBorder)
+        }
+
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dp(10))
+        }
+
+        val titleView = TextView(this).apply {
+            this.text = title
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorDanger)
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        }
+
+        val closeIcon = IconButtonView(this, IconType.CLOSE).apply {
+            setColor(colorMuted)
+            contentDescription = "বন্ধ করুন"
+            setOnClickListener { dialog.dismiss() }
+        }
+
+        titleRow.addView(titleView)
+        titleRow.addView(closeIcon, LinearLayout.LayoutParams(dp(30), dp(30)))
+
+        val messageScroll = android.widget.ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(16)
+            }
+            val maxHeightPx = (resources.displayMetrics.heightPixels * 0.35).toInt()
+            layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            isFillViewport = false
+            setPadding(0, 0, 0, 0)
+            // FIX: বড় এরর মেসেজ হলে ডায়লগ স্ক্রিন ছাপিয়ে যেন না যায় তাই স্ক্রলযোগ্য
+            // একটা কন্টেইনারে রাখা হয়েছে এবং সর্বোচ্চ উচ্চতা সীমাবদ্ধ করা হয়েছে।
+            post {
+                if (height > maxHeightPx) {
+                    val lp = layoutParams
+                    lp.height = maxHeightPx
+                    layoutParams = lp
+                }
+            }
+        }
+
+        val messageView = TextView(this).apply {
+            this.text = message
+            textSize = 13.5f
+            setTextColor(colorText)
+            setTextIsSelectable(true)
+        }
+
+        messageScroll.addView(messageView)
+
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+
+        val okBtn = TextView(this).apply {
+            text = "ঠিক আছে"
+            textSize = 13f
+            setTextColor(colorPrimary)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(9), dp(16), dp(9))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { dialog.dismiss() }
+        }
+
+        val copyBtn = TextView(this).apply {
+            text = "কপি করুন"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = roundedBackground(colorPrimary, 20f, Color.TRANSPARENT)
+            setPadding(dp(18), dp(9), dp(18), dp(9))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                try {
+                    val clipboard =
+                        getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    val clip = android.content.ClipData.newPlainText("Error", "$title\n$message")
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(this@ChatActivity, "কপি করা হয়েছে", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this@ChatActivity, "কপি করা যায়নি", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        buttonRow.addView(okBtn)
+        buttonRow.addView(
+            copyBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = dp(10) }
+        )
+
+        box.addView(titleRow)
+        box.addView(messageScroll)
+        box.addView(buttonRow)
+
+        dialog.setContentView(box)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.86).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        dialog.show()
+    }
+
+    // ------------------------------------------------------------------
     // FIX: In-app zoomable image viewer — image attachments now open here
     // instead of an external app.
     // ------------------------------------------------------------------
@@ -1260,15 +1397,19 @@ class ChatActivity : AppCompatActivity() {
                             applyBitmap(bmp)
                         } else {
                             progress.visibility = View.GONE
-                            Toast.makeText(this@ChatActivity, "ছবি লোড করা যায়নি", Toast.LENGTH_SHORT).show()
+                            // FIX: Toast এর বদলে কাস্টম এরর ডায়লগ — মেসেজ কপি করা যায়।
+                            showErrorDialog(
+                                "ছবি লোড ব্যর্থ",
+                                "ছবিটি লোড করা যায়নি। ইন্টারনেট সংযোগ চেক করে আবার চেষ্টা করুন।\n\nফাইল লিংক:\n$url"
+                            )
                         }
                     } catch (e: Exception) {
                         progress.visibility = View.GONE
-                        Toast.makeText(
-                            this@ChatActivity,
-                            "ছবি লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        // FIX: Toast এর বদলে কাস্টম এরর ডায়লগ — মেসেজ কপি করা যায়।
+                        showErrorDialog(
+                            "ছবি লোড ব্যর্থ",
+                            "${e.message ?: "অজানা সমস্যা"}\n\nফাইল লিংক:\n$url"
+                        )
                     }
                 }
             }
@@ -1509,11 +1650,13 @@ class ChatActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 views.progress.visibility = View.GONE
                 views.loadingLabel.visibility = View.GONE
-                Toast.makeText(
-                    this@ChatActivity,
-                    "PDF লোড ব্যর্থ: ${e.message ?: "অজানা সমস্যা"}",
-                    Toast.LENGTH_SHORT
-                ).show()
+                // FIX: Toast এর বদলে কাস্টম এরর ডায়লগ — মেসেজ কপি করা যায়।
+                // PDF viewer ডায়লগটা (dialog) খোলা থাকা অবস্থাতেই এই এরর
+                // ডায়লগ তার উপরে ওভারলে হয়ে দেখাবে।
+                showErrorDialog(
+                    "PDF লোড ব্যর্থ",
+                    "${e.message ?: "অজানা সমস্যা"}\n\nফাইল লিংক:\n$url"
+                )
             }
         }
     }
