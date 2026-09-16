@@ -469,8 +469,8 @@ class ChatActivity : AppCompatActivity() {
                 val channelName =
                     "chat-$id-${System.currentTimeMillis()}"
 
-                val channel = realtimeSupabase.channel(channelName)
-                realtimeChannel = channel
+                val realtimeChannelLocal: RealtimeChannel = realtimeSupabase.channel(channelName)
+                realtimeChannel = realtimeChannelLocal
 
                 /*
                  * Keep this subscription intentionally broad for maximum
@@ -491,10 +491,13 @@ class ChatActivity : AppCompatActivity() {
                  * Subscribe from the SAME coroutine that owns the channel.
                  * subscribe() is suspend in supabase-kt.
                  */
-                channel.subscribe(blockUntilSubscribed = true)
+                realtimeChannelLocal.subscribe(blockUntilSubscribed = true)
                 setStatus("অনলাইন • রিয়েলটাইম", true)
 
-                changes.collect { action ->
+                realtimeChannelLocal.subscribe(blockUntilSubscribed = true)
+                setStatus("অনলাইন • রিয়েলটাইম", true)
+
+                changes.collect { action: PostgresAction ->
                     when (action) {
                         is PostgresAction.Insert -> {
                             handleRealtimeInsert(action.record)
@@ -926,7 +929,6 @@ class ChatActivity : AppCompatActivity() {
                 }
 
                 try {
-                    realtimeSupabase.realtime.removeChannel(channel)
                 } catch (_: Exception) {
                 }
             }
@@ -1399,8 +1401,6 @@ class ChatActivity : AppCompatActivity() {
                     ).apply {
                         gravity =
                             if (mine) Gravity.END else Gravity.START
-                        maxWidth =
-                            (resources.displayMetrics.widthPixels * 0.80f).toInt()
                     }
 
                 container.addView(bubble, params)
