@@ -61,6 +61,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -82,19 +83,6 @@ import java.util.Locale
  *    manifest windowSoftInputMode.
  * 8. Image attachments preview in the chat bubble and open in an in-app zoomable viewer.
  * 9. PDF attachments open in an in-app swipeable, lazy-loading page viewer.
- *
- * Required database setup:
- * - public.messages must be enabled in the supabase_realtime publication.
- * - RLS policies must allow the logged-in user to receive the conversation's rows.
- *
- * Required Gradle dependencies:
- * - supabase-kt 2.5.1
- * - realtime-kt 2.5.1
- * - a Ktor Android engine compatible with the project's supabase-kt version
- * - androidx.viewpager2:viewpager2
- *
- * Required AndroidManifest.xml entries: see AndroidManifest_ADDITIONS.xml
- * (INTERNET, CAMERA permissions, FileProvider).
  */
 class ChatActivity : AppCompatActivity() {
 
@@ -123,9 +111,7 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var adapter: MessageAdapter
     private lateinit var inputField: EditText
     private lateinit var sendButton: IconButtonView
-    private lateinit var statusText: TextView
     private lateinit var titleText: TextView
-    private lateinit var onlineDot: View
     private lateinit var typingText: TextView
     private lateinit var headerView: LinearLayout
     private lateinit var rootView: LinearLayout
@@ -140,8 +126,20 @@ class ChatActivity : AppCompatActivity() {
     // RecyclerView rebind / scroll, and reused when opening the full viewer.
     private val imageCache = LruCache<String, Bitmap>(24)
 
+    // FIX: WhatsApp-স্টাইল আপলোড প্রিভিউ — পিক করা ছবির লোকাল থাম্বনেইল ক্যাশ,
+    // যাতে আপলোড শেষ না হওয়া পর্যন্ত bubble-এ সাথে সাথে ছবি দেখা যায় (নেটওয়ার্ক ছাড়াই)।
+    private val pendingImageCache = LruCache<String, Bitmap>(12)
+
     // Holds the destination Uri while the camera app is capturing a photo.
     private var pendingCameraUri: Uri? = null
+
+    // FIX: আগে যে Thread.UncaughtExceptionHandler বসানো ছিল তা ধরে রাখা হয়,
+    // যাতে রিয়েলটাইম সকেট ছাড়া অন্য যেকোনো ক্র্যাশ আগের মতোই রিপোর্ট হয়।
+    private var previousUncaughtExceptionHandler: Thread.UncaughtExceptionHandler? = null
+
+    // FIX: WhatsApp-স্টাইল আপলোড — কোনো পেন্ডিং আপলোড ব্যর্থ হলে সেই আপলোডটা
+    // আবার শুরু করার জন্য (retry-on-tap) local_id দিয়ে রাখা রিট্রাই অ্যাকশন।
+    private val pendingRetryActions = mutableMapOf<String, () -> Unit>()
 
     /*
      * These values mirror the existing SupabaseClient because the uploaded
@@ -197,6 +195,15 @@ class ChatActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // FIX: রিয়েলটাইম WebSocket রিডার থ্রেডে হঠাৎ SocketException
+        // ("Software caused connection abort") আসলে পুরো অ্যাপ ক্র্যাশ করত
+        // (CRASH REPORT দেখুন)। এই সকেট এক্সসেপশনটা supabase-kt লাইব্রেরির
+        // নিজস্ব internal coroutine-এ ঘটে বলে আমাদের নিজস্ব try/catch এটা
+        // ধরতে পারে না — তাই থ্রেড লেভেলে একটা সেফটি-নেট বসানো হলো: শুধু এই
+        // নির্দিষ্ট নেটওয়ার্ক এক্সসেপশনটা চুপচাপ লগ করে রিয়েলটাইম রিকানেক্ট করা
+        // হবে, অন্য যেকোনো আসল ক্র্যাশ আগের মতোই স্বাভাবিকভাবে রিপোর্ট হবে।
+        installRealtimeCrashGuard()
 
         // FIX: এখন কীবোর্ড ওভারল্যাপ ফিক্স ম্যানিফেস্টের windowSoftInputMode এর উপর নির্ভর না করে
         // কোডেই edge-to-edge + WindowInsets দিয়ে হ্যান্ডল করা হয় (buildUi() এর ভেতরে দেখুন)।
@@ -277,8 +284,8 @@ class ChatActivity : AppCompatActivity() {
             }
         }
 
-        // FIX: "রোগী"/"ডাক্তার" সাবটাইটেল ফিল্ড বাদ দেওয়া হয়েছে; পরিবর্তে নামের পাশে
-        // একটি সবুজ (অনলাইন) ভেক্টর ডট যুক্ত করা হলো।
+        // FIX: "রোগী"/"ডাক্তার" সাবটাইটেল ফিল্ড এবং অনলাইন স্ট্যাটাস ডট — দুটোই
+        // সম্পূর্ণ বাদ দেওয়া হয়েছে ("অনলাইন লেখা ফিল্ডটা একেবারে বাদ দাও")।
         val nameRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -291,20 +298,7 @@ class ChatActivity : AppCompatActivity() {
             typeface = Typeface.DEFAULT_BOLD
         }
 
-        onlineDot = View(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(colorSuccess)
-                setStroke(dp(1), Color.argb(160, 255, 255, 255))
-            }
-            layoutParams = LinearLayout.LayoutParams(dp(8), dp(8)).apply {
-                marginStart = dp(6)
-            }
-            visibility = View.GONE
-        }
-
         nameRow.addView(titleText)
-        nameRow.addView(onlineDot)
 
         typingText = TextView(this).apply {
             text = ""
@@ -323,25 +317,9 @@ class ChatActivity : AppCompatActivity() {
 
         root.addView(header)
 
-        // FIX: "প্রাইভেট চিকিৎসা চ্যাট" লাইনটি বাদ দেওয়া হয়েছে; স্ট্যাটাস বারে শুধু
-        // সংযোগ স্ট্যাটাস টেক্সট থাকবে (এবং তার মধ্যে "রিয়েলটাইম" শব্দটিও নেই)।
-        val statusBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(7), dp(14), dp(7))
-            setBackgroundColor(Color.WHITE)
-        }
-
-        statusText = TextView(this).apply {
-            text = "সংযোগ হচ্ছে..."
-            textSize = 11f
-            setTextColor(colorMuted)
-            layoutParams = LinearLayout.LayoutParams(0, dp(28), 1f)
-        }
-
-        statusBar.addView(statusText)
-        root.addView(statusBar)
-
+        // FIX: "প্রাইভেট চিকিৎসা চ্যাট" / কানেকশন স্ট্যাটাস বার সম্পূর্ণ বাদ দেওয়া
+        // হয়েছে ("অনলাইন লেখা ফিল্ডটা একেবারে বাদ দাও") — হেডারের ঠিক নিচেই
+        // এখন সরাসরি চ্যাট লিস্ট বসবে।
         recyclerView = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@ChatActivity).apply {
                 stackFromEnd = true
@@ -835,6 +813,9 @@ class ChatActivity : AppCompatActivity() {
     // ATTACHMENT UPLOAD + SEND (real implementation)
     // ------------------------------------------------------------------
 
+    // FIX: WhatsApp-স্টাইল আপলোড — এখন ফাইল বেছে নেওয়ার সাথে সাথে চ্যাটে একটা
+    // bubble দেখানো হয় (ছবি হলে লোকাল থাম্বনেইলসহ) এবং আপলোড হতে হতে সেই
+    // bubble-এ বাস্তব প্রগ্রেস % আপডেট হতে থাকে, ঠিক যেমন WhatsApp দেখায়।
     private fun uploadAndSendAttachment(uri: Uri, mimeTypeHint: String?) {
         val id = conversationId
         if (id.isNullOrBlank()) {
@@ -850,52 +831,197 @@ class ChatActivity : AppCompatActivity() {
         val mimeType = mimeTypeHint
             ?: contentResolver.getType(uri)
             ?: "application/octet-stream"
+        val isImage = mimeType.startsWith("image/")
 
-        Toast.makeText(this, "আপলোড হচ্ছে...", Toast.LENGTH_SHORT).show()
+        val localId = "local_${System.currentTimeMillis()}_${(1000..9999).random()}"
 
-        lifecycleScope.launch {
-            try {
-                val bytes = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: throw IllegalStateException("ফাইল পড়া যায়নি")
-                }
+        if (isImage) {
+            val preview = decodeSampledBitmap(uri, 480)
+            if (preview != null) {
+                pendingImageCache.put(localId, preview)
+            }
+        }
 
-                if (bytes.size > 25 * 1024 * 1024) {
+        val pendingEnvelope = JSONObject().apply {
+            put("kind", "pending_attachment")
+            put("local_id", localId)
+            put("file_name", fileName)
+            put("mime_type", mimeType)
+            put("is_image", isImage)
+            put("progress", 0)
+            put("failed", false)
+        }
+
+        val pendingMessage = JSONObject().apply {
+            put("id", "")
+            put("sender_id", mySenderId)
+            put("sender_role", myRole)
+            put("created_at", "")
+            put("message", pendingEnvelope.toString())
+        }
+
+        messages.add(pendingMessage)
+        val insertedAt = messages.lastIndex
+        runOnUiThread {
+            adapter.notifyItemInserted(insertedAt)
+            scrollToBottom(true)
+        }
+
+        fun startUpload() {
+            lifecycleScope.launch {
+                try {
+                    updatePendingEnvelope(localId) { env ->
+                        env.put("progress", 0)
+                        env.put("failed", false)
+                    }
+
+                    val bytes = withContext(Dispatchers.IO) {
+                        contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            ?: throw IllegalStateException("ফাইল পড়া যায়নি")
+                    }
+
+                    if (bytes.size > 25 * 1024 * 1024) {
+                        removePendingMessage(localId)
+                        Toast.makeText(
+                            this@ChatActivity,
+                            "সর্বোচ্চ ২৫ MB ফাইল পাঠানো যাবে",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@launch
+                    }
+
+                    var lastReportedPercent = -1
+                    val attachment = SupabaseClient.uploadChatAttachmentWithProgress(
+                        id,
+                        mySenderId,
+                        fileName,
+                        mimeType,
+                        bytes
+                    ) { sent, total ->
+                        val percent = if (total > 0) ((sent * 100) / total).toInt() else 0
+                        if (percent != lastReportedPercent) {
+                            lastReportedPercent = percent
+                            updatePendingEnvelope(localId) { env ->
+                                env.put("progress", percent)
+                            }
+                        }
+                    }.getOrThrow()
+
+                    updatePendingEnvelope(localId) { env ->
+                        env.put("progress", 100)
+                    }
+
+                    /*
+                     * The Supabase Realtime INSERT event also delivers this
+                     * same message to this screen; containsMessageId() below
+                     * prevents it from being added twice.
+                     */
+                    val sentRow = SupabaseClient.sendAttachmentMessage(
+                        id,
+                        mySenderId,
+                        myRole,
+                        attachment
+                    ).getOrThrow()
+
+                    pendingRetryActions.remove(localId)
+                    pendingImageCache.remove(localId)
+                    replacePendingMessage(localId, sentRow)
+
+                } catch (e: Exception) {
+                    pendingRetryActions[localId] = { startUpload() }
+                    updatePendingEnvelope(localId) { env ->
+                        env.put("failed", true)
+                    }
                     Toast.makeText(
                         this@ChatActivity,
-                        "সর্বোচ্চ ২৫ MB ফাইল পাঠানো যাবে",
+                        "ফাইল পাঠানো যায়নি: ${e.message ?: "অজানা সমস্যা"}",
                         Toast.LENGTH_SHORT
                     ).show()
-                    return@launch
                 }
-
-                val attachment = SupabaseClient.uploadChatAttachment(
-                    id,
-                    mySenderId,
-                    fileName,
-                    mimeType,
-                    bytes
-                ).getOrThrow()
-
-                /*
-                 * Do not manually insert into the RecyclerView here — the
-                 * Supabase Realtime INSERT event (fixed above) delivers this
-                 * message to this same screen, same as a normal text message.
-                 */
-                SupabaseClient.sendAttachmentMessage(
-                    id,
-                    mySenderId,
-                    myRole,
-                    attachment
-                ).getOrThrow()
-
-            } catch (e: Exception) {
-                Toast.makeText(
-                    this@ChatActivity,
-                    "ফাইল পাঠানো যায়নি: ${e.message ?: "অজানা সমস্যা"}",
-                    Toast.LENGTH_LONG
-                ).show()
             }
+        }
+
+        startUpload()
+    }
+
+    // FIX: পিক করা ছবির Uri থেকে সরাসরি একটা ছোট, ডাউনস্কেল থাম্বনেইল দ্রুত
+    // ডিকোড করা হয় (নেটওয়ার্ক ছাড়াই) যাতে আপলোড শুরুর সাথে সাথে bubble-এ ছবি
+    // দেখা যায় — ঠিক যেমন WhatsApp আপলোডের আগেই লোকাল প্রিভিউ দেখায়।
+    private fun decodeSampledBitmap(uri: Uri, maxDimension: Int): Bitmap? {
+        return try {
+            val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, boundsOptions)
+            }
+
+            var sampleSize = 1
+            val w = boundsOptions.outWidth
+            val h = boundsOptions.outHeight
+            if (w > 0 && h > 0) {
+                while ((w / sampleSize) > maxDimension || (h / sampleSize) > maxDimension) {
+                    sampleSize *= 2
+                }
+            }
+
+            val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, decodeOptions)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun findPendingIndexByLocalId(localId: String): Int {
+        return messages.indexOfFirst {
+            val envelope = parseEnvelope(it.optString("message", ""))
+            envelope != null &&
+                envelope.optString("kind") == "pending_attachment" &&
+                envelope.optString("local_id") == localId
+        }
+    }
+
+    private fun updatePendingEnvelope(localId: String, mutate: (JSONObject) -> Unit) {
+        val index = findPendingIndexByLocalId(localId)
+        if (index < 0) return
+        val msg = messages[index]
+        val envelope = parseEnvelope(msg.optString("message", "")) ?: return
+        mutate(envelope)
+        msg.put("message", envelope.toString())
+        runOnUiThread {
+            adapter.notifyItemChanged(index)
+        }
+    }
+
+    private fun removePendingMessage(localId: String) {
+        val index = findPendingIndexByLocalId(localId)
+        pendingImageCache.remove(localId)
+        pendingRetryActions.remove(localId)
+        if (index < 0) return
+        messages.removeAt(index)
+        runOnUiThread {
+            adapter.notifyItemRemoved(index)
+        }
+    }
+
+    private fun replacePendingMessage(localId: String, realRow: JSONObject) {
+        val index = findPendingIndexByLocalId(localId)
+        if (index < 0) {
+            // পেন্ডিং bubble ইতিমধ্যে সরে গেছে (যেমন realtime insert আগেই এসে
+            // গেছে) — তাও ডুপ্লিকেট এড়াতে id চেক করে নেওয়া হচ্ছে।
+            if (!containsMessageId(realRow.optString("id", ""))) {
+                messages.add(realRow)
+                messages.sortBy { it.optString("created_at", "") }
+                runOnUiThread {
+                    adapter.notifyDataSetChanged()
+                    scrollToBottom(true)
+                }
+            }
+            return
+        }
+        messages[index] = realRow
+        runOnUiThread {
+            adapter.notifyItemChanged(index)
         }
     }
 
@@ -954,13 +1080,30 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
+    // FIX: "ছবি চ্যাটে প্রিভিউ দেখায় না, ক্লিক করলে লোড হয় না" — Supabase
+    // স্টোরেজের রিকোয়েস্টে আগে কোনো apikey/Authorization হেডার পাঠানো হতো না,
+    // ফলে bucket পাবলিক না হলে (বা পাবলিক পলিসি ঠিকমতো সেট না থাকলে) প্রতিটা
+    // ডাউনলোড ব্যর্থ হতো। এখন সবসময় anon key হেডার সহ রিকোয়েস্ট পাঠানো হচ্ছে,
+    // যা পাবলিক ও প্রাইভেট — দুই ধরনের bucket-এই কাজ করে।
+    private fun openAuthedConnection(urlString: String): HttpURLConnection {
+        val connection = URL(urlString).openConnection() as HttpURLConnection
+        connection.connectTimeout = 15000
+        connection.readTimeout = 20000
+        connection.doInput = true
+        connection.instanceFollowRedirects = true
+        connection.setRequestProperty("apikey", supabaseAnonKey)
+        connection.setRequestProperty("Authorization", "Bearer $supabaseAnonKey")
+        return connection
+    }
+
     private fun downloadBitmap(urlString: String): Bitmap? {
         return try {
-            val connection = URL(urlString).openConnection() as HttpURLConnection
-            connection.connectTimeout = 15000
-            connection.readTimeout = 15000
-            connection.doInput = true
+            val connection = openAuthedConnection(urlString)
             connection.connect()
+            if (connection.responseCode !in 200..299) {
+                connection.disconnect()
+                return null
+            }
             connection.inputStream.use { input ->
                 BitmapFactory.decodeStream(input)
             }
@@ -1198,11 +1341,21 @@ class ChatActivity : AppCompatActivity() {
     // ------------------------------------------------------------------
 
     private fun downloadToTempPdfFile(urlString: String): File {
-        val connection = URL(urlString).openConnection() as HttpURLConnection
-        connection.connectTimeout = 15000
-        connection.readTimeout = 15000
-        connection.doInput = true
+        // FIX: "পিডিএফ ক্লিক করলে লোড হয় না" — এখানেও একই কারণে (apikey/
+        // Authorization হেডার ছাড়া রিকোয়েস্ট) ডাউনলোড ব্যর্থ হচ্ছিল।
+        val connection = openAuthedConnection(urlString)
         connection.connect()
+        if (connection.responseCode !in 200..299) {
+            val errorBody = try {
+                connection.errorStream?.bufferedReader()?.use { it.readText() }
+            } catch (_: Exception) {
+                null
+            }
+            connection.disconnect()
+            throw IOException(
+                "PDF ডাউনলোড ব্যর্থ: ${connection.responseCode} ${errorBody.orEmpty()}"
+            )
+        }
         val bytes = connection.inputStream.use { it.readBytes() }
         val file = File(cacheDir, "chat_pdf_${System.currentTimeMillis()}.pdf")
         FileOutputStream(file).use { it.write(bytes) }
@@ -1531,14 +1684,48 @@ class ChatActivity : AppCompatActivity() {
     // Shared helpers
     // ------------------------------------------------------------------
 
-    private fun setStatus(text: String, online: Boolean) {
-        runOnUiThread {
-            statusText.text = text
-            statusText.setTextColor(
-                if (online) colorSuccess else colorMuted
-            )
-            onlineDot.visibility = if (online) View.VISIBLE else View.GONE
+    // FIX: CRASH REPORT-এ দেখা java.net.SocketException
+    // ("Software caused connection abort") রিয়েলটাইম WebSocket রিডার
+    // থ্রেডে (DefaultDispatcher-worker) ঘটে, যেটা আমাদের নিজস্ব
+    // try/catch-এর বাইরে। সেটাকে চুপচাপ ধরে অ্যাপ বাঁচিয়ে রাখা হয় এবং
+    // রিয়েলটাইম রিকানেক্ট করার চেষ্টা করা হয়; অন্য কোনো ক্র্যাশ হলে
+    // আগের হ্যান্ডলারকেই কল করা হয় যাতে স্বাভাবিক ক্র্যাশ রিপোর্টিং নষ্ট না হয়।
+    private fun installRealtimeCrashGuard() {
+        if (previousUncaughtExceptionHandler != null) return
+        previousUncaughtExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
+
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            val isRealtimeSocketError =
+                throwable is java.net.SocketException ||
+                    throwable.cause is java.net.SocketException ||
+                    (throwable.message?.contains("WebSocket", ignoreCase = true) == true)
+
+            if (isRealtimeSocketError) {
+                android.util.Log.e(
+                    "ChatActivity",
+                    "রিয়েলটাইম সকেট ত্রুটি ধরা পড়েছে, ক্র্যাশ না করে রিকানেক্ট করা হচ্ছে: ${throwable.message}"
+                )
+                try {
+                    runOnUiThread {
+                        try {
+                            realtimeStarted = false
+                            startRealtime()
+                        } catch (_: Exception) {
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            } else {
+                previousUncaughtExceptionHandler?.uncaughtException(thread, throwable)
+            }
         }
+    }
+
+    private fun setStatus(text: String, online: Boolean) {
+        // FIX: "অনলাইন লেখা ফিল্ডটা একেবারে বাদ দাও" — কানেকশন স্ট্যাটাস টেক্সট
+        // ও অনলাইন ডট UI থেকে সম্পূর্ণ সরিয়ে ফেলা হয়েছে। এই ফাংশনটা এখন কিছু
+        // দেখায় না, কিন্তু বাকি সব কল-সাইট (openConversation/startRealtime/
+        // stopRealtime) অপরিবর্তিত রাখতে ফাংশনটা রাখা হলো।
     }
 
     private fun containsMessageId(id: String): Boolean {
@@ -1587,6 +1774,9 @@ class ChatActivity : AppCompatActivity() {
     override fun onDestroy() {
         conversationJob?.cancel()
         stopRealtime()
+        previousUncaughtExceptionHandler?.let {
+            Thread.setDefaultUncaughtExceptionHandler(it)
+        }
         super.onDestroy()
     }
 
