@@ -31,7 +31,10 @@ import java.util.concurrent.TimeUnit
  */
 object SupabaseClient {
 
-    private const val SUPABASE_URL = "https://azbleibkgerzaqbrrydl.supabase.co/"
+    // FIX: আগে এখানে শেষে একটা "/" ছিল, যার ফলে নিচের সব $SUPABASE_URL/... তৈরির
+    // জায়গায় ডাবল স্ল্যাশ (যেমন ".co//storage/v1/...") তৈরি হতো। কার্যকরী দিক
+    // দিয়ে ক্ষতিকর না হলেও পরিষ্কার URL রাখতে ট্রেইলিং স্ল্যাশ বাদ দেওয়া হলো।
+    private const val SUPABASE_URL = "https://azbleibkgerzaqbrrydl.supabase.co"
     private const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6YmxlaWJrZ2VyemFxYnJyeWRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzExNjYsImV4cCI6MjEwNDc0NzE2Nn0.6Q6PMcRJHXFIRPUZZf9lOjoTmq77_wbCoKc8tGkVF2o"
 
     private const val REPORTS_BUCKET = "test-reports"
