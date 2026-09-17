@@ -9,6 +9,15 @@ name: Android Release Build (Signed)
 #   - KEYSTORE_PASSWORD
 #   - KEY_PASSWORD
 # (এই মানগুলো generate-keystore.yml workflow রান করে পাওয়া যায়।)
+#
+# FIX (troubleshooting note): আগে "Wrong password? / BadPaddingException"
+# error পাওয়া গিয়েছিল apksigner sign স্টেপে। এর সবচেয়ে সাধারণ কারণ হলো
+# secret paste করার সময় শেষে একটা hidden newline/carriage-return/space
+# ঢুকে যাওয়া। তাই এখন:
+#   1. Decode Keystore স্টেপে secret trim করে decode করা হচ্ছে।
+#   2. Signing এর আগে একটা DEBUG স্টেপ secret-এর length/hex এবং keytool
+#      দিয়ে keystore+alias+password সরাসরি validate করে দেখায়।
+# সমস্যা মিটে গেলে DEBUG স্টেপটা নিরাপদে মুছে ফেলা যাবে।
 
 on:
   workflow_dispatch:
@@ -47,8 +56,14 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+          set -e
+          # FIX: printf (echo না) ব্যবহার করা হচ্ছে, আর tr দিয়ে যেকোনো
+          # হোয়াইটস্পেস/নিউলাইন/ক্যারেজ-রিটার্ন বাদ দিয়ে তারপর base64 decode
+          # করা হচ্ছে, যাতে secret-এ ঢুকে যাওয়া hidden trailing newline
+          # decode হওয়া keystore bytes-কে করাপ্ট না করে।
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > release.jks
           ls -lh release.jks
+          file release.jks
 
       - name: Build Unsigned Release APK
         run: gradle assembleRelease
@@ -62,6 +77,39 @@ jobs:
           fi
           echo "unsigned_apk=$UNSIGNED_APK" >> "$GITHUB_OUTPUT"
           ls -lh app/build/outputs/apk/release/
+
+      # FIX: এই ডায়াগনস্টিক স্টেপ আসল password/keystore কনটেন্ট প্রকাশ না
+      # করেই secret-এর byte-length, শেষ কয়েক byte-এর hex (হিডেন \n=0a,
+      # \r=0d, space=20 ধরার জন্য), আর keytool দিয়ে সরাসরি keystore+alias+
+      # password validate করে দেখায়। সমস্যা মিটে গেলে এই স্টেপটা মুছে
+      # ফেলা নিরাপদ।
+      - name: DEBUG - Diagnose keystore/secret mismatch
+        env:
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set +e
+          echo "== Secret byte-lengths (check these match what you expect, no extra chars) =="
+          printf '%s' "$KEY_ALIAS" | wc -c
+          printf '%s' "$KEYSTORE_PASSWORD" | wc -c
+          printf '%s' "$KEY_PASSWORD" | wc -c
+
+          echo "== Hex dump of last 4 bytes of each secret (0a=\n, 0d=\r, 20=space would indicate a problem) =="
+          printf '%s' "$KEY_ALIAS" | tail -c 4 | xxd
+          printf '%s' "$KEYSTORE_PASSWORD" | tail -c 4 | xxd
+          printf '%s' "$KEY_PASSWORD" | tail -c 4 | xxd
+
+          echo "== Keystore file info =="
+          file release.jks
+          wc -c release.jks
+          sha256sum release.jks
+
+          echo "== List aliases inside keystore (only needs correct store password) =="
+          keytool -list -v -keystore release.jks -storepass "$KEYSTORE_PASSWORD" 2>&1 | head -n 30
+
+          echo "== Try loading the private key directly (this is the real signing test) =="
+          keytool -list -v -keystore release.jks -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" 2>&1 | head -n 30
 
       - name: Zipalign + Sign APK
         env:
