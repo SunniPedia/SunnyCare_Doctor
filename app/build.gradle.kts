@@ -21,6 +21,13 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Note: no signingConfig here on purpose.
+            // The release workflow (Android Release Build) signs the APK
+            // manually via zipalign + apksigner using the release.jks
+            // decoded from KEYSTORE_BASE64, so `gradle assembleRelease`
+            // is expected to output an *-unsigned.apk which the workflow
+            // then signs. Do not add signingConfigs.release here unless
+            // you also update the workflow to stop re-signing.
         }
     }
 
@@ -35,6 +42,27 @@ android {
 
     buildFeatures {
         viewBinding = false
+    }
+
+    // FIX: Supabase-kt + Ktor + OkHttp + Coroutines together commonly
+    // bundle duplicate META-INF metadata files across their jars.
+    // This passes locally (Gradle may just warn) but can hard-fail
+    // `assembleRelease` on a clean CI runner. Excluding these avoids
+    // "More than one file was found with OS independent path ..." errors.
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE.md",
+                "META-INF/LICENSE-notice.md",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/*.kotlin_module"
+            )
+        }
     }
 }
 
@@ -53,13 +81,11 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.viewpager2:viewpager2:1.1.0")
 
-
     // ─────────────────────────────────────────
     // Material
     // ─────────────────────────────────────────
 
     implementation("com.google.android.material:material:1.11.0")
-
 
     // ─────────────────────────────────────────
     // Kotlin Coroutines
@@ -68,13 +94,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-
     // ─────────────────────────────────────────
     // OkHttp
     // ─────────────────────────────────────────
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
 
     // ─────────────────────────────────────────
     // Supabase Kotlin 2.5.1
@@ -87,7 +111,6 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:postgrest-kt:2.5.1")
     implementation("io.github.jan-tennert.supabase:realtime-kt:2.5.1")
     implementation("io.github.jan-tennert.supabase:storage-kt:2.5.1")
-
 
     // ─────────────────────────────────────────
     // Ktor 2.x
