@@ -83,8 +83,21 @@ import java.util.Locale
  *    manifest windowSoftInputMode.
  * 8. Image attachments preview in the chat bubble and open in an in-app zoomable viewer.
  * 9. PDF attachments open in an in-app swipeable, lazy-loading page viewer.
+ * 10. FIX: WhatsApp-স্টাইল আপলোড bubble — raw JSON টেক্সট দেখানোর বদলে এখন
+ *     ফাইলনেম + লাইভ সার্কুলার প্রগ্রেস রিং (%) দেখানো হয়, ব্যর্থ হলে লাল রিং।
+ * 11. FIX: DoctorAlertService/MyApp থেকে বোঝার জন্য companion.currentOpenConversationId
+ *     রাখা হলো — এই চ্যাট স্ক্রিন খোলা থাকলে ডাক্তারের মেসেজের জন্য আলাদা কাস্টম
+ *     ডায়ালগ/নোটিফিকেশন না দেখিয়ে চুপচাপ রিয়েলটাইমেই bubble দেখানো হয়।
  */
 class ChatActivity : AppCompatActivity() {
+
+    companion object {
+        // FIX: বর্তমানে কোন conversation_id এর চ্যাট স্ক্রিন খোলা আছে, তা গ্লোবালি
+        // ট্র্যাক রাখা হয় যাতে DoctorAlertService/MyApp জানতে পারে কখন কাস্টম
+        // ডায়ালগ/নোটিফিকেশন suppress করতে হবে (ইউজার আগে থেকেই ঐ চ্যাটে আছে)।
+        @Volatile
+        var currentOpenConversationId: String? = null
+    }
 
     private val colorPrimary = Color.parseColor("#0F6C61")
     private val colorPrimaryDark = Color.parseColor("#083F39")
@@ -426,6 +439,11 @@ class ChatActivity : AppCompatActivity() {
                 if (conversationId.isNullOrBlank()) {
                     throw IllegalStateException("conversation id পাওয়া যায়নি")
                 }
+
+                // FIX: এই চ্যাট স্ক্রিন এখন খোলা আছে বলে গ্লোবালি চিহ্নিত করা হলো,
+                // যাতে DoctorAlertService/MyApp এই কনভারসেশনের জন্য আলাদা
+                // কাস্টম ডায়ালগ/নোটিফিকেশন suppress করে।
+                currentOpenConversationId = conversationId
 
                 titleText.text =
                     if (myRole == "doctor") patientName else "ডাক্তার"
@@ -1068,6 +1086,15 @@ class ChatActivity : AppCompatActivity() {
     private fun parseAttachment(raw: String): JSONObject? {
         val envelope = parseEnvelope(raw) ?: return null
         return if (envelope.optString("kind") == "attachment") envelope else null
+    }
+
+    // FIX: raw JSON টেক্সট bubble-এ দেখানোর বাগের মূল কারণ ছিল pending_attachment
+    // envelope-কে "attachment" থেকে আলাদা করে হ্যান্ডেল না করা। এই ফাংশনটা এখন
+    // সেই envelope আলাদা করে চিনে নেয় যাতে MessageAdapter সঠিক UI (ফাইলনেম +
+    // সার্কুলার প্রগ্রেস রিং) আঁকতে পারে, raw JSON স্ট্রিং নয়।
+    private fun parsePendingAttachment(raw: String): JSONObject? {
+        val envelope = parseEnvelope(raw) ?: return null
+        return if (envelope.optString("kind") == "pending_attachment") envelope else null
     }
 
     private fun loadAttachmentImage(url: String, target: ImageView) {
@@ -1913,17 +1940,30 @@ class ChatActivity : AppCompatActivity() {
          * apps or the screen was turned off and back on) and the
          * conversation is already known.
          */
-        if (!conversationId.isNullOrBlank() && !realtimeStarted) {
-            startRealtime()
+        if (!conversationId.isNullOrBlank()) {
+            // FIX: চ্যাট স্ক্রিন আবার ফোরগ্রাউন্ডে এলে এই কনভারসেশনের জন্য
+            // কাস্টম ডায়ালগ/নোটিফিকেশন suppress করার ফ্ল্যাগ আবার সেট করা হলো।
+            currentOpenConversationId = conversationId
+            if (!realtimeStarted) {
+                startRealtime()
+            }
         }
     }
 
     override fun onStop() {
+        // FIX: এই চ্যাট স্ক্রিন আর দৃশ্যমান নেই — অন্য চ্যাট খোলা না থাকলে flag ক্লিয়ার করা হলো
+        // যাতে DoctorAlertService/MyApp আবার স্বাভাবিকভাবে কাস্টম ডায়ালগ/নোটিফিকেশন দেখাতে পারে।
+        if (currentOpenConversationId == conversationId) {
+            currentOpenConversationId = null
+        }
         stopRealtime()
         super.onStop()
     }
 
     override fun onDestroy() {
+        if (currentOpenConversationId == conversationId) {
+            currentOpenConversationId = null
+        }
         conversationJob?.cancel()
         stopRealtime()
         previousUncaughtExceptionHandler?.let {
@@ -2332,6 +2372,84 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
+    // FIX: WhatsApp-স্টাইল সার্কুলার আপলোড প্রগ্রেস রিং — raw JSON টেক্সটের বদলে
+    // এই কাস্টম View আপলোডের % (0-100) একটা বৃত্তাকার আর্ক হিসেবে আঁকে, এবং
+    // ব্যর্থ হলে showRetryIcon=true দিয়ে লাল "!" চিহ্ন দেখায় (ট্যাপ করলে রিট্রাই হবে)।
+    private class CircularProgressView(
+        context: android.content.Context
+    ) : View(context) {
+
+        var progress: Int = 0
+            set(value) {
+                field = value.coerceIn(0, 100)
+                invalidate()
+            }
+
+        var ringColor: Int = Color.WHITE
+            set(value) {
+                field = value
+                invalidate()
+            }
+
+        var showRetryIcon: Boolean = false
+            set(value) {
+                field = value
+                invalidate()
+            }
+
+        private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            color = Color.argb(90, 255, 255, 255)
+        }
+
+        private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+        }
+
+        private val rect = android.graphics.RectF()
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+
+            if (width <= 0 || height <= 0) return
+
+            val strokeW = width * 0.1f
+            trackPaint.strokeWidth = strokeW
+            arcPaint.strokeWidth = strokeW
+            arcPaint.color = ringColor
+
+            val pad = strokeW / 2f + (width * 0.02f)
+            rect.set(pad, pad, width - pad, height - pad)
+
+            canvas.drawArc(rect, 0f, 360f, false, trackPaint)
+
+            val cx = width / 2f
+            val cy = height / 2f
+
+            if (showRetryIcon) {
+                canvas.drawArc(rect, -90f, 300f, false, arcPaint)
+                textPaint.color = ringColor
+                textPaint.textSize = width * 0.42f
+                val fm = textPaint.fontMetrics
+                canvas.drawText("!", cx, cy - (fm.ascent + fm.descent) / 2f, textPaint)
+            } else {
+                val sweep = 360f * (progress / 100f)
+                canvas.drawArc(rect, -90f, sweep, false, arcPaint)
+
+                textPaint.color = Color.WHITE
+                textPaint.textSize = width * 0.22f
+                val fm = textPaint.fontMetrics
+                canvas.drawText("$progress%", cx, cy - (fm.ascent + fm.descent) / 2f, textPaint)
+            }
+        }
+    }
+
     private inner class MessageAdapter(
         private val list: List<JSONObject>,
         private val currentUserId: String
@@ -2377,7 +2495,11 @@ class ChatActivity : AppCompatActivity() {
                 val mine =
                     senderId == currentUserId
 
-                val attachment = parseAttachment(rawText)
+                // FIX: raw JSON টেক্সট দেখানো বাগ ঠিক করতে pending_attachment
+                // envelope আলাদাভাবে আগে চেক করা হচ্ছে; এটা "attachment" থেকে
+                // আলাদা কারণ এটার এখনও কোনো real url নেই, শুধু লোকাল প্রগ্রেস আছে।
+                val pendingAttachment = parsePendingAttachment(rawText)
+                val attachment = if (pendingAttachment == null) parseAttachment(rawText) else null
 
                 val bubble = LinearLayout(this@ChatActivity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -2394,34 +2516,44 @@ class ChatActivity : AppCompatActivity() {
                     )
                 }
 
-                if (attachment != null) {
-                    bindAttachment(bubble, attachment, mine)
-                } else {
-                    val messageText = TextView(this@ChatActivity).apply {
-                        this.text = rawText
-                        textSize = 14f
-                        setTextColor(
-                            if (mine) Color.WHITE else colorText
-                        )
-                        setPadding(0, 0, 0, dp(3))
+                when {
+                    pendingAttachment != null -> {
+                        bindPendingAttachment(bubble, pendingAttachment)
                     }
-                    bubble.addView(messageText)
+                    attachment != null -> {
+                        bindAttachment(bubble, attachment, mine)
+                    }
+                    else -> {
+                        val messageText = TextView(this@ChatActivity).apply {
+                            this.text = rawText
+                            textSize = 14f
+                            setTextColor(
+                                if (mine) Color.WHITE else colorText
+                            )
+                            setPadding(0, 0, 0, dp(3))
+                        }
+                        bubble.addView(messageText)
+                    }
                 }
 
-                val time = TextView(this@ChatActivity).apply {
-                    this.text = formatTime(createdAt)
-                    textSize = 9f
-                    setTextColor(
-                        if (mine)
-                            Color.argb(210, 255, 255, 255)
-                        else
-                            colorMuted
-                    )
-                    gravity =
-                        if (mine) Gravity.END else Gravity.START
-                }
+                // FIX: পেন্ডিং আপলোড bubble-এ created_at ফাঁকা থাকে বলে সময় দেখানোর
+                // দরকার নেই — এতে ফাঁকা সময় লাইন দেখা এড়ানো গেল।
+                if (pendingAttachment == null) {
+                    val time = TextView(this@ChatActivity).apply {
+                        this.text = formatTime(createdAt)
+                        textSize = 9f
+                        setTextColor(
+                            if (mine)
+                                Color.argb(210, 255, 255, 255)
+                            else
+                                colorMuted
+                        )
+                        gravity =
+                            if (mine) Gravity.END else Gravity.START
+                    }
 
-                bubble.addView(time)
+                    bubble.addView(time)
+                }
 
                 val params =
                     LinearLayout.LayoutParams(
@@ -2433,6 +2565,110 @@ class ChatActivity : AppCompatActivity() {
                     }
 
                 container.addView(bubble, params)
+            }
+
+            // FIX: WhatsApp-স্টাইল আপলোড bubble — এখানেই raw JSON টেক্সটের বদলে
+            // ফাইলনেম + সার্কুলার প্রগ্রেস রিং (%) আঁকা হয়। ছবি হলে লোকাল
+            // থাম্বনেইলের উপর অন্ধকার ওভারলে দিয়ে রিং বসে, ফাইল হলে ডকুমেন্ট
+            // আইকনের উপর বসে। ব্যর্থ হলে লাল রিং + ট্যাপ-টু-রিট্রাই।
+            private fun bindPendingAttachment(bubble: LinearLayout, envelope: JSONObject) {
+                val localId = envelope.optString("local_id", "")
+                val fileName = envelope.optString("file_name", "ফাইল")
+                val isImage = envelope.optBoolean("is_image", false)
+                val progress = envelope.optInt("progress", 0)
+                val failed = envelope.optBoolean("failed", false)
+
+                val frame = FrameLayout(this@ChatActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(dp(150), dp(150))
+                }
+
+                if (isImage) {
+                    val thumb = pendingImageCache.get(localId)
+                    val imageView = ImageView(this@ChatActivity).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        background = roundedBackground(
+                            Color.parseColor("#0C5148"),
+                            12f,
+                            Color.TRANSPARENT
+                        )
+                        layoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        if (thumb != null) setImageBitmap(thumb)
+                    }
+                    frame.addView(imageView)
+
+                    // অন্ধকার ওভারলে — প্রগ্রেস রিং স্পষ্ট দেখানোর জন্য
+                    val overlay = View(this@ChatActivity).apply {
+                        background = roundedBackground(
+                            Color.argb(130, 0, 0, 0),
+                            12f,
+                            Color.TRANSPARENT
+                        )
+                        layoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    }
+                    frame.addView(overlay)
+                } else {
+                    val docBg = FrameLayout(this@ChatActivity).apply {
+                        background = roundedBackground(
+                            Color.parseColor("#0C5148"),
+                            12f,
+                            Color.TRANSPARENT
+                        )
+                        layoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    }
+                    val docIcon = IconButtonView(this@ChatActivity, IconType.DOCUMENT).apply {
+                        setColor(Color.WHITE)
+                        isClickable = false
+                        layoutParams = FrameLayout.LayoutParams(dp(46), dp(46)).apply {
+                            gravity = Gravity.CENTER
+                        }
+                    }
+                    docBg.addView(docIcon)
+                    frame.addView(docBg)
+                }
+
+                val ring = CircularProgressView(this@ChatActivity).apply {
+                    this.progress = if (failed) 0 else progress
+                    this.ringColor = if (failed) Color.parseColor("#FF8A65") else Color.WHITE
+                    this.showRetryIcon = failed
+                    layoutParams = FrameLayout.LayoutParams(dp(56), dp(56)).apply {
+                        gravity = Gravity.CENTER
+                    }
+                }
+                frame.addView(ring)
+
+                if (failed) {
+                    frame.isClickable = true
+                    frame.isFocusable = true
+                    frame.setOnClickListener {
+                        pendingRetryActions[localId]?.invoke()
+                    }
+                }
+
+                bubble.addView(frame)
+
+                val caption = TextView(this@ChatActivity).apply {
+                    text = if (failed) {
+                        "$fileName • ব্যর্থ হয়েছে, আবার চেষ্টা করতে ট্যাপ করুন"
+                    } else {
+                        "$fileName • আপলোড হচ্ছে... $progress%"
+                    }
+                    textSize = 11f
+                    setTextColor(
+                        if (failed) Color.parseColor("#FFD9CC") else Color.argb(230, 255, 255, 255)
+                    )
+                    setPadding(0, dp(6), 0, 0)
+                    maxLines = 2
+                }
+                bubble.addView(caption)
             }
 
             private fun bindAttachment(
