@@ -1,9 +1,12 @@
 package com.konasl.nagad
 
+import android.Manifest
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -12,6 +15,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.setPadding
 
@@ -20,8 +25,22 @@ class MainActivity : AppCompatActivity() {
     private var customTypeface: Typeface? = null
     private val allTextViews = mutableListOf<TextView>()
 
+    // FIX: Android 13 (API 33)+ এ নোটিফিকেশন দেখাতে হলে শুধু ম্যানিফেস্টে
+    // POST_NOTIFICATIONS ঘোষণা করলেই যথেষ্ট না — রানটাইমেও ইউজারের কাছ থেকে
+    // এটা চাইতে হয়। DoctorAlertService ব্যাকগ্রাউন্ডে ডাক্তার/এডমিনের মেসেজের
+    // জন্য নোটিফিকেশন দেখায়, তাই অ্যাপ চালু হওয়ার শুরুতেই (স্প্ল্যাশ স্ক্রিনেই)
+    // এই পারমিশনটা চাওয়া হচ্ছে। এটা UI বা বিদ্যমান কোনো ফিচারে কোনো পরিবর্তন
+    // আনে না — শুধু একটা সিস্টেম পারমিশন ডায়ালগ (যদি আগে থেকে অনুমতি না থাকে)
+    // এক মুহূর্তের জন্য দেখাতে পারে।
+    private val notificationPermissionLauncher =
+        registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+        ) { /* গ্রান্ট করুক বা না করুক, অ্যাপের স্বাভাবিক ফ্লো একই থাকে */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        requestNotificationPermissionIfNeeded()
 
         val gradientDrawable = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -209,6 +228,26 @@ class MainActivity : AppCompatActivity() {
             }
             finish()
         }, 2600)
+    }
+
+    // FIX: ডাক্তার/এডমিন থেকে মেসেজ এলে ব্যাকগ্রাউন্ডেও নোটিফিকেশন দেখানোর জন্য
+    // (DoctorAlertService) Android 13+ এ এই রানটাইম পারমিশনটা লাগবেই। আগে থেকে
+    // অনুমতি থাকলে বা Android 13 এর নিচে হলে কিছুই করা হয় না (চুপচাপ স্কিপ)।
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!granted) {
+                try {
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
     }
 
     /**
