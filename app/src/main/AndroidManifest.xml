@@ -8,6 +8,18 @@
         android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- FIX: ডাক্তার/এডমিন থেকে মেসেজ এলে নোটিফিকেশন দেখানোর জন্য নতুন permission গুলো।
+         Android 13 (API 33)+ এ নোটিফিকেশন দেখাতে হলে POST_NOTIFICATIONS ম্যানিফেস্টে
+         ঘোষণা করা বাধ্যতামূলক, কিন্তু এর পাশাপাশি রানটাইমেও ইউজারের কাছ থেকে এই
+         পারমিশন চাইতে হবে (কোনো একটা Activity থেকে, যেমন MainActivity/HomeActivity)। -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- FIX: DoctorAlertService কে ব্যাকগ্রাউন্ডে চালু রাখার জন্য Foreground Service
+         permission — Android 9+ এ FOREGROUND_SERVICE, Android 14+ এ এর সাথে নির্দিষ্ট
+         টাইপ (dataSync) permission-ও লাগে। -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <application
         android:allowBackup="true"
         android:name=".MyApp"
@@ -41,6 +53,15 @@
         <activity android:name=".OtpVerifyActivity" android:exported="false" />
         <activity android:name=".SignupActivity" android:exported="false"/>
         <activity android:name=".HomeActivity" android:exported="false" />
+
+        <!-- FIX: নতুন — ডাক্তার/এডমিন থেকে মেসেজ এলে ব্যাকগ্রাউন্ডেও সংযোগ ধরে রেখে
+             নোটিফিকেশন দেখানোর জন্য Foreground Service। exported="false" কারণ এটা
+             শুধু এই অ্যাপের ভেতর থেকেই (MyApp) স্টার্ট হবে, বাইরের কোনো অ্যাপ থেকে নয়। -->
+        <service
+            android:name=".DoctorAlertService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- provider এখন application-এর ভেতরে -->
         <provider
