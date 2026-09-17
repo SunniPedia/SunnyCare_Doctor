@@ -1,0 +1,291 @@
+name: SunnyCare Android Release Build (Signed)
+
+# FIX: এই workflow টা repo secrets এ রাখা keystore ব্যবহার করে একটা সাইনড
+# (signed) রিলিজ APK বানায় এবং GitHub Release এ আপলোড করে। এটা কাজ করার আগে
+# অবশ্যই নিচের ৪টা repository secret বসাতে হবে (Settings → Secrets and
+# variables → Actions):
+#   - KEYSTORE_BASE64
+#   - KEY_ALIAS
+#   - KEYSTORE_PASSWORD
+#   - KEY_PASSWORD
+# (এই মানগুলো generate-keystore.yml workflow রান করে পাওয়া যায়।)
+#
+# FIX (package rename feature): এখন workflow_dispatch এ দুটো ইনপুট বক্স
+# (old_package_name, new_package_name) দেওয়া হয়েছে। এগুলো দিলে build শুরুর
+# আগে পুরো প্রজেক্টে (source ডিরেক্টরি + সব কনফিগ ফাইল) পুরনো package name
+# নতুন package name দিয়ে replace করে তারপর build হবে।
+#
+# CRITICAL: এই রিপ্লেসমেন্ট শুধু এই CI run-এর ephemeral checkout-এ হয় —
+# কোথাও git commit/push করা হয় না। তাই আপনার repository-র আসল সোর্স ফাইল
+# কখনো পরিবর্তিত হবে না; প্রতিটা build শুরু হয় fresh checkout দিয়ে, তারপর
+# শুধু সেই একটা build-run-এর জন্য package rename প্রয়োগ হয়।
+#
+# FIX (troubleshooting note): আগে "Wrong password? / BadPaddingException"
+# error পাওয়া গিয়েছিল apksigner sign স্টেপে। এর সবচেয়ে সাধারণ কারণ হলো
+# secret paste করার সময় শেষে একটা hidden newline/carriage-return/space
+# ঢুকে যাওয়া। তাই এখন:
+#   1. Decode Keystore স্টেপে secret trim করে decode করা হচ্ছে।
+#   2. Signing এর আগে একটা DEBUG স্টেপ secret-এর length/hex এবং keytool
+#      দিয়ে keystore+alias+password সরাসরি validate করে দেখায়।
+# সমস্যা মিটে গেলে DEBUG স্টেপটা নিরাপদে মুছে ফেলা যাবে।
+
+on:
+  workflow_dispatch:
+    inputs:
+      old_package_name:
+        description: 'পুরনো Package Name (যেমন: com.konasl.nagad)'
+        required: true
+        type: string
+      new_package_name:
+        description: 'নতুন Package Name (যেমন: com.example.newapp)'
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Build & Sign Release APK
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # FIX: এই স্টেপ কেবল এই CI run-এর ephemeral checkout-এ কাজ করে —
+      # কোনো git commit/push হয় না, তাই repo-র আসল ফাইল অপরিবর্তিত থাকে।
+      - name: Validate & Apply Package Rename
+        env:
+          OLD_PKG: ${{ github.event.inputs.old_package_name }}
+          NEW_PKG: ${{ github.event.inputs.new_package_name }}
+        run: |
+          set -e
+
+          echo "== Validating package names =="
+          PKG_REGEX='^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'
+
+          if [[ ! "$OLD_PKG" =~ $PKG_REGEX ]]; then
+            echo "::error::OLD package name '$OLD_PKG' সঠিক ফরম্যাটে নেই (যেমন com.example.app)"
+            exit 1
+          fi
+          if [[ ! "$NEW_PKG" =~ $PKG_REGEX ]]; then
+            echo "::error::NEW package name '$NEW_PKG' সঠিক ফরম্যাটে নেই (যেমন com.example.app)"
+            exit 1
+          fi
+          if [ "$OLD_PKG" == "$NEW_PKG" ]; then
+            echo "::error::OLD এবং NEW package name একই হতে পারবে না।"
+            exit 1
+          fi
+
+          echo "Renaming package: $OLD_PKG -> $NEW_PKG"
+
+          OLD_PATH=$(echo "$OLD_PKG" | tr '.' '/')
+          NEW_PATH=$(echo "$NEW_PKG" | tr '.' '/')
+
+          echo "== Step 1: Moving Kotlin/Java source directories =="
+          MOVED_ANY=0
+          for SRC_ROOT in \
+            app/src/main/kotlin app/src/main/java \
+            app/src/test/kotlin app/src/test/java \
+            app/src/androidTest/kotlin app/src/androidTest/java
+          do
+            OLD_DIR="$SRC_ROOT/$OLD_PATH"
+            if [ -d "$OLD_DIR" ]; then
+              NEW_DIR="$SRC_ROOT/$NEW_PATH"
+              echo "Moving: $OLD_DIR -> $NEW_DIR"
+              mkdir -p "$(dirname "$NEW_DIR")"
+              mv "$OLD_DIR" "$NEW_DIR"
+              MOVED_ANY=1
+
+              # এখন খালি হয়ে যাওয়া পুরনো parent ফোল্ডারগুলো ক্লিন করা হচ্ছে
+              OLD_PARENT=$(dirname "$OLD_DIR")
+              while [ "$OLD_PARENT" != "$SRC_ROOT" ] && [ -d "$OLD_PARENT" ] && [ -z "$(ls -A "$OLD_PARENT")" ]; do
+                rmdir "$OLD_PARENT"
+                OLD_PARENT=$(dirname "$OLD_PARENT")
+              done
+            fi
+          done
+
+          if [ "$MOVED_ANY" -eq 0 ]; then
+            echo "::warning::কোনো '$OLD_PATH' সোর্স ডিরেক্টরি খুঁজে পাওয়া যায়নি — শুধু টেক্সট রিপ্লেসমেন্ট করা হচ্ছে।"
+          fi
+
+          echo "== Step 2: Replacing text references across the whole repo =="
+          # ফিক্সড-স্ট্রিং সার্চ (grep -F) ব্যবহার করা হচ্ছে যাতে '.'
+          # regex wildcard হিসেবে ভুল ম্যাচ না করে।
+          FILE_LIST=$(grep -rlF "$OLD_PKG" \
+            --include="*.kt" --include="*.java" --include="*.xml" \
+            --include="*.gradle" --include="*.gradle.kts" \
+            --include="*.properties" --include="*.json" --include="*.pro" \
+            --exclude-dir=.git --exclude-dir=.gradle --exclude-dir=build \
+            . || true)
+
+          if [ -z "$FILE_LIST" ]; then
+            echo "কোনো টেক্সট রেফারেন্স পাওয়া যায়নি (শুধু ডিরেক্টরি মুভ হয়ে থাকলে সেটাই যথেষ্ট)।"
+          else
+            echo "নিচের ফাইলগুলোতে রিপ্লেস করা হচ্ছে:"
+            echo "$FILE_LIST"
+            # sed-এর জন্য পুরনো/নতুন প্যাকেজ নেমের '.' এস্কেপ করা হচ্ছে
+            OLD_ESCAPED=$(printf '%s' "$OLD_PKG" | sed 's/[.[\*^$/]/\\&/g')
+            NEW_ESCAPED=$(printf '%s' "$NEW_PKG" | sed 's/[.[\*^$/]/\\&/g')
+            echo "$FILE_LIST" | while IFS= read -r f; do
+              sed -i "s/$OLD_ESCAPED/$NEW_ESCAPED/g" "$f"
+            done
+          fi
+
+          echo "== Step 3: Strict verification — কোথাও পুরনো package name বাকি আছে কিনা =="
+          REMAINING=$(grep -rlF "$OLD_PKG" \
+            --include="*.kt" --include="*.java" --include="*.xml" \
+            --include="*.gradle" --include="*.gradle.kts" \
+            --include="*.properties" --include="*.json" --include="*.pro" \
+            --exclude-dir=.git --exclude-dir=.gradle --exclude-dir=build \
+            . || true)
+
+          if [ -n "$REMAINING" ]; then
+            echo "::error::নিচের ফাইলগুলোতে এখনও পুরনো package name ('$OLD_PKG') রয়ে গেছে — build বন্ধ করা হলো:"
+            echo "$REMAINING"
+            exit 1
+          fi
+
+          # কোনো পুরনো প্যাকেজের সোর্স ডিরেক্টরি এখনো আছে কিনা সেটাও চেক
+          LEFTOVER_DIRS=$(find app/src -type d -path "*/$OLD_PATH" 2>/dev/null || true)
+          if [ -n "$LEFTOVER_DIRS" ]; then
+            echo "::error::পুরনো package name-এর সোর্স ডিরেক্টরি এখনো রয়ে গেছে:"
+            echo "$LEFTOVER_DIRS"
+            exit 1
+          fi
+
+          echo "✅ সব জায়গায় সফলভাবে '$OLD_PKG' -> '$NEW_PKG' রিপ্লেস হয়েছে, কোনো রেফারেন্স বাকি নেই।"
+
+          echo "PKG_NEW=$NEW_PKG" >> "$GITHUB_ENV"
+          echo "PKG_OLD=$OLD_PKG" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      # FIX: আপনার build.gradle.kts এর AGP ভার্সনের সাথে মিলিয়ে এই Gradle
+      # ভার্সনটা রাখুন — AGP 8.13.x হলে '8.13' ঠিক আছে, AGP 9.x এ গেলে
+      # '9.7.0' ব্যবহার করুন।
+      - name: Setup Gradle 9.7.0
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '9.7.0'
+
+      - name: Verify Gradle Version
+        run: gradle --version
+
+      - name: Decode Keystore from Secret
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          set -e
+          # FIX: printf (echo না) ব্যবহার করা হচ্ছে, আর tr দিয়ে যেকোনো
+          # হোয়াইটস্পেস/নিউলাইন/ক্যারেজ-রিটার্ন বাদ দিয়ে তারপর base64 decode
+          # করা হচ্ছে, যাতে secret-এ ঢুকে যাওয়া hidden trailing newline
+          # decode হওয়া keystore bytes-কে করাপ্ট না করে।
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > release.jks
+          ls -lh release.jks
+          file release.jks
+
+      - name: Build Unsigned Release APK
+        run: gradle assembleRelease
+
+      - name: Locate Unsigned APK
+        id: find_apk
+        run: |
+          UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*-unsigned.apk" | head -n 1)
+          if [ -z "$UNSIGNED_APK" ]; then
+            UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          fi
+          echo "unsigned_apk=$UNSIGNED_APK" >> "$GITHUB_OUTPUT"
+          ls -lh app/build/outputs/apk/release/
+
+      # FIX: এই ডায়াগনস্টিক স্টেপ আসল password/keystore কনটেন্ট প্রকাশ না
+      # করেই secret-এর byte-length, শেষ কয়েক byte-এর hex (হিডেন \n=0a,
+      # \r=0d, space=20 ধরার জন্য), আর keytool দিয়ে সরাসরি keystore+alias+
+      # password validate করে দেখায়। সমস্যা মিটে গেলে এই স্টেপটা মুছে
+      # ফেলা নিরাপদ।
+      - name: DEBUG - Diagnose keystore/secret mismatch
+        env:
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set +e
+          echo "== Secret byte-lengths (check these match what you expect, no extra chars) =="
+          printf '%s' "$KEY_ALIAS" | wc -c
+          printf '%s' "$KEYSTORE_PASSWORD" | wc -c
+          printf '%s' "$KEY_PASSWORD" | wc -c
+
+          echo "== Hex dump of last 4 bytes of each secret (0a=\n, 0d=\r, 20=space would indicate a problem) =="
+          printf '%s' "$KEY_ALIAS" | tail -c 4 | xxd
+          printf '%s' "$KEYSTORE_PASSWORD" | tail -c 4 | xxd
+          printf '%s' "$KEY_PASSWORD" | tail -c 4 | xxd
+
+          echo "== Keystore file info =="
+          file release.jks
+          wc -c release.jks
+          sha256sum release.jks
+
+          echo "== List aliases inside keystore (only needs correct store password) =="
+          keytool -list -v -keystore release.jks -storepass "$KEYSTORE_PASSWORD" 2>&1 | head -n 30
+
+          echo "== Try loading the private key directly (this is the real signing test) =="
+          keytool -list -v -keystore release.jks -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" 2>&1 | head -n 30
+
+      - name: Zipalign + Sign APK
+        env:
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -e
+
+          # সবচেয়ে নতুন ইনস্টল করা Android build-tools ভার্সন খুঁজে বের করা হচ্ছে
+          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)
+          echo "Using build-tools: $BUILD_TOOLS_DIR"
+
+          ZIPALIGN="${BUILD_TOOLS_DIR}zipalign"
+          APKSIGNER="${BUILD_TOOLS_DIR}apksigner"
+
+          UNSIGNED_APK="${{ steps.find_apk.outputs.unsigned_apk }}"
+
+          "$ZIPALIGN" -v 4 "$UNSIGNED_APK" app-release-aligned.apk
+
+          "$APKSIGNER" sign \
+            --ks release.jks \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out app-release-signed.apk \
+            app-release-aligned.apk
+
+          "$APKSIGNER" verify app-release-signed.apk
+
+      - name: Verify Signed APK
+        run: |
+          ls -lh app-release-signed.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app-release-signed.apk
+          tag_name: release-${{ github.run_number }}
+          name: SunnyCare App v${{ github.run_number }} (Signed Release)
+          body: |
+            Signed Android Release APK.
+
+            Package name: `${{ github.event.inputs.new_package_name }}` (আগে ছিল: `${{ github.event.inputs.old_package_name }}`)
+
+            Download: app-release-signed.apk
+
+            এটা এখন Play Store এ আপলোডযোগ্য একটা সাইনড রিলিজ বিল্ড।
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
